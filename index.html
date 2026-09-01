@@ -147,11 +147,19 @@ td.num,th.num{text-align:right}
 .empty .big{font-size:34px;margin-bottom:8px;opacity:.7}
 
 .prodcell{display:flex;align-items:center;gap:11px}
-.thumb{width:42px;height:42px;border-radius:10px;flex:0 0 auto;overflow:hidden;display:flex;align-items:center;justify-content:center;
+.thumb{position:relative;width:42px;height:42px;border-radius:10px;flex:0 0 auto;overflow:hidden;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#233457,#16233f);border:1px solid var(--line2);color:#aab8d8}
 .thumb img{width:100%;height:100%;object-fit:cover}
 .thumb svg{width:56%;height:56%}
 .thumb.lg{width:120px;height:120px;border-radius:14px}
+.thumb .cdot{position:absolute;right:2px;bottom:2px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.thumb.lg .cdot{width:22px;height:22px;right:6px;bottom:6px}
+.cswatch{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);margin-top:2px}
+.cswatch i{width:11px;height:11px;border-radius:3px;border:1px solid rgba(255,255,255,.3);display:inline-block}
+.swatches{display:flex;flex-wrap:wrap;gap:7px}
+.sw{width:26px;height:26px;border-radius:8px;border:2px solid var(--line2);cursor:pointer;padding:0;transition:.12s}
+.sw:hover{transform:scale(1.12)}
+.sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--brand)}
 
 /* modal */
 .modal-back{position:fixed;inset:0;background:rgba(4,8,16,.66);backdrop-filter:blur(4px);z-index:80;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto}
@@ -317,7 +325,7 @@ function migrate(){
     if(s.paid===undefined){ s.paid=tot; s.payments=[{id:uid(),date:s.date,amount:tot,method:s.payment||'cash',ref:'Initial'}]; }
     if(!s.payments)s.payments=[];
   });
-  (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; });
+  (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
 }
 load();
 
@@ -393,10 +401,34 @@ function catKey(text){
   return 'chip';
 }
 function iconSVG(key){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONS[key]||ICONS.chip}</svg>`; }
+
+/* colour variants */
+const COLOR_PRESETS=[
+  {name:'Black',hex:'#1c1c1e'},{name:'Midnight',hex:'#1f2a3a'},{name:'Graphite',hex:'#4a4a4a'},
+  {name:'Silver',hex:'#d6d9de'},{name:'White',hex:'#f2f2f4'},{name:'Starlight',hex:'#efe9dc'},
+  {name:'Gold',hex:'#e6c37a'},{name:'Rose Gold',hex:'#e7b7a6'},
+  {name:'Natural Titanium',hex:'#b8b1a4'},{name:'Blue Titanium',hex:'#5f7089'},
+  {name:'Blue',hex:'#2f6df0'},{name:'Sierra Blue',hex:'#a7c1de'},{name:'Deep Blue',hex:'#1b3a6b'},
+  {name:'Green',hex:'#34c759'},{name:'Alpine Green',hex:'#5a7d63'},
+  {name:'Red',hex:'#e03131'},{name:'Purple',hex:'#8f5fd6'},{name:'Deep Purple',hex:'#5b4a7a'},
+  {name:'Pink',hex:'#f19ac0'},{name:'Yellow',hex:'#ffd60a'},{name:'Orange',hex:'#ff8c1a'},{name:'Grey',hex:'#8e8e93'}
+];
+function lum(hex){ const h=(hex||'').replace('#',''); if(h.length<6)return .5; const r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16); return (0.299*r+0.587*g+0.114*b)/255; }
+function darken(hex,f){ const h=(hex||'#888888').replace('#',''); let r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+  r=Math.round(r*(1-f));g=Math.round(g*(1-f));b=Math.round(b*(1-f)); return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function guessHex(name){ const t=(name||'').toLowerCase().trim(); if(!t)return ''; const f=COLOR_PRESETS.find(c=>c.name.toLowerCase()===t)||COLOR_PRESETS.find(c=>t.includes(c.name.toLowerCase())||c.name.toLowerCase().includes(t)); return f?f.hex:'#8e93a1'; }
+function colorHexOf(p){ return p&&(p.colorHex|| (p.color?guessHex(p.color):'')); }
+
+function iconSVGtile(p){ return iconSVG(catKey(((p&&p.category)||'')+' '+((p&&p.name)||''))); }
 function productThumb(p,cls){
-  if(p&&p.imageUrl) return `<div class="thumb ${cls||''}"><img src="${esc(p.imageUrl)}" alt="" onerror="this.parentNode.innerHTML='${iconSVG(catKey((p.category||'')+' '+(p.name||''))).replace(/'/g,"\\'")}'"></div>`;
-  return `<div class="thumb ${cls||''}">${iconSVG(catKey(((p&&p.category)||'')+' '+((p&&p.name)||'')))}</div>`;
+  const hex=colorHexOf(p);
+  const dot=hex?`<span class="cdot" style="background:${hex}"></span>`:'';
+  if(p&&p.imageUrl) return `<div class="thumb ${cls||''}"><img src="${esc(p.imageUrl)}" alt="" onerror="this.parentNode.innerHTML='${iconSVGtile(p).replace(/'/g,"\\'")}'">${dot}</div>`;
+  if(hex){ const gl=lum(hex)>0.62?'#222c3d':'#ffffff';
+    return `<div class="thumb ${cls||''}" style="background:linear-gradient(135deg,${hex},${darken(hex,.42)});border-color:${darken(hex,.5)};color:${gl}">${iconSVGtile(p)}</div>`; }
+  return `<div class="thumb ${cls||''}">${iconSVGtile(p)}</div>`;
 }
+function colorChip(p){ const hex=colorHexOf(p); return p&&p.color?`<div class="cswatch"><i style="background:${hex}"></i>${esc(p.color)}</div>`:''; }
 
 /* =========================================================
    INVENTORY & COST ENGINE (moving weighted average)
@@ -535,7 +567,7 @@ function renderProducts(){
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Product</th><th>Category</th><th>Unit</th><th class="num">In Stock</th><th class="num">Avg Cost</th><th></th></tr></thead>
     <tbody>${list.map(p=>{const s=stockOf(p.id,eng);return `<tr>
-      <td><div class="prodcell">${productThumb(p)}<div><b>${esc(p.name)}</b>${p.sku?`<div style="color:var(--muted2);font-size:11.5px">${esc(p.sku)}</div>`:''}</div></div></td>
+      <td><div class="prodcell">${productThumb(p)}<div><b>${esc(p.name)}</b>${colorChip(p)}${p.sku?`<div style="color:var(--muted2);font-size:11.5px">${esc(p.sku)}</div>`:''}</div></div></td>
       <td>${esc(p.category||'—')}</td><td>${esc(p.unit||'pcs')}</td>
       <td class="num">${s<=S().lowStockLevel?`<span class="tag low">${num(s)}</span>`:num(s)}</td>
       <td class="num">${money(avgCostOf(p.id,eng))}</td>
@@ -543,15 +575,20 @@ function renderProducts(){
       <button class="mini-btn red" onclick="delProduct('${p.id}')">Del</button></td></tr>`}).join('')}
     </tbody></table></div>`;
 }
-let _imgBuf='';
+let _imgBuf='',_colorHex='';
 function editProduct(id){
-  const p=id?productById(id):{name:'',category:'',unit:'pcs',sku:'',imageUrl:''};
-  _imgBuf=p.imageUrl||'';
+  const p=id?productById(id):{name:'',category:'',unit:'pcs',sku:'',imageUrl:'',color:'',colorHex:''};
+  _imgBuf=p.imageUrl||''; _colorHex=colorHexOf(p)||'';
   openModal(`${id?'Edit':'Add'} Product`,`
-    <div class="field"><label>Product Name *</label><input id="p_name" value="${esc(p.name)}" placeholder="e.g. Samsung 55'' 4K TV" oninput="prodPreview()"></div>
+    <div class="field"><label>Product Name *</label><input id="p_name" value="${esc(p.name)}" placeholder="e.g. iPhone 15 Pro" oninput="prodPreview()"></div>
     <div class="grid2">
-      <div class="field"><label>Category</label><input id="p_cat" value="${esc(p.category||'')}" placeholder="e.g. Television / Mobile / Laptop" oninput="prodPreview()"></div>
+      <div class="field"><label>Category</label><input id="p_cat" value="${esc(p.category||'')}" placeholder="e.g. Mobile / Laptop / Television" oninput="prodPreview()"></div>
       <div class="field"><label>Unit</label><input id="p_unit" value="${esc(p.unit||'pcs')}" placeholder="pcs / box"></div>
+    </div>
+    <div class="field"><label>Colour / Variant</label>
+      <div class="swatches" id="p_swatches">${COLOR_PRESETS.map(c=>`<button type="button" class="sw" title="${c.name}" data-hex="${c.hex}" style="background:${c.hex}" onclick="pickColor('${c.name}','${c.hex}')"></button>`).join('')}</div>
+      <input id="p_color" value="${esc(p.color||'')}" placeholder="e.g. Blue Titanium / Space Black" oninput="_colorHex=guessHex(this.value);markSwatch();prodPreview()" style="margin-top:9px">
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Tip: for an item like iPhone with many colours, add one product per colour (e.g. "iPhone 15 Pro – Blue Titanium").</div>
     </div>
     <div class="field"><label>SKU / Barcode (optional)</label><input id="p_sku" value="${esc(p.sku||'')}"></div>
     <div class="field"><label>Product Photo</label>
@@ -569,9 +606,12 @@ function editProduct(id){
     </div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveProduct('${id||''}')">Save Product</button>`);
+  markSwatch();
 }
 function prodPreview(){ const pv=$('#p_preview'); if(!pv)return;
-  pv.innerHTML=productThumb({name:$('#p_name')?.value,category:$('#p_cat')?.value,imageUrl:_imgBuf},'lg'); }
+  pv.innerHTML=productThumb({name:$('#p_name')?.value,category:$('#p_cat')?.value,imageUrl:_imgBuf,color:$('#p_color')?.value,colorHex:_colorHex},'lg'); }
+function pickColor(name,hex){ _colorHex=hex; if($('#p_color'))$('#p_color').value=name; markSwatch(); prodPreview(); }
+function markSwatch(){ $$('#p_swatches .sw').forEach(b=>b.classList.toggle('on',b.dataset.hex===_colorHex)); }
 function uploadProdImg(input){
   const f=input.files[0]; if(!f)return;
   const r=new FileReader();
@@ -584,7 +624,8 @@ function uploadProdImg(input){
 }
 function saveProduct(id){
   const name=$('#p_name').value.trim(); if(!name)return toast('Product name is required',1);
-  const data={name,category:$('#p_cat').value.trim(),unit:$('#p_unit').value.trim()||'pcs',sku:$('#p_sku').value.trim(),imageUrl:_imgBuf||''};
+  const color=$('#p_color').value.trim();
+  const data={name,category:$('#p_cat').value.trim(),unit:$('#p_unit').value.trim()||'pcs',sku:$('#p_sku').value.trim(),imageUrl:_imgBuf||'',color,colorHex:color?(_colorHex||guessHex(color)):''};
   if(id){Object.assign(productById(id),data);} else {DB.products.push({id:uid(),...data});}
   save();closeModal();renderProducts();toast('Product saved');
 }
@@ -625,7 +666,7 @@ function renderPurchases(){
 }
 function newPurchase(id){
   if(!DB.products.length)return confirmBox('No products yet','Add a product first, then record a purchase.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
-  const p=id?DB.purchases.find(x=>x.id===id):{date:todayStr(),productId:DB.products[0].id,qty:1,rate:'',supplier:'',payment:'cash',cardRef:'',paid:null};
+  const p=id?DB.purchases.find(x=>x.id===id):{date:todayStr(),productId:DB.products[0].id,qty:1,rate:'',supplier:'',payment:'card',cardRef:'',paid:null};
   const opts=DB.products.map(x=>`<option value="${x.id}" ${x.id===p.productId?'selected':''}>${esc(x.name)}</option>`).join('');
   openModal(`${id?'Edit':'New'} Purchase`,`
     <div class="grid2">
@@ -640,8 +681,8 @@ function newPurchase(id){
     <div class="grid2">
       <div class="field"><label>Supplier</label><input id="b_sup" value="${esc(p.supplier||'')}" placeholder="e.g. Carrefour Deira"></div>
       <div class="field"><label>Payment Method</label><select id="b_pay" onchange="buyPayToggle()">
-        <option value="cash" ${p.payment==='cash'?'selected':''}>Cash</option>
         <option value="card" ${p.payment==='card'?'selected':''}>Credit Card</option>
+        <option value="cash" ${p.payment==='cash'?'selected':''}>Cash</option>
         <option value="bank" ${p.payment==='bank'?'selected':''}>Bank Transfer</option></select></div>
     </div>
     <div class="grid2">
