@@ -1114,6 +1114,7 @@ views.settings=function(){
     <div class="row-actions">
       <button class="btn-sm btn-green" onclick="exportData()">⬇ Export Backup (.json)</button>
       <label class="btn-sm btn-ghost" style="cursor:pointer">⬆ Import Backup<input type="file" accept="application/json" style="display:none" onchange="importData(this)"></label>
+      ${owner?`<button class="btn-sm btn-gold" onclick="loadDemo()">🧪 Load Demo (10 + 10)</button>`:''}
       ${owner?`<button class="btn-sm btn-red" onclick="resetAll()">Reset All Data</button>`:''}
     </div>
   </div>`;
@@ -1196,6 +1197,61 @@ function importData(input){
   r.readAsText(f); input.value='';
 }
 function resetAll(){confirmBox('Reset ALL data?','Deletes every product, purchase, sale & user. Cannot be undone.',()=>{localStorage.removeItem(KEY);DB=seed();save();toast('All data reset');logout();},'Reset');}
+
+/* ---------- demo data (10 purchases + 10 sales) ---------- */
+function loadDemo(){
+  const st=S(); const vatOf=r=> st.applyVat? r*(st.vatPercent/100):0;
+  confirmBox('Load demo data?','Adds 10 products, 10 purchases and 10 sales (with colour variants, cash/card/bank & a couple on credit) for viewing. This REPLACES current products, purchases and sales — your company profile & users are kept.',()=>{
+    const prods=[
+      {id:'d1',name:'iPhone 15 Pro – Blue Titanium',category:'Mobile',color:'Blue Titanium',colorHex:'#5f7089'},
+      {id:'d2',name:'iPhone 15 Pro – Natural Titanium',category:'Mobile',color:'Natural Titanium',colorHex:'#b8b1a4'},
+      {id:'d3',name:'iPhone 15 – Pink',category:'Mobile',color:'Pink',colorHex:'#f19ac0'},
+      {id:'d4',name:'Samsung Galaxy S24 – Black',category:'Mobile',color:'Black',colorHex:'#1c1c1e'},
+      {id:'d5',name:'HP Pavilion Laptop – Silver',category:'Laptop',color:'Silver',colorHex:'#d6d9de'},
+      {id:'d6',name:'Dell Inspiron 15',category:'Laptop',color:'',colorHex:''},
+      {id:'d7',name:'Samsung 55" 4K TV',category:'Television',color:'',colorHex:''},
+      {id:'d8',name:'Sony WH-1000XM5 – Black',category:'Audio Headphone',color:'Black',colorHex:'#1c1c1e'},
+      {id:'d9',name:'Apple Watch Series 9',category:'Smartwatch',color:'Midnight',colorHex:'#1f2a3a'},
+      {id:'d10',name:'Anker Power Bank 20000mAh',category:'Accessory Power Bank',color:'',colorHex:''}
+    ].map(p=>({unit:'pcs',sku:'',imageUrl:'',...p}));
+
+    const buyRaw=[
+      ['d1',8,3400,'2026-07-05','Carrefour Deira','card',null],
+      ['d2',6,3450,'2026-07-08','Sharaf DG','card',null],
+      ['d3',10,2600,'2026-07-10','Lulu Hypermarket','cash',null],
+      ['d4',7,2900,'2026-07-12','Jumbo Electronics','card',15000],
+      ['d5',5,2100,'2026-07-15','Sharaf DG','bank',null],
+      ['d6',6,1950,'2026-07-18','Carrefour Deira','card',null],
+      ['d7',4,1500,'2026-07-20','Lulu Hypermarket','cash',null],
+      ['d8',12,950,'2026-07-22','Jumbo Electronics','card',null],
+      ['d9',9,1250,'2026-07-25','Sharaf DG','card',5000],
+      ['d10',20,120,'2026-07-28','Carrefour Deira','cash',null]
+    ];
+    const buys=buyRaw.map((r,i)=>{const [pid,qty,rate,date,sup,method,paidP]=r,tot=qty*rate,paid=paidP==null?tot:paidP;
+      return {id:'db'+(i+1),ref:'PUR-'+String(i+1).padStart(4,'0'),date,productId:pid,qty,rate,supplier:sup,payment:method,cardRef:method==='card'?'Visa ••'+(1000+i):'',paid,payments:paid>0?[{id:uid(),date,amount:paid,method,ref:'Initial'}]:[]};});
+
+    const sellRaw=[
+      ['2026-08-01','Ahmed Khan','050 111 2233','card',null,[['d1',2,3900]]],
+      ['2026-08-03','Fatima Ali','052 998 1020','cash',null,[['d2',1,3950]]],
+      ['2026-08-05','Mobile Zone LLC','04 222 3344','card',5000,[['d3',3,3100]]],
+      ['2026-08-07','Rashid Traders','050 777 8899','bank',null,[['d4',2,3400]]],
+      ['2026-08-09','Khalid Hassan','055 342 1188','card',null,[['d5',2,2600]]],
+      ['2026-08-11','Sara Ibrahim','056 220 4471','cash',null,[['d6',1,2450]]],
+      ['2026-08-13','Al Noor Electronics','06 745 1200','card',null,[['d7',2,1950]]],
+      ['2026-08-15','Walk-in','','cash',null,[['d8',4,1350]]],
+      ['2026-08-18','Omar Yusuf','050 909 1234','card',3000,[['d9',3,1650]]],
+      ['2026-08-20','Gadget Hub','04 556 7788','card',null,[['d10',5,199],['d8',2,1350]]]
+    ];
+    const sells=sellRaw.map((r,i)=>{const [date,customer,phone,method,paidP,items]=r;
+      const sub=items.reduce((a,it)=>a+it[1]*it[2],0),vt=vatOf(sub),total=sub+vt,paid=paidP==null?total:paidP;
+      return {id:'ds'+(i+1),invoiceNo:st.invoicePrefix+String(i+1).padStart(4,'0'),date,customer,custPhone:phone,
+        items:items.map(it=>({productId:it[0],qty:it[1],rate:it[2]})),payment:method,discount:0,
+        subtotal:sub,vat:vt,vatPercent:st.applyVat?st.vatPercent:0,total,paid,payments:paid>0?[{id:uid(),date,amount:paid,method,ref:'Initial'}]:[]};});
+
+    DB.products=prods; DB.purchases=buys; DB.sales=sells; DB.counters={purchase:10,sale:10};
+    save(); toast('Demo data loaded — 10 purchases & 10 sales'); go('dashboard');
+  },'Load Demo');
+}
 
 /* =========================================================
    MODAL / CONFIRM
