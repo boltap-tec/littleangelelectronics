@@ -37,6 +37,52 @@ a{color:var(--brand2)}
 ::-webkit-scrollbar-thumb{background:#20304f;border-radius:20px}
 .hidden{display:none !important}
 
+/* ================= LIGHT (BRIGHT) THEME ================= */
+body.light{
+  --bg:#eef1f8; --bg2:#ffffff; --panel:#ffffff; --panel2:#f1f4fb;
+  --line:#e4e9f3; --line2:#d6ddee;
+  --text:#1b2440; --muted:#5a6785; --muted2:#8a97b4;
+  --brandsoft:#e3e5ff; --greensoft:#e3f7ea; --redsoft:#fde7e7; --ambersoft:#fdf1d8;
+  --gold2:#b6841c; --blue:#0f8fd1;
+  --shadow:0 12px 30px rgba(28,40,80,.14);
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(99,102,241,.10), transparent 60%),
+    radial-gradient(900px 520px at -10% 110%, rgba(245,179,1,.12), transparent 55%),
+    var(--bg);
+}
+body.light .topbar{background:rgba(255,255,255,.86)}
+body.light .topbar .logo,
+body.light .brand-badge{background:radial-gradient(circle at 50% 40%,#fdf7e8,#f2e9d1)}
+body.light .thumb{background:linear-gradient(135deg,#e9eefb,#dae3f5);color:#59668a}
+body.light .sidebar{background:#ffffff}
+body.light .stat.red .val{color:#d63b3b}
+body.light .stat.amber .val{color:#b07d10}
+body.light .note{background:#fdf1d8;color:#7a5b0f;border-color:#eeddb0}
+body.light .mini-btn.red{color:#d63b3b;border-color:#f0c0c0}
+body.light .mini-btn.gold{color:#9a6b0f;border-color:#ecd7a3}
+body.light .li-x{color:#d63b3b;border-color:#f0c0c0}
+body.light .tag.cash,body.light .tag.ok,body.light .tag.paid{background:#e3f7ea;color:#1f8a4c;border-color:#b6e6c8}
+body.light .tag.card{background:#e6e7ff;color:#4338ca;border-color:#c3c6f5}
+body.light .tag.bank{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
+body.light .tag.low,body.light .tag.due{background:#fde7e7;color:#c62b2b;border-color:#f4c4c4}
+body.light .tag.partial{background:#fdf1d8;color:#9a6b0f;border-color:#f0dca6}
+body.light ::-webkit-scrollbar-thumb{background:#c9d3e8}
+
+/* theme picker in Settings */
+.theme-choose{display:flex;gap:14px;flex-wrap:wrap}
+.theme-opt{background:var(--bg);border:2px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;color:var(--text);
+  font-weight:700;font-size:13.5px;display:flex;flex-direction:column;align-items:center;gap:10px;width:130px;transition:.14s}
+.theme-opt:hover{border-color:var(--line2)}
+.theme-opt.on{border-color:var(--brand);box-shadow:0 0 0 3px rgba(99,102,241,.18)}
+.tp{width:100%;height:56px;border-radius:9px;padding:9px;display:flex;flex-direction:column;gap:5px;justify-content:center;overflow:hidden}
+.tp span{height:7px;border-radius:4px}
+.tp span:nth-child(1){width:60%}.tp span:nth-child(2){width:85%}.tp span:nth-child(3){width:45%}
+.tp-light{background:#eef1f8}.tp-light span{background:#c3ccdf}.tp-light span:nth-child(2){background:#6366f1}
+.tp-dark{background:#0b1220}.tp-dark span{background:#2c3e63}.tp-dark span:nth-child(2){background:#818cf8}
+
+/* ================= BOTTOM NAV (mobile) ================= */
+.bottomnav{display:none}
+
 /* ---------- LOGIN ---------- */
 #login{min-height:100%; display:flex; align-items:center; justify-content:center; padding:22px;}
 .login-card{width:100%; max-width:410px; background:linear-gradient(180deg,var(--panel),var(--bg2));
@@ -200,11 +246,20 @@ td.num,th.num{text-align:right}
   .grid3{grid-template-columns:1fr}
   .grid2{grid-template-columns:1fr}
   .hamburger{display:flex}
-  .sidebar{position:fixed;left:0;top:63px;z-index:60;transform:translateX(-102%);transition:.22s;box-shadow:var(--shadow);height:calc(100vh - 63px)}
+  .sidebar{position:fixed;left:0;top:63px;z-index:70;transform:translateX(-102%);transition:.22s;box-shadow:var(--shadow);
+    height:calc(100vh - 63px);background:var(--bg2);width:264px}
   .sidebar.open{transform:translateX(0)}
-  .backdrop{position:fixed;inset:63px 0 0 0;background:rgba(0,0,0,.5);z-index:55;display:none}
+  .backdrop{position:fixed;inset:63px 0 0 0;background:rgba(0,0,0,.5);z-index:65;display:none}
+  body.light .backdrop{background:rgba(20,30,60,.35)}
   .backdrop.show{display:block}
-  .main{padding:16px}
+  .main{padding:16px 16px 88px}
+  .bottomnav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;justify-content:space-around;align-items:stretch;
+    background:var(--bg2);border-top:1px solid var(--line);box-shadow:0 -6px 20px rgba(0,0,0,.22);padding:6px 2px}
+  .bottomnav button{flex:1;background:none;border:none;color:var(--muted);cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:700;padding:5px 2px;border-radius:10px}
+  .bottomnav button .bi{font-size:19px;line-height:1}
+  .bottomnav button.active{color:var(--brand)}
+  .bottomnav button.active .bi{transform:translateY(-1px)}
   .li-head{display:none}
   .li-row{grid-template-columns:1fr 1fr;gap:8px}
   .li-row .li-x{grid-column:span 2}
@@ -242,6 +297,7 @@ td.num,th.num{text-align:right}
     </div>
     <div class="spacer"></div>
     <span class="chip"><span class="dot"></span><span id="who">Owner</span></span>
+    <button class="icon-btn" id="themeBtn" title="Switch light / dark" onclick="toggleTheme()">🌙</button>
     <button class="icon-btn" title="Logout" onclick="logout()">⎋</button>
   </div>
 
@@ -263,6 +319,14 @@ td.num,th.num{text-align:right}
     </aside>
     <main class="main" id="main"></main>
   </div>
+
+  <nav class="bottomnav" id="bottomnav">
+    <button data-view="dashboard" onclick="go('dashboard')"><span class="bi">📊</span>Home</button>
+    <button data-view="purchases" onclick="go('purchases')"><span class="bi">📥</span>Buy</button>
+    <button data-view="sales" onclick="go('sales')"><span class="bi">🧾</span>Sell</button>
+    <button data-view="payments" onclick="go('payments')"><span class="bi">💳</span>Pay</button>
+    <button onclick="toggleNav()"><span class="bi">☰</span>More</button>
+  </nav>
 </div>
 
 <div id="printRoot" class="hidden"></div>
@@ -309,7 +373,8 @@ function seed(){
       footer:'Thank you for your business!',
       terms:'Goods sold are checked before delivery. Warranty as per manufacturer.',
       showTrn:true, showPhone:true, showEmail:false, showTerms:true, showLogo:true,
-      lowStockLevel:3
+      lowStockLevel:3,
+      theme:'light'
     }
   };
 }
@@ -326,6 +391,7 @@ function migrate(){
     if(!s.payments)s.payments=[];
   });
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
+  if(DB.settings.theme===undefined)DB.settings.theme='light';
 }
 load();
 
@@ -477,7 +543,11 @@ function enterApp(){
 }
 function logout(){ session=null; $('#app').style.display='none'; $('#login').style.display='flex'; $('#loginPass').value=''; closeModal(); }
 function applyBrand(){ $('#brandName').textContent=S().company; $('#brandCity').textContent=S().city; document.title='Little Angel Electronics';
-  $('#topLogo').innerHTML=brandMark(30); }
+  $('#topLogo').innerHTML=brandMark(30); applyTheme(); }
+function applyTheme(){ const light=S().theme!=='dark'; document.body.classList.toggle('light',light);
+  const b=$('#themeBtn'); if(b)b.textContent=light?'🌙':'☀️'; }
+function toggleTheme(){ S().theme = S().theme==='dark'?'light':'dark'; save(); applyTheme(); toast(S().theme==='dark'?'Dark theme on':'Bright theme on'); }
+function setTheme(t){ S().theme=t; save(); applyTheme(); if($('.nav-item.active')?.dataset.view==='settings')go('settings'); }
 
 /* =========================================================
    ROUTER
@@ -486,6 +556,7 @@ const views={};
 function go(v){
   if(v==='profit' && !isOwner()) v='dashboard';
   $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
+  $$('#bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   $('#main').innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
   if(window.innerWidth<=860) closeNav();
@@ -732,7 +803,7 @@ function renderSales(){
     <tbody>${rows.map(s=>{const prof=isOwner()?netOf(s)-(eng.saleCost[s.id]||0):0;return `<tr>
       <td><b>${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td><td>${esc(s.customer||'Walk-in')}</td>
       <td class="num">${s.items.length}</td><td class="num"><b>${money(s.total)}</b></td>
-      ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'#fca5a5'}">${money(prof)}</td>`:''}
+      ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}
       <td><span class="tag ${s.payment}">${s.payment.toUpperCase()}</span></td>
       <td>${statusTag(s.total,s.paid)}</td>
       <td class="num">${payStatus(s.total,s.paid)!=='paid'?`<button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button>`:''}
@@ -913,7 +984,7 @@ function renderPayments(){
   const payRows=DB.purchases.filter(p=>p.qty*p.rate-(p.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
   $('#payblList').innerHTML=payRows.length?`<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Supplier</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
     <tbody>${payRows.map(p=>`<tr><td><b>${esc(p.ref)}</b></td><td>${esc(p.supplier||'—')}</td><td class="num">${money(p.qty*p.rate)}</td>
-      <td class="num" style="color:#fca5a5">${money(p.qty*p.rate-(p.paid||0))}</td>
+      <td class="num" style="color:var(--red)">${money(p.qty*p.rate-(p.paid||0))}</td>
       <td class="num"><button class="mini-btn gold" onclick="recordPay('purchase','${p.id}')">Pay</button></td></tr>`).join('')}</tbody></table></div>`
     :emptyBox('✅','All settled','No supplier balances outstanding.');
 
@@ -926,7 +997,7 @@ function renderPayments(){
     <tbody>${show.map(l=>`<tr><td>${fmtDate(l.date)}</td>
       <td><span class="tag ${l.type==='IN'?'paid':'due'}">${l.type==='IN'?'IN':'OUT'}</span></td>
       <td>${esc(l.doc)}</td><td>${esc(l.party)}</td><td><span class="tag ${l.method}">${(l.method||'cash').toUpperCase()}</span></td>
-      <td class="num" style="color:${l.type==='IN'?'var(--green)':'#fca5a5'}">${l.type==='IN'?'+':'−'} ${money(l.amount)}</td></tr>`).join('')}</tbody></table></div>`
+      <td class="num" style="color:${l.type==='IN'?'var(--green)':'var(--red)'}">${l.type==='IN'?'+':'−'} ${money(l.amount)}</td></tr>`).join('')}</tbody></table></div>`
     :emptyBox('🧾','No payments yet','Payments will appear here as you record sales & purchases.');
 }
 function recordPay(kind,id){
@@ -1043,7 +1114,7 @@ function renderProfit(){
     </div>
     <div class="panel"><h3>Top Products by Profit</h3><p class="psub">Best performers</p>
       ${top.length?`<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Revenue</th><th class="num">Profit</th></tr></thead>
-      <tbody>${top.map(t=>`<tr><td>${esc(t.name)}</td><td class="num">${num(t.qty)}</td><td class="num">${money(t.rev)}</td><td class="num" style="color:${t.profit>=0?'var(--green)':'#fca5a5'}">${money(t.profit)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📈','No data','No sales in this period.')}
+      <tbody>${top.map(t=>`<tr><td>${esc(t.name)}</td><td class="num">${num(t.qty)}</td><td class="num">${money(t.rev)}</td><td class="num" style="color:${t.profit>=0?'var(--green)':'var(--red)'}">${money(t.profit)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📈','No data','No sales in this period.')}
     </div>
   </div>`;
 }
@@ -1054,7 +1125,16 @@ function renderProfit(){
 views.settings=function(){
   const st=S(), owner=isOwner();
   return `
-  <div class="page-head"><div><h2>Settings</h2><p>Company profile, sales-bill layout, users & data backup.</p></div></div>
+  <div class="page-head"><div><h2>Settings</h2><p>Appearance, company profile, sales-bill layout, users & data backup.</p></div></div>
+  <div class="panel">
+    <h3>🎨 Appearance</h3><p class="psub">Choose your theme. Bright is the default.</p>
+    <div class="theme-choose">
+      <button class="theme-opt ${st.theme!=='dark'?'on':''}" onclick="setTheme('light')">
+        <div class="tp tp-light"><span></span><span></span><span></span></div>Bright</button>
+      <button class="theme-opt ${st.theme==='dark'?'on':''}" onclick="setTheme('dark')">
+        <div class="tp tp-dark"><span></span><span></span><span></span></div>Dark</button>
+    </div>
+  </div>
   <div class="panel">
     <h3>🏢 Company Profile</h3><p class="psub">Shown on the app header and every sales bill.</p>
     <div class="field"><label>Company Name (legal)</label><input id="st_company" value="${esc(st.company)}"></div>
@@ -1270,6 +1350,7 @@ function confirmBox(title,msg,onYes,yesLabel){
 }
 
 /* boot */
+applyTheme();
 $('#loginBadge').innerHTML=logoMark(58);
 $('#loginUser').value='owner';
 </script>
