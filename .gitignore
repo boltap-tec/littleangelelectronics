@@ -1,0 +1,13 @@
+# Backups exported from the app
+little-angel-backup-*.json
+
+# OS / editor
+Thumbs.db
+.DS_Store
+*.log
+
+# Dependencies (if added later)
+node_modules/
+.vercel/
+.env
+.env.*
