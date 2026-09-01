@@ -1,0 +1,65 @@
+{
+  "users": [
+    { "id": "u_owner", "username": "owner", "password": "1234", "role": "owner", "name": "Owner" },
+    { "id": "u_staff", "username": "staff", "password": "1234", "role": "employee", "name": "Staff" }
+  ],
+  "products": [
+    { "id": "d1", "name": "iPhone 15 Pro – Blue Titanium", "category": "Mobile", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Blue Titanium", "colorHex": "#5f7089" },
+    { "id": "d2", "name": "iPhone 15 Pro – Natural Titanium", "category": "Mobile", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Natural Titanium", "colorHex": "#b8b1a4" },
+    { "id": "d3", "name": "iPhone 15 – Pink", "category": "Mobile", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Pink", "colorHex": "#f19ac0" },
+    { "id": "d4", "name": "Samsung Galaxy S24 – Black", "category": "Mobile", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Black", "colorHex": "#1c1c1e" },
+    { "id": "d5", "name": "HP Pavilion Laptop – Silver", "category": "Laptop", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Silver", "colorHex": "#d6d9de" },
+    { "id": "d6", "name": "Dell Inspiron 15", "category": "Laptop", "unit": "pcs", "sku": "", "imageUrl": "", "color": "", "colorHex": "" },
+    { "id": "d7", "name": "Samsung 55\" 4K TV", "category": "Television", "unit": "pcs", "sku": "", "imageUrl": "", "color": "", "colorHex": "" },
+    { "id": "d8", "name": "Sony WH-1000XM5 – Black", "category": "Audio Headphone", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Black", "colorHex": "#1c1c1e" },
+    { "id": "d9", "name": "Apple Watch Series 9", "category": "Smartwatch", "unit": "pcs", "sku": "", "imageUrl": "", "color": "Midnight", "colorHex": "#1f2a3a" },
+    { "id": "d10", "name": "Anker Power Bank 20000mAh", "category": "Accessory Power Bank", "unit": "pcs", "sku": "", "imageUrl": "", "color": "", "colorHex": "" }
+  ],
+  "purchases": [
+    { "id": "db1", "ref": "PUR-0001", "date": "2026-07-05", "productId": "d1", "qty": 8, "rate": 3400, "supplier": "Carrefour Deira", "payment": "card", "cardRef": "Visa ••1000", "paid": 27200, "payments": [ { "id": "pmb1", "date": "2026-07-05", "amount": 27200, "method": "card", "ref": "Initial" } ] },
+    { "id": "db2", "ref": "PUR-0002", "date": "2026-07-08", "productId": "d2", "qty": 6, "rate": 3450, "supplier": "Sharaf DG", "payment": "card", "cardRef": "Visa ••1001", "paid": 20700, "payments": [ { "id": "pmb2", "date": "2026-07-08", "amount": 20700, "method": "card", "ref": "Initial" } ] },
+    { "id": "db3", "ref": "PUR-0003", "date": "2026-07-10", "productId": "d3", "qty": 10, "rate": 2600, "supplier": "Lulu Hypermarket", "payment": "cash", "cardRef": "", "paid": 26000, "payments": [ { "id": "pmb3", "date": "2026-07-10", "amount": 26000, "method": "cash", "ref": "Initial" } ] },
+    { "id": "db4", "ref": "PUR-0004", "date": "2026-07-12", "productId": "d4", "qty": 7, "rate": 2900, "supplier": "Jumbo Electronics", "payment": "card", "cardRef": "Visa ••1003", "paid": 15000, "payments": [ { "id": "pmb4", "date": "2026-07-12", "amount": 15000, "method": "card", "ref": "Initial" } ] },
+    { "id": "db5", "ref": "PUR-0005", "date": "2026-07-15", "productId": "d5", "qty": 5, "rate": 2100, "supplier": "Sharaf DG", "payment": "bank", "cardRef": "", "paid": 10500, "payments": [ { "id": "pmb5", "date": "2026-07-15", "amount": 10500, "method": "bank", "ref": "Initial" } ] },
+    { "id": "db6", "ref": "PUR-0006", "date": "2026-07-18", "productId": "d6", "qty": 6, "rate": 1950, "supplier": "Carrefour Deira", "payment": "card", "cardRef": "Visa ••1005", "paid": 11700, "payments": [ { "id": "pmb6", "date": "2026-07-18", "amount": 11700, "method": "card", "ref": "Initial" } ] },
+    { "id": "db7", "ref": "PUR-0007", "date": "2026-07-20", "productId": "d7", "qty": 4, "rate": 1500, "supplier": "Lulu Hypermarket", "payment": "cash", "cardRef": "", "paid": 6000, "payments": [ { "id": "pmb7", "date": "2026-07-20", "amount": 6000, "method": "cash", "ref": "Initial" } ] },
+    { "id": "db8", "ref": "PUR-0008", "date": "2026-07-22", "productId": "d8", "qty": 12, "rate": 950, "supplier": "Jumbo Electronics", "payment": "card", "cardRef": "Visa ••1007", "paid": 11400, "payments": [ { "id": "pmb8", "date": "2026-07-22", "amount": 11400, "method": "card", "ref": "Initial" } ] },
+    { "id": "db9", "ref": "PUR-0009", "date": "2026-07-25", "productId": "d9", "qty": 9, "rate": 1250, "supplier": "Sharaf DG", "payment": "card", "cardRef": "Visa ••1008", "paid": 5000, "payments": [ { "id": "pmb9", "date": "2026-07-25", "amount": 5000, "method": "card", "ref": "Initial" } ] },
+    { "id": "db10", "ref": "PUR-0010", "date": "2026-07-28", "productId": "d10", "qty": 20, "rate": 120, "supplier": "Carrefour Deira", "payment": "cash", "cardRef": "", "paid": 2400, "payments": [ { "id": "pmb10", "date": "2026-07-28", "amount": 2400, "method": "cash", "ref": "Initial" } ] }
+  ],
+  "sales": [
+    { "id": "ds1", "invoiceNo": "INV-0001", "date": "2026-08-01", "customer": "Ahmed Khan", "custPhone": "050 111 2233", "items": [ { "productId": "d1", "qty": 2, "rate": 3900 } ], "payment": "card", "discount": 0, "subtotal": 7800, "vat": 390, "vatPercent": 5, "total": 8190, "paid": 8190, "payments": [ { "id": "pms1", "date": "2026-08-01", "amount": 8190, "method": "card", "ref": "Initial" } ] },
+    { "id": "ds2", "invoiceNo": "INV-0002", "date": "2026-08-03", "customer": "Fatima Ali", "custPhone": "052 998 1020", "items": [ { "productId": "d2", "qty": 1, "rate": 3950 } ], "payment": "cash", "discount": 0, "subtotal": 3950, "vat": 197.5, "vatPercent": 5, "total": 4147.5, "paid": 4147.5, "payments": [ { "id": "pms2", "date": "2026-08-03", "amount": 4147.5, "method": "cash", "ref": "Initial" } ] },
+    { "id": "ds3", "invoiceNo": "INV-0003", "date": "2026-08-05", "customer": "Mobile Zone LLC", "custPhone": "04 222 3344", "items": [ { "productId": "d3", "qty": 3, "rate": 3100 } ], "payment": "card", "discount": 0, "subtotal": 9300, "vat": 465, "vatPercent": 5, "total": 9765, "paid": 5000, "payments": [ { "id": "pms3", "date": "2026-08-05", "amount": 5000, "method": "card", "ref": "Initial" } ] },
+    { "id": "ds4", "invoiceNo": "INV-0004", "date": "2026-08-07", "customer": "Rashid Traders", "custPhone": "050 777 8899", "items": [ { "productId": "d4", "qty": 2, "rate": 3400 } ], "payment": "bank", "discount": 0, "subtotal": 6800, "vat": 340, "vatPercent": 5, "total": 7140, "paid": 7140, "payments": [ { "id": "pms4", "date": "2026-08-07", "amount": 7140, "method": "bank", "ref": "Initial" } ] },
+    { "id": "ds5", "invoiceNo": "INV-0005", "date": "2026-08-09", "customer": "Khalid Hassan", "custPhone": "055 342 1188", "items": [ { "productId": "d5", "qty": 2, "rate": 2600 } ], "payment": "card", "discount": 0, "subtotal": 5200, "vat": 260, "vatPercent": 5, "total": 5460, "paid": 5460, "payments": [ { "id": "pms5", "date": "2026-08-09", "amount": 5460, "method": "card", "ref": "Initial" } ] },
+    { "id": "ds6", "invoiceNo": "INV-0006", "date": "2026-08-11", "customer": "Sara Ibrahim", "custPhone": "056 220 4471", "items": [ { "productId": "d6", "qty": 1, "rate": 2450 } ], "payment": "cash", "discount": 0, "subtotal": 2450, "vat": 122.5, "vatPercent": 5, "total": 2572.5, "paid": 2572.5, "payments": [ { "id": "pms6", "date": "2026-08-11", "amount": 2572.5, "method": "cash", "ref": "Initial" } ] },
+    { "id": "ds7", "invoiceNo": "INV-0007", "date": "2026-08-13", "customer": "Al Noor Electronics", "custPhone": "06 745 1200", "items": [ { "productId": "d7", "qty": 2, "rate": 1950 } ], "payment": "card", "discount": 0, "subtotal": 3900, "vat": 195, "vatPercent": 5, "total": 4095, "paid": 4095, "payments": [ { "id": "pms7", "date": "2026-08-13", "amount": 4095, "method": "card", "ref": "Initial" } ] },
+    { "id": "ds8", "invoiceNo": "INV-0008", "date": "2026-08-15", "customer": "Walk-in", "custPhone": "", "items": [ { "productId": "d8", "qty": 4, "rate": 1350 } ], "payment": "cash", "discount": 0, "subtotal": 5400, "vat": 270, "vatPercent": 5, "total": 5670, "paid": 5670, "payments": [ { "id": "pms8", "date": "2026-08-15", "amount": 5670, "method": "cash", "ref": "Initial" } ] },
+    { "id": "ds9", "invoiceNo": "INV-0009", "date": "2026-08-18", "customer": "Omar Yusuf", "custPhone": "050 909 1234", "items": [ { "productId": "d9", "qty": 3, "rate": 1650 } ], "payment": "card", "discount": 0, "subtotal": 4950, "vat": 247.5, "vatPercent": 5, "total": 5197.5, "paid": 3000, "payments": [ { "id": "pms9", "date": "2026-08-18", "amount": 3000, "method": "card", "ref": "Initial" } ] },
+    { "id": "ds10", "invoiceNo": "INV-0010", "date": "2026-08-20", "customer": "Gadget Hub", "custPhone": "04 556 7788", "items": [ { "productId": "d10", "qty": 5, "rate": 199 }, { "productId": "d8", "qty": 2, "rate": 1350 } ], "payment": "card", "discount": 0, "subtotal": 3695, "vat": 184.75, "vatPercent": 5, "total": 3879.75, "paid": 3879.75, "payments": [ { "id": "pms10", "date": "2026-08-20", "amount": 3879.75, "method": "card", "ref": "Initial" } ] }
+  ],
+  "counters": { "purchase": 10, "sale": 10 },
+  "settings": {
+    "company": "LITTLE ANGEL ELECTRONICS GENERAL TRADING - L.L.C - O.P.C",
+    "tagline": "General Trading",
+    "city": "Abu Dhabi, UAE",
+    "address": "Office no. 114, Omer Bin Youssef Building, Hamdan Street, Abu Dhabi, UAE.",
+    "phone": "+971 50 000 0000",
+    "email": "",
+    "trn": "104224414300003",
+    "currency": "AED",
+    "vatPercent": 5,
+    "applyVat": true,
+    "invoicePrefix": "INV-",
+    "logoUrl": "",
+    "footer": "Thank you for your business!",
+    "terms": "Goods sold are checked before delivery. Warranty as per manufacturer.",
+    "showTrn": true,
+    "showPhone": true,
+    "showEmail": false,
+    "showTerms": true,
+    "showLogo": true,
+    "lowStockLevel": 3
+  }
+}
