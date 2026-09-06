@@ -1436,11 +1436,25 @@ function cardVisual(c){
 }
 
 /* ---- Cards view ---- */
+let _cardView='owners';
+function setCardView(v){ _cardView=v; renderCards(); }
+function cardCell(c,badge){ return `<div>${badge?`<div style="text-align:center;font-size:11px;font-weight:800;color:var(--green);margin-bottom:6px">${badge}</div>`:''}${cardVisual(c)}
+  <div class="row-actions" style="margin-top:9px;justify-content:center">
+    <button class="mini-btn" onclick="event.stopPropagation();cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
+    <button class="mini-btn gold" onclick="event.stopPropagation();cardTxnModal('${c.id}','payment')">＋ Pay</button>
+    <button class="mini-btn" onclick="event.stopPropagation();cardDetail('${c.id}')">Details</button>
+  </div></div>`; }
 views.cards=function(){
   return `
   <div class="page-head"><div><h2>Credit Cards</h2><p>Card limits, balances, monthly commission discount & payment-date reminders.</p></div>
     <button class="btn-sm" onclick="editCard()">＋ Add Card</button></div>
-  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank or number..." oninput="renderCards()"></div></div>
+  <div class="toolbar">
+    <div class="role-toggle" id="cardViewTgl" style="margin:0;max-width:340px;flex:0 0 auto">
+      <button class="${_cardView==='owners'?'active':''}" onclick="setCardView('owners')">👤 By owner</button>
+      <button class="${_cardView==='credit'?'active':''}" onclick="setCardView('credit')">💳 View credit</button>
+    </div>
+    <div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank or number..." oninput="renderCards()"></div>
+  </div>
   <div id="cardStats" class="cards"></div>
   <div id="cardsWrap"></div>`;
 };
@@ -1458,19 +1472,21 @@ function renderCards(){
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
     <div class="stat gold"><span class="ic">％</span><div class="label">Discount · this month</div><div class="val">${money(tD)}</div></div>`:'';
   if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
+  if(_cardView==='credit'){
+    // all cards sorted by available balance — highest at top
+    const sorted=[...cards].sort((a,b)=>cardAvailable(b)-cardAvailable(a));
+    host.innerHTML=`<div class="cat-head">💳 All cards by available balance <span class="cc">highest first</span> <span class="cc" style="color:var(--green)">available ${money(tA)}</span></div>
+      <div class="ccgrid">${sorted.map((c,i)=>cardCell(c,i===0?'⭐ Highest available':'')).join('')}</div>`;
+    renderBell(); return;
+  }
   // group cards by owner
   const groups={}; cards.forEach(c=>{ const o=cardOwnerLabel(c); (groups[o]||(groups[o]=[])).push(c); });
   const owners=Object.keys(groups).sort((a,b)=>a==='My own'?-1:b==='My own'?1:a.localeCompare(b));
-  host.innerHTML=owners.map(o=>{ const g=groups[o]; const gOut=g.reduce((a,c)=>a+cardOutstanding(c),0);
+  host.innerHTML=owners.map(o=>{ const g=[...groups[o]].sort((a,b)=>cardAvailable(b)-cardAvailable(a)); const gOut=g.reduce((a,c)=>a+cardOutstanding(c),0);
     const safe=o.replace(/'/g,"\\'");
     return `<div class="cat-head">👤 ${esc(o)} <span class="cc">${g.length} card${g.length===1?'':'s'}</span> <span class="cc" style="color:${gOut>0?'var(--amber)':'var(--text)'}">owe ${money(gOut)}</span>
       <button class="mini-btn gold" style="margin-left:auto" onclick="ownerStatement('${safe}')">📄 Statement</button></div>
-    <div class="ccgrid">${g.map(c=>`<div>${cardVisual(c)}
-      <div class="row-actions" style="margin-top:9px;justify-content:center">
-        <button class="mini-btn" onclick="event.stopPropagation();cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
-        <button class="mini-btn gold" onclick="event.stopPropagation();cardTxnModal('${c.id}','payment')">＋ Pay</button>
-        <button class="mini-btn" onclick="event.stopPropagation();cardDetail('${c.id}')">Details</button>
-      </div></div>`).join('')}</div>`; }).join('');
+    <div class="ccgrid">${g.map(c=>cardCell(c)).join('')}</div>`; }).join('');
   renderBell();
 }
 /* per-owner combined statement / ledger */
