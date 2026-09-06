@@ -378,6 +378,7 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
       <div class="nav-item" data-view="sales" onclick="go('sales')"><span class="ico">🧾</span> Sales &amp; Billing</div>
       <div class="nav-item" data-view="payments" onclick="go('payments')"><span class="ico">💵</span> Payments</div>
       <div class="nav-item" data-view="cards" data-owner onclick="go('cards')"><span class="ico">💳</span> Credit Cards</div>
+      <div class="nav-item" data-view="cashbook" onclick="go('cashbook')"><span class="ico">🧰</span> Cash Book</div>
       <div class="nav-item" data-view="inventory" onclick="go('inventory')"><span class="ico">📦</span> Inventory</div>
       <div class="nav-item" data-view="products" onclick="go('products')"><span class="ico">🏷️</span> Products</div>
       <div class="nav-item" data-view="compare" onclick="go('compare')"><span class="ico">🔎</span> Price Compare</div>
@@ -417,9 +418,9 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
 const KEY='lae_db_v1';
 /* roles & permissions — declared before load()/seed()/migrate() use them */
-const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','inventory','products','compare','profit','settings'];
+const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','cashbook','inventory','products','compare','profit','settings'];
 const WORKER_DEFAULT=['purchases','sales'];
-const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
 
 /* =========================================================
    SUPABASE CLOUD SYNC  (single shared JSON row)
@@ -482,7 +483,7 @@ function seed(){
     users:[
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
-    products:[], purchases:[], sales:[], cards:[],
+    products:[], purchases:[], sales:[], cards:[], cash:[],
     counters:{purchase:0,sale:0},
     settings:{
       company:'LITTLE ANGEL ELECTRONICS GENERAL TRADING - L.L.C - O.P.C',
@@ -535,6 +536,7 @@ function migrate(){
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
   if(!DB.cards)DB.cards=[];
   if(!Array.isArray(DB.approvals))DB.approvals=[];
+  if(!Array.isArray(DB.cash))DB.cash=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; });
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
@@ -764,6 +766,7 @@ function dashTiles(){
     {v:'inventory',ic:'📦',lab:'Inventory'},
     {v:'cards',ic:'💳',lab:'Credit Cards'},
     {v:'payments',ic:'💵',lab:'Payments'},
+    {v:'cashbook',ic:'🧰',lab:'Cash Book'},
     {v:'products',ic:'🏷️',lab:'Products'},
     {v:'compare',ic:'🔎',lab:'Price Compare'},
     {v:'approvals',ic:'📝',lab:'Approvals'},
@@ -1776,7 +1779,9 @@ function cardTxnModal(id,type){
       <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00"></div>
       <div class="field"><label>Date</label><input id="ct_date" type="date" value="${todayStr()}"></div>
     </div>
-    <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no."></div>`,
+    <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no."></div>
+    ${(type==='recharge'||type==='payment')?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px;cursor:pointer">
+      <input type="checkbox" id="ct_cash" style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Paid from cash box (deduct from Cash Book)</span></label>`:''}`,
     `<button class="btn-sm btn-ghost" onclick="cardDetail('${id}')">Back</button>
      <button class="btn-sm" onclick="saveCardTxn('${id}','${type}')">Save</button>`);
   setTimeout(()=>$('#ct_amt')?.focus(),30);
@@ -1784,8 +1789,9 @@ function cardTxnModal(id,type){
 function saveCardTxn(id,type){
   const c=cardById(id); if(!c)return; const amt=+$('#ct_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   if(!c.txns)c.txns=[];
-  c.txns.push({id:uid(),date:$('#ct_date').value||todayStr(),type,amount:amt,note:$('#ct_note').value.trim()});
-  save(); toast('Saved'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+  const fromCash=!!$('#ct_cash')?.checked;
+  c.txns.push({id:uid(),date:$('#ct_date').value||todayStr(),type,amount:amt,note:$('#ct_note').value.trim(),fromCash});
+  save(); toast(fromCash?'Saved · cash deducted':'Saved'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 function delCardTxn(cid,tid){ const c=cardById(cid); if(!c)return;
   confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
@@ -1904,6 +1910,93 @@ function renderInventory(){
   const sorted=[...data].sort(sorters[_invSort]||sorters.recent);
   host.innerHTML=`<div class="table-wrap"><table>${INV_HEAD}<tbody>${sorted.map(invRow).join('')}</tbody></table></div>`;
 }
+
+/* =========================================================
+   CASH BOOK (daily cash balance ledger)
+   Auto: sales cash in, purchase cash out, card recharge/payment paid from cash out.
+   Manual: opening balance, expenses (with who + purpose), other cash in/out.
+   ========================================================= */
+function cashEntries(){
+  const e=[];
+  (DB.cash||[]).forEach(m=>e.push({id:m.id,date:m.date||'',dir:m.dir,amount:+m.amount||0,cat:m.cat||'manual',desc:m.desc||'',who:m.who||'',manual:true}));
+  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||s.date,dir:'in',amount:+pm.amount,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:''),who:''}); }));
+  (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||p.date,dir:'out',amount:+pm.amount,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:''),who:''}); }));
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:''}); }));
+  e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
+  return e;
+}
+function cashBalance(){ return cashEntries().reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
+const CASH_TAG={sale:'ok',purchase:'card',card:'partial',expense:'due',opening:'bank',cashin:'ok',cashout:'due',manual:'bank'};
+views.cashbook=function(){
+  return `
+  <div class="page-head"><div><h2>Cash Book</h2><p>Daily cash-in-hand ledger. Sales add cash, purchases & cash card top-ups reduce it, and you log expenses with who & why.</p></div>
+    <div class="row-actions">
+      <button class="btn-sm btn-green" onclick="cashModal('in')">＋ Cash In</button>
+      <button class="btn-sm btn-red" onclick="cashModal('expense')">－ Expense</button>
+    </div></div>
+  <div id="cashStats" class="cards"></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cashSearch" placeholder="Search description / who..." oninput="renderCash()"></div>
+    <button class="mini-btn" onclick="cashModal('out')">－ Other cash out</button>
+    <button class="mini-btn" onclick="cashModal('opening')">Set opening balance</button></div>
+  <div id="cashList"></div>`;
+};
+views._after_cashbook=renderCash;
+function renderCash(){
+  const host=$('#cashList'); if(!host)return;
+  const all=cashEntries(); let run=0; const withRun=all.map(x=>{ run+=x.dir==='in'?x.amount:-x.amount; return {...x,run}; });
+  const bal=run, today=todayStr();
+  const tin=all.filter(x=>x.date===today&&x.dir==='in').reduce((a,x)=>a+x.amount,0);
+  const tout=all.filter(x=>x.date===today&&x.dir==='out').reduce((a,x)=>a+x.amount,0);
+  const cs=$('#cashStats'); if(cs)cs.innerHTML=`
+    <div class="stat ${bal<0?'red':'green'}"><span class="ic">🧰</span><div class="label">Cash in Hand</div><div class="val">${money(bal)}</div><div class="foot">current balance</div></div>
+    <div class="stat green"><span class="ic">⬆️</span><div class="label">Cash In · today</div><div class="val">${money(tin)}</div></div>
+    <div class="stat red"><span class="ic">⬇️</span><div class="label">Cash Out · today</div><div class="val">${money(tout)}</div></div>
+    <div class="stat gold"><span class="ic">📒</span><div class="label">Entries</div><div class="val">${all.length}</div></div>`;
+  const q=($('#cashSearch')?.value||'').toLowerCase();
+  let rows=[...withRun].reverse();
+  if(q)rows=rows.filter(x=>(x.desc||'').toLowerCase().includes(q)||(x.who||'').toLowerCase().includes(q)||(x.cat||'').toLowerCase().includes(q));
+  if(!all.length){ host.innerHTML=`<div class="panel">${emptyBox('🧰','No cash entries yet','Set your opening balance, then log expenses & cash movements.')}</div>`; return; }
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:680px">
+    <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>By</th><th class="num">Cash In</th><th class="num">Cash Out</th><th class="num">Balance</th><th></th></tr></thead>
+    <tbody>${rows.map(x=>`<tr>
+      <td>${fmtDate(x.date)}</td>
+      <td><span class="tag ${CASH_TAG[x.cat]||'bank'}">${(x.cat||'').toUpperCase()}</span></td>
+      <td style="white-space:normal">${esc(x.desc||'')}</td>
+      <td>${esc(x.who||'')}</td>
+      <td class="num" style="color:var(--green)">${x.dir==='in'?money(x.amount):''}</td>
+      <td class="num" style="color:var(--red)">${x.dir==='out'?money(x.amount):''}</td>
+      <td class="num"><b>${money(x.run)}</b></td>
+      <td class="num">${x.manual?`<button class="mini-btn red" title="Delete entry" onclick="delCashEntry('${x.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+function cashModal(kind){
+  const titles={in:'Add Cash In',out:'Cash Out',expense:'Add Expense',opening:'Set Opening Balance'};
+  const isExp=kind==='expense';
+  openModal(titles[kind]||'Cash entry',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${isExp?'Money spent from the cash box (e.g. food, transport, misc).':kind==='opening'?'Starting cash in hand — logged as a cash-in entry.':kind==='in'?'Cash received into the box (not from a sale).':'Cash paid out (not a purchase/card/expense).'}</p>
+    <div class="grid2">
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="cb_amt" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Date</label><input id="cb_date" type="date" value="${todayStr()}"></div>
+    </div>
+    ${isExp?`<div class="grid2">
+      <div class="field"><label>Paid by (owner / staff) *</label><input id="cb_who" value="${esc(session.name)}"></div>
+      <div class="field"><label>Purpose *</label><input id="cb_desc" placeholder="e.g. lunch, fuel, tea"></div>
+    </div>`:`<div class="field"><label>Description</label><input id="cb_desc" placeholder="note"></div>`}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveCashEntry('${kind}')">Save</button>`);
+  setTimeout(()=>$('#cb_amt')?.focus(),30);
+}
+function saveCashEntry(kind){
+  const amt=+$('#cb_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
+  const desc=$('#cb_desc').value.trim(); const who=$('#cb_who')?.value.trim()||'';
+  if(kind==='expense'&&!desc)return toast('Enter the purpose of the expense',1);
+  const dir = (kind==='in'||kind==='opening')?'in':'out';
+  const cat = kind==='in'?'cashin':kind==='out'?'cashout':kind;
+  if(!DB.cash)DB.cash=[];
+  DB.cash.push({id:uid(),date:$('#cb_date').value||todayStr(),dir,amount:amt,cat,desc:desc||(kind==='opening'?'Opening balance':''),who});
+  save(); closeModal(); toast('Saved'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
+}
+function delCashEntry(id){ confirmBox('Delete cash entry?','This removes the entry and recalculates the balance.',()=>{ DB.cash=(DB.cash||[]).filter(e=>e.id!==id); save(); renderCash(); toast('Entry deleted'); },'Delete'); }
 
 /* =========================================================
    PRICE COMPARE (competitor prices + online search)
