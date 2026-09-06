@@ -1186,12 +1186,14 @@ function renderSales(){
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th class="num">Items</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(s=>{const prof=isOwner()?netOf(s)-(eng.saleCost[s.id]||0):0;return `<tr>
-      <td><b>${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td><td>${esc(s.customer||'Walk-in')}</td>
+      <td><b>${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td>
+      <td>${esc(s.customer||'Walk-in')}${s.custPhone?` <a href="tel:${esc((s.custPhone||'').replace(/\s+/g,''))}" onclick="event.stopPropagation()" title="Call ${esc(s.custPhone)}" style="text-decoration:none;margin-left:4px">📞</a>`:''}</td>
       <td class="num">${s.items.length}</td><td class="num"><b>${money(s.total)}</b></td>
       ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}
       <td><span class="tag ${s.payment}">${s.payment.toUpperCase()}</span></td>
       <td>${statusTag(s.total,s.paid)}</td>
       <td class="num">${payStatus(s.total,s.paid)!=='paid'?`<button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button>`:''}
+      <button class="mini-btn" onclick="shareSale('${s.id}')">📤 Share</button>
       <button class="mini-btn" onclick="printSale('${s.id}')">🖨️ Bill</button>
       <button class="mini-btn" onclick="newSale('${s.id}')">Edit</button>
       <button class="mini-btn red" onclick="delSale('${s.id}')">Del</button></td></tr>`}).join('')}
@@ -1333,6 +1335,23 @@ function delSale(id){
   confirmBox('Delete sale?',`Delete invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. This cannot be undone.`,()=>{commitSaleDelete(id);save();renderSales();toast('Sale deleted');},'Delete');
 }
 
+/* ---------- SHARE bill (native share / WhatsApp) ---------- */
+function shareSale(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s)return; const st=S(), cur=st.currency;
+  const hasVat=(s.vatMode? s.vatMode!=='none':((s.vat||0)>0));
+  const lines=s.items.map(it=>{const p=productById(it.productId);return `• ${p?p.name:'Item'} x ${num(it.qty)} = ${cur} ${num(it.qty*it.rate)}`;}).join('\n');
+  const bal=s.total-(s.paid||0);
+  const txt=`${st.company}\n${hasVat?'TAX INVOICE':'INVOICE'} ${s.invoiceNo} · ${fmtDate(s.date)}\nCustomer: ${s.customer||'Walk-in'}\n\n${lines}\n\nSubtotal: ${cur} ${num(s.subtotal)}`
+    +(s.discount>0?`\nDiscount: ${cur} ${num(s.discount)}`:'')
+    +(hasVat&&s.vat>0?`\nVAT ${s.vatPercent}%${s.vatMode==='inclusive'?' (incl.)':''}: ${cur} ${num(s.vat)}`:'')
+    +`\nTOTAL: ${cur} ${num(s.total)}\nPaid: ${cur} ${num(s.paid||0)}`
+    +(bal>0.01?`\nBalance Due: ${cur} ${num(bal)}`:'')
+    +(st.footer?`\n\n${st.footer}`:'')+(st.phone?`\n${st.company?'':''}${st.phone}`:'');
+  if(navigator.share){ navigator.share({title:'Invoice '+s.invoiceNo, text:txt}).catch(()=>{}); return; }
+  let phone=(s.custPhone||'').replace(/[^\d]/g,''); if(phone.startsWith('0'))phone='971'+phone.slice(1);
+  const w=window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(txt),'_blank');
+  if(!w)toast('Allow pop-ups to share the bill',1);
+}
 /* ---------- INVOICE (print) ---------- */
 function printSale(id){
   const s=DB.sales.find(x=>x.id===id); if(!s)return;
