@@ -2034,7 +2034,7 @@ function renderCash(){
       <td class="num" style="color:var(--green)">${x.dir==='in'?money(x.amount):''}</td>
       <td class="num" style="color:var(--red)">${x.dir==='out'?money(x.amount):''}</td>
       <td class="num"><b>${money(x.run)}</b></td>
-      <td class="num">${x.manual?`<button class="mini-btn red" title="Delete entry" onclick="delCashEntry('${x.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`).join('')}
+      <td class="num">${x.manual?(isOwner()?`<button class="mini-btn red" title="Delete entry" onclick="delCashEntry('${x.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">—</span>'):'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function whoSelectField(sel,label){ label=label||'Whose wallet';
@@ -2094,7 +2094,7 @@ function saveTransfer(){
   DB.cash.push({id:uid(),date,dir:'in',amount:amt,cat:'transfer',desc:'From '+userName(from)+(note?' · '+note:''),who:to,byId:session.id,linkId:link});
   save(); closeModal(); toast('Cash transferred'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
 }
-function delCashEntry(id){ const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
+function delCashEntry(id){ if(!isOwner())return toast('Only admin can delete cash entries',1); const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
   confirmBox('Delete cash entry?', link?'This is a transfer — both sides will be removed. Continue?':'This removes the entry and recalculates the wallet.',()=>{
     DB.cash=(DB.cash||[]).filter(e=> link? e.linkId!==link : e.id!==id); save(); renderCash(); toast('Entry deleted'); },'Delete'); }
 
