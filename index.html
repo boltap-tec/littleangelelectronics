@@ -937,10 +937,10 @@ function renderPurchases(){
     </tbody></table></div>`;
 }
 let buyItems=[], buySplits=[], _buyEditId='';
-function newPurchase(id){
+function newPurchase(id,prefillPid){
   const p=id?DB.purchases.find(x=>x.id===id):null;
   _buyEditId=id||'';
-  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:DB.products[0]?.id||'',qty:1,rate:''}];
+  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||DB.products[0]?.id||'',qty:1,rate:''}];
   if(!buyItems.length)buyItems=[{productId:DB.products[0]?.id||'',qty:1,rate:''}];
   buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:pm.method||'cash',cardId:pm.cardId||'',cardRef:pm.cardId?'':'',amount:pm.amount}))
     : [{method:(DB.cards&&DB.cards.length)?'card':'cash',cardId:(DB.cards&&DB.cards.length)?DB.cards[0].id:'',amount:''}];
@@ -1126,12 +1126,12 @@ function renderSales(){
 }
 let _saleEditId='', _saleOldQty={};
 function saleAvail(pid,eng){ return stockOf(pid,eng||computeEngine()) + (_saleOldQty[pid]||0); }
-function newSale(id){
+function newSale(id,prefillPid){
   if(!DB.products.length)return confirmBox('No products yet','Add a product (and some stock) before selling.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
   const s=id?DB.sales.find(x=>x.id===id):null;
   _saleEditId=id||''; _saleOldQty={}; if(s)s.items.forEach(it=>_saleOldQty[it.productId]=(_saleOldQty[it.productId]||0)+(+it.qty||0));
   _salePaidTouched = !!s;   // editing: keep saved amount; new: auto-fill full until user edits
-  saleDraft = s? s.items.map(i=>({...i})) : [{productId:DB.products[0].id,qty:1,rate:''}];
+  saleDraft = s? s.items.map(i=>({...i})) : [{productId:prefillPid||DB.products[0].id,qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
@@ -1622,9 +1622,34 @@ function delCard(id){
 /* =========================================================
    INVENTORY
    ========================================================= */
+function totalBought(pid){ let q=0; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{if(it.productId===pid)q+=+it.qty||0;})); return q; }
+function totalSold(pid){ let q=0; DB.sales.forEach(s=>s.items.forEach(it=>{if(it.productId===pid)q+=+it.qty||0;})); return q; }
+function lastBuyDate(pid){ let d=''; DB.purchases.forEach(p=>{ if((p.date||'')>d && purchaseItems(p).some(it=>it.productId===pid))d=p.date; }); return d; }
+let _invSort='recent';
+function setInvSort(v){ _invSort=v; renderInventory(); }
+function invRow(x){
+  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
+  return `<tr>
+    <td><div class="prodcell">${productThumb(x.p)}<b>${esc(x.p.name)}</b></div></td>
+    <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
+    <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
+    <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
+    <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td>
+    <td class="num" style="white-space:nowrap">${acts}</td></tr>`;
+}
+const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Balance (stock)</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
 views.inventory=function(){
   return `
-  <div class="page-head"><div><h2>Inventory</h2><p>Live stock from purchases minus sales, with weighted-average cost.</p></div></div>
+  <div class="page-head"><div><h2>Inventory</h2><p>Total purchased, sold & balance stock — with weighted-average cost. Buy or sell any item in one click.</p></div>
+    <div class="field" style="margin:0;min-width:210px"><label>Sort by</label>
+      <select id="invSort" onchange="setInvSort(this.value)">
+        <option value="recent" ${_invSort==='recent'?'selected':''}>Recent purchase (newest top)</option>
+        <option value="stockHigh" ${_invSort==='stockHigh'?'selected':''}>Stock — high to low</option>
+        <option value="stockLow" ${_invSort==='stockLow'?'selected':''}>Stock — low to high</option>
+        <option value="sold" ${_invSort==='sold'?'selected':''}>Most sold</option>
+        <option value="name" ${_invSort==='name'?'selected':''}>Name (A–Z)</option>
+        <option value="category" ${_invSort==='category'?'selected':''}>Category (grouped)</option>
+      </select></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="invSearch" placeholder="Search product..." oninput="renderInventory()"></div></div>
   <div id="invCards" class="cards"></div>
   <div id="invList"></div>`;
@@ -1635,7 +1660,8 @@ function renderInventory(){
   const q=($('#invSearch')?.value||'').toLowerCase();
   let totVal=0,totUnits=0,low=0,out=0;
   const data=DB.products.map(p=>{const qty=stockOf(p.id,eng),avg=avgCostOf(p.id,eng);const val=(qty>0?qty:0)*avg;
-    if(qty>0){totUnits+=qty;totVal+=val;} if(qty<=0)out++; else if(qty<=S().lowStockLevel)low++; return {p,qty,avg,val};})
+    if(qty>0){totUnits+=qty;totVal+=val;} if(qty<=0)out++; else if(qty<=S().lowStockLevel)low++;
+    return {p,qty,avg,val,bought:totalBought(p.id),sold:totalSold(p.id),last:lastBuyDate(p.id)};})
     .filter(x=>x.p.name.toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q));
   const cc=$('#invCards'); if(cc)cc.innerHTML=`
     <div class="stat"><span class="ic">📦</span><div class="label">Inventory Value</div><div class="val">${money(totVal)}</div><div class="foot">${num(totUnits)} units</div></div>
@@ -1645,18 +1671,17 @@ function renderInventory(){
   const host=$('#invList'); if(!host)return;
   if(!DB.products.length){host.innerHTML=`<div class="panel">${emptyBox('📦','No inventory','Add products & purchases to see stock.')}</div>`;return;}
   if(!data.length){host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match your search.')}</div>`;return;}
-  // group by category
-  const groups={}; data.forEach(x=>{ const cat=(x.p.category||'').trim()||'Uncategorised'; (groups[cat]||(groups[cat]=[])).push(x); });
-  const cats=Object.keys(groups).sort((a,b)=>a==='Uncategorised'?1:b==='Uncategorised'?-1:a.localeCompare(b));
-  host.innerHTML=cats.map(cat=>{ const g=groups[cat]; const gVal=g.reduce((a,x)=>a+(x.val>0?x.val:0),0), gU=g.reduce((a,x)=>a+(x.qty>0?x.qty:0),0);
-    return `<div class="cat-head">📂 ${esc(cat)} <span class="cc">${g.length} item${g.length===1?'':'s'}</span> <span class="cc">${num(gU)} units</span> <span class="cc">${money(gVal)}</span></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Product</th><th class="num">In Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th></tr></thead>
-      <tbody>${g.map(x=>`<tr>
-        <td><div class="prodcell">${productThumb(x.p)}<b>${esc(x.p.name)}</b></div></td>
-        <td class="num">${num(x.qty)} ${esc(x.p.unit||'')}</td><td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
-        <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td></tr>`).join('')}
-      </tbody></table></div>`; }).join('');
+  if(_invSort==='category'){
+    const groups={}; data.forEach(x=>{ const cat=(x.p.category||'').trim()||'Uncategorised'; (groups[cat]||(groups[cat]=[])).push(x); });
+    const cats=Object.keys(groups).sort((a,b)=>a==='Uncategorised'?1:b==='Uncategorised'?-1:a.localeCompare(b));
+    host.innerHTML=cats.map(cat=>{ const g=groups[cat]; const gVal=g.reduce((a,x)=>a+(x.val>0?x.val:0),0), gU=g.reduce((a,x)=>a+(x.qty>0?x.qty:0),0);
+      return `<div class="cat-head">📂 ${esc(cat)} <span class="cc">${g.length} item${g.length===1?'':'s'}</span> <span class="cc">${num(gU)} units</span> <span class="cc">${money(gVal)}</span></div>
+      <div class="table-wrap"><table>${INV_HEAD}<tbody>${g.map(invRow).join('')}</tbody></table></div>`; }).join('');
+    return;
+  }
+  const sorters={ recent:(a,b)=>(b.last||'').localeCompare(a.last||''), stockHigh:(a,b)=>b.qty-a.qty, stockLow:(a,b)=>a.qty-b.qty, sold:(a,b)=>b.sold-a.sold, name:(a,b)=>a.p.name.localeCompare(b.p.name) };
+  const sorted=[...data].sort(sorters[_invSort]||sorters.recent);
+  host.innerHTML=`<div class="table-wrap"><table>${INV_HEAD}<tbody>${sorted.map(invRow).join('')}</tbody></table></div>`;
 }
 
 /* =========================================================
