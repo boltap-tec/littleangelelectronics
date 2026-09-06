@@ -235,6 +235,66 @@ td.num,th.num{text-align:right}
 .owner-lock{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;text-align:center;color:var(--muted)}
 .owner-lock .big{font-size:46px;margin-bottom:14px}
 
+/* ===== CREDIT CARDS + BELL ===== */
+.bellwrap{position:relative}
+.bell-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;
+  border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg2)}
+.bell-pop{position:absolute;top:48px;right:0;width:310px;max-width:88vw;background:var(--panel);border:1px solid var(--line2);
+  border-radius:14px;box-shadow:var(--shadow);z-index:90;overflow:hidden}
+.bell-pop .bh{padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;display:flex;justify-content:space-between;align-items:center}
+.bell-pop .bi2{padding:11px 14px;border-bottom:1px solid var(--line);font-size:13px;display:flex;gap:10px;align-items:center;cursor:pointer}
+.bell-pop .bi2:last-child{border-bottom:none}
+.bell-pop .bi2:hover{background:var(--panel2)}
+.bell-pop .bi2 .d{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.bell-empty{padding:22px 14px;text-align:center;color:var(--muted2);font-size:13px}
+
+.ccgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.ccard{position:relative;border-radius:18px;padding:18px;color:#fff;min-height:190px;cursor:pointer;
+  box-shadow:0 14px 32px rgba(0,0,0,.30);display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;
+  border:1px solid rgba(255,255,255,.16)}
+.ccard::after{content:"";position:absolute;inset:0;background:radial-gradient(150px 150px at 88% 8%,rgba(255,255,255,.25),transparent 60%);pointer-events:none}
+.ccard .cc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ccard .cc-name{font-weight:800;font-size:16px;letter-spacing:.3px}
+.ccard .cc-bank{font-size:11.5px;opacity:.85;margin-top:1px}
+.ccard .cc-chip{width:40px;height:29px;border-radius:6px;background:linear-gradient(135deg,#f7e08a,#c9a43b);opacity:.95;flex:0 0 auto;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.ccard .cc-num{font-size:16.5px;letter-spacing:2.5px;opacity:.96;margin-bottom:2px}
+.ccard .cc-foot{display:flex;justify-content:space-between;align-items:flex-end;font-size:11.5px;gap:10px}
+.ccard .cc-avail{font-size:20px;font-weight:800;letter-spacing:.3px}
+.ccbar{height:7px;border-radius:6px;background:rgba(255,255,255,.30);overflow:hidden;margin:9px 0 8px}
+.ccbar>i{display:block;height:100%;background:#fff;border-radius:6px}
+.cc-due{display:inline-block;background:rgba(0,0,0,.22);padding:3px 9px;border-radius:999px;font-weight:700;margin-top:3px}
+.cc-due.warn{background:rgba(255,70,70,.45)}
+.cc-pct{position:absolute;top:16px;right:64px;background:rgba(255,255,255,.22);padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800}
+
+.bar{height:9px;border-radius:6px;background:var(--line);overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--brand2))}
+.tag.purchase{background:var(--brandsoft);color:#c7c9ff;border:1px solid #4338ca}
+.tag.payment,.tag.recharge{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
+.tag.discount{background:var(--ambersoft);color:#f5cf7a;border:1px solid #7a5b1e}
+.card-swatches{display:flex;flex-wrap:wrap;gap:9px}
+.card-swatches .sw{width:46px;height:30px;border-radius:8px}
+body.light .tag.purchase{background:#e6e7ff;color:#4338ca;border-color:#c3c6f5}
+body.light .tag.payment,body.light .tag.recharge{background:#e3f7ea;color:#1f8a4c;border-color:#b6e6c8}
+body.light .tag.discount{background:#fdf1d8;color:#9a6b0f;border-color:#f0dca6}
+.tag.split{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
+body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
+
+/* ===== dashboard quick-tiles (screenshot style) ===== */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px;margin-bottom:8px}
+.tile{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:15px;padding:16px 10px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;cursor:pointer;text-align:center;transition:.14s;min-height:96px}
+.tile:hover{border-color:var(--brand);transform:translateY(-2px);box-shadow:0 10px 24px rgba(99,102,241,.18)}
+.tile .tic{width:44px;height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:22px;
+  background:linear-gradient(135deg,rgba(99,102,241,.22),rgba(99,102,241,.06));border:1px solid var(--line2)}
+.tile .tlab{font-size:12.5px;font-weight:700;color:var(--text);line-height:1.25}
+.li-hint{padding:1px 12px 9px;color:var(--muted2);font-size:11px}
+.cat-head{display:flex;align-items:center;gap:9px;margin:18px 0 9px;font-size:13px;font-weight:800;letter-spacing:.3px;color:var(--muted)}
+.cat-head .cc{background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:2px 10px;font-size:11.5px;color:var(--text)}
+.split-row{display:grid;grid-template-columns:1.1fr 1.4fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px;border-top:1px solid var(--line)}
+.split-row select,.split-row input{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
+@media(max-width:860px){ .split-row{grid-template-columns:1fr 1fr} .split-row .li-x{grid-column:span 2} }
+
 #invoiceArea{background:#fff;color:#111}
 @media print{
   body *{visibility:hidden}
@@ -274,15 +334,11 @@ td.num,th.num{text-align:right}
     <div class="brand-badge" id="loginBadge"></div>
     <h1>Little Angel Electronics</h1>
     <div class="sub">General Trading · Inventory · Billing — Abu Dhabi, UAE</div>
-    <div class="role-toggle">
-      <button id="roleOwner" class="active" onclick="pickRole('owner')">👑 Owner</button>
-      <button id="roleEmp" onclick="pickRole('employee')">🧑‍💼 Employee</button>
-    </div>
-    <div class="field"><label>Username</label><input id="loginUser" autocomplete="off" placeholder="Enter username" /></div>
-    <div class="field"><label>Password</label><input id="loginPass" type="password" placeholder="Enter password" onkeydown="if(event.key==='Enter')doLogin()" /></div>
+    <div class="field"><label>Phone Number</label><input id="loginUser" autocomplete="off" inputmode="tel" placeholder="Enter phone number" onkeydown="if(event.key==='Enter')doLogin()" /></div>
+    <div class="field"><label>PIN</label><input id="loginPass" type="password" inputmode="numeric" placeholder="Enter PIN" onkeydown="if(event.key==='Enter')doLogin()" /></div>
     <button class="btn" onclick="doLogin()">Sign In →</button>
     <div class="err" id="loginErr"></div>
-    <div class="hint">Default logins &nbsp;·&nbsp; Owner: <b>owner / 1234</b><br>Employee: <b>staff / 1234</b><br>Please change the passwords after first login (Settings).</div>
+    <div class="hint">Admin login &nbsp;·&nbsp; <b>9626262427 / 1234</b><br>The admin can add owners & workers and set their roles in Settings.<br>Please change your PIN after first login.</div>
   </div>
 </div>
 
@@ -297,6 +353,10 @@ td.num,th.num{text-align:right}
     </div>
     <div class="spacer"></div>
     <span class="chip"><span class="dot"></span><span id="who">Owner</span></span>
+    <div class="bellwrap" id="bellWrap" data-owner>
+      <button class="icon-btn" title="Card payment reminders" onclick="toggleBell(event)">🔔<span class="bell-badge hidden" id="bellBadge">0</span></button>
+      <div class="bell-pop hidden" id="bellPop"></div>
+    </div>
     <button class="icon-btn" id="themeBtn" title="Switch light / dark" onclick="toggleTheme()">🌙</button>
     <button class="icon-btn" title="Logout" onclick="logout()">⎋</button>
   </div>
@@ -309,7 +369,8 @@ td.num,th.num{text-align:right}
       <div class="nav-tag">Operations</div>
       <div class="nav-item" data-view="purchases" onclick="go('purchases')"><span class="ico">📥</span> Purchases</div>
       <div class="nav-item" data-view="sales" onclick="go('sales')"><span class="ico">🧾</span> Sales &amp; Billing</div>
-      <div class="nav-item" data-view="payments" onclick="go('payments')"><span class="ico">💳</span> Payments</div>
+      <div class="nav-item" data-view="payments" onclick="go('payments')"><span class="ico">💵</span> Payments</div>
+      <div class="nav-item" data-view="cards" data-owner onclick="go('cards')"><span class="ico">💳</span> Credit Cards</div>
       <div class="nav-item" data-view="inventory" onclick="go('inventory')"><span class="ico">📦</span> Inventory</div>
       <div class="nav-item" data-view="products" onclick="go('products')"><span class="ico">🏷️</span> Products</div>
       <div class="nav-sep"></div>
@@ -324,7 +385,7 @@ td.num,th.num{text-align:right}
     <button data-view="dashboard" onclick="go('dashboard')"><span class="bi">📊</span>Home</button>
     <button data-view="purchases" onclick="go('purchases')"><span class="bi">📥</span>Buy</button>
     <button data-view="sales" onclick="go('sales')"><span class="bi">🧾</span>Sell</button>
-    <button data-view="payments" onclick="go('payments')"><span class="bi">💳</span>Pay</button>
+    <button data-view="payments" onclick="go('payments')"><span class="bi">💵</span>Pay</button>
     <button onclick="toggleNav()"><span class="bi">☰</span>More</button>
   </nav>
 </div>
@@ -333,16 +394,70 @@ td.num,th.num{text-align:right}
 <div id="modalRoot"></div>
 <div class="toast" id="toast"><span class="i">✓</span><span id="toastMsg"></span></div>
 
+<!-- Supabase JS SDK (loads global `supabase`; app still works offline if this fails) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* =========================================================
    Little Angel Electronics — offline single-file app
-   Data: localStorage (per device). Backup/Restore in Settings.
-   Designed for future GitHub + Vercel + Supabase (500MB) migration:
+   Data: localStorage (per device) + optional Supabase cloud sync.
+   Cloud: whole app state stored as ONE JSON row in table `app_state`.
+   Designed for GitHub + Vercel + Supabase (500MB) migration:
    - product photos stored as URLs or small thumbnails, not big blobs
    - payment ledger kept per transaction
    ========================================================= */
 
 const KEY='lae_db_v1';
+/* roles & permissions — declared before load()/seed()/migrate() use them */
+const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','inventory','products','profit','settings'];
+const WORKER_DEFAULT=['purchases','sales'];
+const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',inventory:'Inventory',products:'Products',profit:'Profit & Reports',settings:'Settings'};
+
+/* =========================================================
+   SUPABASE CLOUD SYNC  (single shared JSON row)
+   1) Create a free project at https://supabase.com
+   2) Project Settings → API → copy "Project URL" and the "anon public" key
+   3) Paste them below. Leave as-is to run offline (localStorage only).
+   4) Run the SQL from SUPABASE_SETUP.sql in the Supabase SQL Editor.
+   ========================================================= */
+const SUPABASE_URL      = 'https://YOUR-PROJECT.supabase.co'; // ← paste Project URL
+const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';             // ← paste anon public key
+const CLOUD_ROW_ID = 'main';   // one row holds the whole shop's data
+let sb = null;
+const cloudOn = () => /^https:\/\/.+\.supabase\.co/.test(SUPABASE_URL)
+  && !SUPABASE_URL.includes('YOUR-PROJECT')
+  && SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes('YOUR-')
+  && typeof window!=='undefined' && window.supabase;
+function cloudInit(){ if(cloudOn() && !sb){ try{ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); }catch(e){ sb=null; } } return sb; }
+
+let _pushT=null;
+function cloudPush(){                 // debounced upsert of the whole DB blob
+  if(!cloudInit()) return;
+  clearTimeout(_pushT);
+  _pushT=setTimeout(async()=>{
+    try{
+      const { error } = await sb.from('app_state')
+        .upsert({ id:CLOUD_ROW_ID, data:DB, updated_at:new Date().toISOString() });
+      if(error) throw error;
+    }catch(e){ console.warn('Cloud save failed:',e.message||e); toast('Cloud save failed — saved on this device only','bad'); }
+  },600);
+}
+async function cloudPull(){           // fetch cloud copy; seed cloud if empty
+  if(!cloudInit()) return false;
+  try{
+    const { data, error } = await sb.from('app_state').select('data').eq('id',CLOUD_ROW_ID).maybeSingle();
+    if(error) throw error;
+    if(data && data.data){
+      DB = data.data;
+      if(!DB.settings) DB.settings = seed().settings;
+      migrate();
+      localStorage.setItem(KEY, JSON.stringify(DB)); // refresh offline cache (no re-push)
+      return true;
+    }
+    cloudPush();                      // cloud is empty → seed it from this device
+    return false;
+  }catch(e){ console.warn('Cloud load failed:',e.message||e); toast('Cloud offline — using this device','bad'); return false; }
+}
+
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -354,10 +469,9 @@ let DB, session=null, loginRole='owner';
 function seed(){
   return {
     users:[
-      {id:uid(),username:'owner',password:'1234',role:'owner',name:'Owner'},
-      {id:uid(),username:'staff',password:'1234',role:'employee',name:'Staff'}
+      {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
-    products:[], purchases:[], sales:[],
+    products:[], purchases:[], sales:[], cards:[],
     counters:{purchase:0,sale:0},
     settings:{
       company:'LITTLE ANGEL ELECTRONICS GENERAL TRADING - L.L.C - O.P.C',
@@ -379,18 +493,30 @@ function seed(){
   };
 }
 function load(){ try{DB=JSON.parse(localStorage.getItem(KEY))||seed()}catch(e){DB=seed()} if(!DB.settings)DB.settings=seed().settings; migrate(); }
-function save(){ localStorage.setItem(KEY,JSON.stringify(DB)); }
+function save(){ localStorage.setItem(KEY,JSON.stringify(DB)); cloudPush(); }
 /* migrate old records to include payment ledger */
 function migrate(){
   (DB.purchases||[]).forEach(p=>{ const tot=(+p.qty||0)*(+p.rate||0);
     if(p.paid===undefined){ p.paid=tot; p.payments=[{id:uid(),date:p.date,amount:tot,method:p.payment||'cash',ref:'Initial'}]; }
     if(!p.payments)p.payments=[];
+    if(!p.items){ p.items=[{productId:p.productId,qty:+p.qty||0,rate:+p.rate||0}]; }   // legacy → multi-item
   });
+  /* users: ensure phone + pin + role + perms for phone login */
+  (DB.users||[]).forEach((u,i)=>{
+    if(u.role==='employee')u.role='worker';
+    if(u.pin===undefined)u.pin=u.password||'1234';
+    if(u.password===undefined)u.password=u.pin;
+    if(u.phone===undefined)u.phone= (u.role==='owner'&&i===0)?'9626262427':'';
+    if(u.perms===undefined)u.perms= u.role==='owner'?ALL_VIEWS.slice():WORKER_DEFAULT.slice();
+  });
+  if((DB.users||[]).length && !DB.users.some(u=>u.role==='owner')) DB.users[0].role='owner';
   (DB.sales||[]).forEach(s=>{ const tot=+s.total||0;
     if(s.paid===undefined){ s.paid=tot; s.payments=[{id:uid(),date:s.date,amount:tot,method:s.payment||'cash',ref:'Initial'}]; }
     if(!s.payments)s.payments=[];
   });
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
+  if(!DB.cards)DB.cards=[];
+  (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; });
   if(DB.settings.theme===undefined)DB.settings.theme='light';
 }
 load();
@@ -501,7 +627,7 @@ function colorChip(p){ const hex=colorHexOf(p); return p&&p.color?`<div class="c
    ========================================================= */
 function computeEngine(){
   const tx=[];
-  DB.purchases.forEach(p=>tx.push({t:'buy',date:p.date,seq:p.id,productId:p.productId,qty:+p.qty,rate:+p.rate}));
+  DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>tx.push({t:'buy',date:p.date,seq:p.id,productId:it.productId,qty:+it.qty,rate:+it.rate})));
   DB.sales.forEach(s=>s.items.forEach(it=>tx.push({t:'sell',date:s.date,seq:s.id,productId:it.productId,qty:+it.qty,rate:+it.rate,saleId:s.id})));
   tx.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : (a.t==='buy'&&b.t==='sell'?-1 : a.t==='sell'&&b.t==='buy'?1 : (a.seq<b.seq?-1:1)));
   const stock={}, saleCost={};
@@ -517,29 +643,53 @@ function computeEngine(){
   }
   return {stock,saleCost};
 }
-function lastKnownRate(pid){ const ps=DB.purchases.filter(p=>p.productId===pid); return ps.length?+ps[ps.length-1].rate:0; }
+function lastKnownRate(pid){ const rows=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid)rows.push({date:p.date,rate:+it.rate||0}); })); rows.sort((a,b)=>a.date<b.date?-1:1); return rows.length?rows[rows.length-1].rate:0; }
 function productById(id){ return DB.products.find(p=>p.id===id); }
 function stockOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s?s.qty:0; }
 function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s&&s.qty>0? s.totalCost/s.qty : lastKnownRate(pid); }
 function netOf(s){ return (s.subtotal||0) - (s.discount||0); } // sale revenue excl VAT
 
+/* ---- purchase helpers (support legacy single-item + new multi-item) ---- */
+function purchaseItems(p){ return (p.items&&p.items.length)? p.items : (p.productId!==undefined?[{productId:p.productId,qty:+p.qty||0,rate:+p.rate||0}]:[]); }
+function purchaseTotal(p){ return purchaseItems(p).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function purchaseQty(p){ return purchaseItems(p).reduce((a,it)=>a+(+it.qty||0),0); }
+function purchaseFirstName(p){ const its=purchaseItems(p); const f=productById(its[0]?.productId); return f?f.name:'—'; }
+/* ---- history for autocomplete ---- */
+function uniqSorted(a){ return [...new Set((a||[]).map(x=>(x||'').trim()).filter(Boolean))].sort((x,y)=>x.localeCompare(y)); }
+function allSuppliers(){ return uniqSorted(DB.purchases.map(p=>p.supplier)); }
+function allCustomers(){ return uniqSorted(DB.sales.map(s=>s.customer)); }
+function allCategories(){ return uniqSorted(DB.products.map(p=>p.category)); }
+function dataList(id,arr){ return `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`; }
+/* ---- roles & permissions (ALL_VIEWS/WORKER_DEFAULT/VIEW_LABELS declared near top, before load()) ---- */
+function userPerms(u){ if(!u)return[]; if(u.role==='owner')return ALL_VIEWS.slice(); return (u.perms&&u.perms.length)?u.perms.slice():WORKER_DEFAULT.slice(); }
+function canView(v){ if(!session)return false; if(session.role==='owner')return true; return userPerms(session).includes(v); }
+function payMethodTag(m){ return `<span class="tag ${m==='split'?'split':m}">${(m||'').toUpperCase()}</span>`; }
+
 /* =========================================================
    AUTH
    ========================================================= */
-function pickRole(r){ loginRole=r; $('#roleOwner').classList.toggle('active',r==='owner'); $('#roleEmp').classList.toggle('active',r==='employee');
-  $('#loginUser').value = r==='owner'?'owner':'staff'; }
 function doLogin(){
-  const u=$('#loginUser').value.trim(), p=$('#loginPass').value;
-  const user=DB.users.find(x=>x.username.toLowerCase()===u.toLowerCase() && x.password===p);
-  if(!user){ $('#loginErr').textContent='Invalid username or password.'; return; }
-  if(loginRole==='owner' && user.role!=='owner'){ $('#loginErr').textContent='This account is not an Owner account.'; return; }
-  if(loginRole==='employee' && user.role!=='employee'){ $('#loginErr').textContent='This account is not an Employee account.'; return; }
+  const u=$('#loginUser').value.trim().toLowerCase(), p=$('#loginPass').value.trim();
+  const norm=s=>(s||'').toString().replace(/[\s-]/g,'').toLowerCase();
+  const user=DB.users.find(x=>{
+    const idMatch = norm(x.phone)===norm(u) || (x.username&&x.username.toLowerCase()===u);
+    const pinMatch = (x.pin!==undefined&&String(x.pin)===p) || (x.password!==undefined&&String(x.password)===p);
+    return idMatch && pinMatch;
+  });
+  if(!user){ $('#loginErr').textContent='Invalid phone number or PIN.'; return; }
   session=user; $('#loginErr').textContent=''; $('#loginPass').value=''; enterApp();
 }
 function enterApp(){
   $('#login').style.display='none'; $('#app').style.display='block';
-  $('#who').textContent=session.name+' · '+(session.role==='owner'?'Owner':'Employee');
-  applyBrand(); $$('[data-owner]').forEach(el=>el.style.display=isOwner()?'':'none'); go('dashboard');
+  $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
+  applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell();
+}
+/* show/hide nav + bell + bottom-nav by this user's permissions */
+function applyAccess(){
+  const owner=isOwner();
+  $$('[data-owner]').forEach(el=>el.style.display=owner?'':'none');
+  $$('.nav-item[data-view]').forEach(el=>{ const v=el.dataset.view; if(v)el.style.display=canView(v)?'':'none'; });
+  $$('#bottomnav button[data-view]').forEach(el=>{ const v=el.dataset.view; if(v)el.style.display=canView(v)?'':'none'; });
 }
 function logout(){ session=null; $('#app').style.display='none'; $('#login').style.display='flex'; $('#loginPass').value=''; closeModal(); }
 function applyBrand(){ $('#brandName').textContent=S().company; $('#brandCity').textContent=S().city; document.title='Little Angel Electronics';
@@ -554,13 +704,13 @@ function setTheme(t){ S().theme=t; save(); applyTheme(); if($('.nav-item.active'
    ========================================================= */
 const views={};
 function go(v){
-  if(v==='profit' && !isOwner()) v='dashboard';
+  if(!canView(v)) v = canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales');
   $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
   $$('#bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   $('#main').innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
   if(window.innerWidth<=860) closeNav();
-  window.scrollTo(0,0);
+  window.scrollTo(0,0); renderBell();
 }
 function toggleNav(){ $('#sidebar').classList.toggle('open'); $('#backdrop').classList.toggle('show'); }
 function closeNav(){ $('#sidebar').classList.remove('open'); $('#backdrop').classList.remove('show'); }
@@ -569,15 +719,45 @@ function emptyBox(ic,t,s){ return `<div class="empty"><div class="big">${ic}</di
 /* =========================================================
    DASHBOARD
    ========================================================= */
+function dashTiles(){
+  const owner=isOwner();
+  const defs=[
+    {v:'purchases',ic:'📥',lab:'Purchases'},
+    {v:'sales',ic:'🧾',lab:'Sales & Billing'},
+    {v:'inventory',ic:'📦',lab:'Inventory'},
+    {v:'cards',ic:'💳',lab:'Credit Cards'},
+    {v:'payments',ic:'💵',lab:'Payments'},
+    {v:'products',ic:'🏷️',lab:'Products'},
+    {v:'profit',ic:'💰',lab:'Profit & Reports'},
+    {v:'settings',ic:'⚙️',lab:'Settings'}
+  ].filter(t=>canView(t.v));
+  return `<div class="tiles">${defs.map(t=>`<div class="tile" onclick="go('${t.v}')"><div class="tic">${t.ic}</div><div class="tlab">${t.lab}</div></div>`).join('')}</div>`;
+}
+function dashInvProfit(eng){
+  const rows=DB.products.map(p=>{ const qty=stockOf(p.id,eng), avg=avgCostOf(p.id,eng), val=(qty>0?qty:0)*avg;
+    let sold=0,rev=0,prof=0;
+    DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===p.id){ const c=avgCostOf(p.id,eng); sold+=it.qty; rev+=it.qty*it.rate; prof+=it.qty*(it.rate-c); } }));
+    return {p,qty,avg,val,sold,rev,prof}; })
+    .filter(r=>r.qty>0||r.sold>0)
+    .sort((a,b)=>b.prof-a.prof);
+  if(!rows.length) return emptyBox('📦','No inventory yet','Add products & purchases to see stock, cost & profit.');
+  return `<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th class="num">Sold</th><th class="num">Profit / Loss</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td><div class="prodcell">${productThumb(r.p)}<span>${esc(r.p.name)}</span></div></td>
+      <td class="num">${num(r.qty)}</td><td class="num">${money(r.avg)}</td><td class="num">${money(r.val>0?r.val:0)}</td>
+      <td class="num">${num(r.sold)}</td>
+      <td class="num" style="color:${r.prof>=0?'var(--green)':'var(--red)'};font-weight:700">${r.prof<0?'−':''}${money(Math.abs(r.prof))}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 views.dashboard=function(){
   const eng=computeEngine();
-  const totBuy=DB.purchases.reduce((a,p)=>a+p.qty*p.rate,0);
+  const totBuy=DB.purchases.reduce((a,p)=>a+purchaseTotal(p),0);
   const totSell=DB.sales.reduce((a,s)=>a+s.total,0);
   const netSell=DB.sales.reduce((a,s)=>a+netOf(s),0);
   const cost=DB.sales.reduce((a,s)=>a+(eng.saleCost[s.id]||0),0);
   const profit=netSell-cost;
   const recv=DB.sales.reduce((a,s)=>a+Math.max(0,s.total-(s.paid||0)),0);
-  const pay=DB.purchases.reduce((a,p)=>a+Math.max(0,p.qty*p.rate-(p.paid||0)),0);
+  const pay=DB.purchases.reduce((a,p)=>a+Math.max(0,purchaseTotal(p)-(p.paid||0)),0);
   let invValue=0,units=0;
   DB.products.forEach(p=>{const q=stockOf(p.id,eng); if(q>0){units+=q;invValue+=q*avgCostOf(p.id,eng);}});
   const owner=isOwner();
@@ -586,11 +766,13 @@ views.dashboard=function(){
   <div class="page-head">
     <div><h2>Welcome back, ${esc(session.name)} 👋</h2><p>Here's what's happening at Little Angel Electronics today.</p></div>
     <div class="row-actions">
-      <button class="btn-sm" onclick="go('sales');setTimeout(newSale,50)">🧾 New Sale</button>
-      <button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📥 New Purchase</button>
+      ${canView('sales')?`<button class="btn-sm" onclick="go('sales');setTimeout(newSale,50)">🧾 New Sale</button>`:''}
+      ${canView('purchases')?`<button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📥 New Purchase</button>`:''}
     </div>
   </div>
-  <div class="cards">
+  ${owner?`<div class="panel" style="padding:16px 18px 6px"><h3 style="margin-bottom:2px">📦 Inventory · average cost · profit/loss</h3><p class="psub">Live per-product stock, weighted-average cost & profit earned so far</p>${dashInvProfit(eng)}</div>`:''}
+  ${dashTiles()}
+  <div class="cards" style="margin-top:14px">
     <div class="stat gold"><span class="ic">🧾</span><div class="label">Total Sales</div><div class="val">${money(totSell)}</div><div class="foot">${DB.sales.length} invoice(s)</div></div>
     <div class="stat blue"><span class="ic">📥</span><div class="label">Total Purchases</div><div class="val">${money(totBuy)}</div><div class="foot">${DB.purchases.length} entry(s)</div></div>
     ${owner?`<div class="stat green"><span class="ic">💰</span><div class="label">Gross Profit</div><div class="val">${money(profit)}</div><div class="foot">Net sales (excl VAT) − cost</div></div>`:''}
@@ -653,7 +835,7 @@ function editProduct(id){
   openModal(`${id?'Edit':'Add'} Product`,`
     <div class="field"><label>Product Name *</label><input id="p_name" value="${esc(p.name)}" placeholder="e.g. iPhone 15 Pro" oninput="prodPreview()"></div>
     <div class="grid2">
-      <div class="field"><label>Category</label><input id="p_cat" value="${esc(p.category||'')}" placeholder="e.g. Mobile / Laptop / Television" oninput="prodPreview()"></div>
+      <div class="field"><label>Category</label><input id="p_cat" list="dl_cat_p" value="${esc(p.category||'')}" placeholder="new or existing — e.g. Mobile / Laptop" oninput="prodPreview()">${dataList('dl_cat_p',allCategories())}<div style="color:var(--muted2);font-size:11px;margin-top:5px">Pick an existing category or type a new one — inventory groups by category.</div></div>
       <div class="field"><label>Unit</label><input id="p_unit" value="${esc(p.unit||'pcs')}" placeholder="pcs / box"></div>
     </div>
     <div class="field"><label>Colour / Variant</label>
@@ -701,7 +883,7 @@ function saveProduct(id){
   save();closeModal();renderProducts();toast('Product saved');
 }
 function delProduct(id){
-  const used=DB.purchases.some(p=>p.productId===id)||DB.sales.some(s=>s.items.some(i=>i.productId===id));
+  const used=DB.purchases.some(p=>purchaseItems(p).some(it=>it.productId===id))||DB.sales.some(s=>s.items.some(i=>i.productId===id));
   if(used)return toast('Cannot delete: product used in purchases/sales',1);
   confirmBox('Delete product?','This cannot be undone.',()=>{DB.products=DB.products.filter(p=>p.id!==id);save();renderProducts();toast('Product deleted');});
 }
@@ -720,65 +902,166 @@ views._after_purchases=renderPurchases;
 function renderPurchases(){
   const host=$('#buyList'); if(!host)return;
   const q=($('#buySearch')?.value||'').toLowerCase();
-  const rows=[...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).filter(p=>{const pr=productById(p.productId);return (pr&&pr.name.toLowerCase().includes(q))||(p.supplier||'').toLowerCase().includes(q);});
+  const match=p=> purchaseItems(p).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);}) || (p.supplier||'').toLowerCase().includes(q) || (p.ref||'').toLowerCase().includes(q);
+  const rows=[...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).filter(match);
   if(!DB.purchases.length){host.innerHTML=`<div class="panel">${emptyBox('📥','No purchases yet','Record your first stock purchase.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>Ref</th><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
-    <tbody>${rows.map(p=>{const pr=productById(p.productId),tot=p.qty*p.rate;return `<tr>
+    <thead><tr><th>Ref</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
+    <tbody>${rows.map(p=>{const tot=purchaseTotal(p),its=purchaseItems(p),more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';return `<tr>
       <td><b>${esc(p.ref)}</b></td><td>${fmtDate(p.date)}</td>
-      <td><div class="prodcell">${pr?productThumb(pr):''}<span>${esc(pr?pr.name:'—')}</span></div></td>
-      <td class="num">${num(p.qty)}</td><td class="num">${money(p.rate)}</td><td class="num"><b>${money(tot)}</b></td>
-      <td>${esc(p.supplier||'—')}</td><td><span class="tag ${p.payment}">${p.payment.toUpperCase()}</span></td>
+      <td>${esc(purchaseFirstName(p))}${more}</td>
+      <td class="num">${num(purchaseQty(p))}</td><td class="num"><b>${money(tot)}</b></td>
+      <td>${esc(p.supplier||'—')}</td><td>${payMethodTag(p.payment||'cash')}</td>
       <td>${statusTag(tot,p.paid)}</td>
       <td class="num">${payStatus(tot,p.paid)!=='paid'?`<button class="mini-btn gold" onclick="recordPay('purchase','${p.id}')">Pay</button>`:''}
       <button class="mini-btn" onclick="newPurchase('${p.id}')">Edit</button>
       <button class="mini-btn red" onclick="delPurchase('${p.id}')">Del</button></td></tr>`}).join('')}
     </tbody></table></div>`;
 }
+let buyItems=[], buySplits=[], _buyEditId='';
 function newPurchase(id){
-  if(!DB.products.length)return confirmBox('No products yet','Add a product first, then record a purchase.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
-  const p=id?DB.purchases.find(x=>x.id===id):{date:todayStr(),productId:DB.products[0].id,qty:1,rate:'',supplier:'',payment:'card',cardRef:'',paid:null};
-  const opts=DB.products.map(x=>`<option value="${x.id}" ${x.id===p.productId?'selected':''}>${esc(x.name)}</option>`).join('');
+  const p=id?DB.purchases.find(x=>x.id===id):null;
+  _buyEditId=id||'';
+  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:DB.products[0]?.id||'',qty:1,rate:''}];
+  if(!buyItems.length)buyItems=[{productId:DB.products[0]?.id||'',qty:1,rate:''}];
+  buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:pm.method||'cash',cardId:pm.cardId||'',cardRef:pm.cardId?'':'',amount:pm.amount}))
+    : [{method:(DB.cards&&DB.cards.length)?'card':'cash',cardId:(DB.cards&&DB.cards.length)?DB.cards[0].id:'',amount:''}];
+  renderPurchaseModal();
+}
+function renderPurchaseModal(){
+  const id=_buyEditId, p=id?DB.purchases.find(x=>x.id===id):null;
   openModal(`${id?'Edit':'New'} Purchase`,`
     <div class="grid2">
-      <div class="field"><label>Date *</label><input id="b_date" type="date" value="${p.date}"></div>
-      <div class="field"><label>Product *</label><select id="b_prod">${opts}</select></div>
+      <div class="field"><label>Date *</label><input id="b_date" type="date" value="${p?p.date:todayStr()}"></div>
+      <div class="field"><label>Supplier (purchaser name)</label><input id="b_sup" list="dl_sup" value="${esc(p?p.supplier||'':'')}" placeholder="e.g. Carrefour Deira">${dataList('dl_sup',allSuppliers())}</div>
     </div>
-    <div class="grid3">
-      <div class="field"><label>Quantity *</label><input id="b_qty" type="number" min="0" step="any" value="${p.qty}" oninput="buyCalc()"></div>
-      <div class="field"><label>Rate / unit (${S().currency}) *</label><input id="b_rate" type="number" min="0" step="any" value="${p.rate}" placeholder="0.00" oninput="buyCalc()"></div>
-      <div class="field"><label>Total</label><input id="b_total" disabled value="0.00"></div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
+    <div class="line-items"><div class="li-head"><div>Product</div><div>Qty</div><div>Cost/unit</div><div>Amount</div><div></div></div><div id="b_rows"></div></div>
+    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addBuyRow()">＋ Add product</button><button class="mini-btn" onclick="buyNewProdToggle()">✨ New product</button></div>
+    <div id="b_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
+      <div class="grid3">
+        <div class="field"><label>Name *</label><input id="np_name" placeholder="Product name"></div>
+        <div class="field"><label>Category</label><input id="np_cat" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
+        <div class="field"><label>Colour</label><input id="np_color" placeholder="optional"></div>
+      </div>
+      <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn gold" onclick="buyAddNewProduct()">Add to list</button><button class="mini-btn" onclick="buyNewProdToggle()">Close</button></div>
     </div>
-    <div class="grid2">
-      <div class="field"><label>Supplier</label><input id="b_sup" value="${esc(p.supplier||'')}" placeholder="e.g. Carrefour Deira"></div>
-      <div class="field"><label>Payment Method</label><select id="b_pay" onchange="buyPayToggle()">
-        <option value="card" ${p.payment==='card'?'selected':''}>Credit Card</option>
-        <option value="cash" ${p.payment==='cash'?'selected':''}>Cash</option>
-        <option value="bank" ${p.payment==='bank'?'selected':''}>Bank Transfer</option></select></div>
-    </div>
-    <div class="grid2">
-      <div class="field" id="b_cardWrap" style="${p.payment==='card'?'':'display:none'}"><label>Card Reference (last 4 / name)</label><input id="b_card" value="${esc(p.cardRef||'')}" placeholder="e.g. Visa ••1234"></div>
-      <div class="field"><label>Amount Paid Now (${S().currency})</label><input id="b_paid" type="number" min="0" step="any" value="${p.paid==null?'':p.paid}" placeholder="Leave blank = full"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Enter less than total to buy on credit.</div></div>
-    </div>`,
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination *</label>
+    <div class="line-items"><div id="b_splits"></div></div>
+    <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="addBuySplit()">＋ Add payment</button><button class="mini-btn gold" onclick="buyFillRemaining()">Fill balance</button></div>
+    <div class="totbox" id="b_tot"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="savePurchase('${id||''}')">Save Purchase</button>`);
-  buyCalc();
+  renderBuyRows(); renderBuySplits();
 }
-function buyCalc(){const q=+($('#b_qty').value||0),r=+($('#b_rate').value||0);if($('#b_total'))$('#b_total').value=num(q*r);}
-function buyPayToggle(){$('#b_cardWrap').style.display=$('#b_pay').value==='card'?'':'none';}
+function buyProdOpts(sel){ return DB.products.length? DB.products.map(x=>`<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)}</option>`).join('') : '<option value="">— add a product first —</option>'; }
+function renderBuyRows(){
+  const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
+  host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
+    return `<div class="li-row">
+      <select onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId)}</select>
+      <input type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="buyItems[${i}].qty=+this.value;buyCalcTotal()">
+      <input type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
+      <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
+      <button class="li-x" onclick="buyItems.splice(${i},1);renderBuyRows()">✕</button>
+    </div><div class="li-hint">In stock ${num(st)}${last?` · last cost ${money(last)}`:''}</div>`; }).join('');
+  buyCalcTotal();
+}
+function addBuyRow(){ buyItems.push({productId:DB.products[0]?.id||'',qty:1,rate:''}); renderBuyRows(); }
+function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#np_name')?.focus(),30); }
+function buyAddNewProduct(){
+  const name=$('#np_name').value.trim(); if(!name)return toast('Enter a product name',1);
+  const color=$('#np_color').value.trim();
+  const np={id:uid(),name,category:$('#np_cat').value.trim(),unit:'pcs',sku:'',imageUrl:'',color,colorHex:color?guessHex(color):''};
+  DB.products.push(np); save();
+  buyItems.push({productId:np.id,qty:1,rate:''});
+  buyNewProdToggle(); renderBuyRows(); toast('Product "'+name+'" added');
+}
+function buyItemsTotal(){ return buyItems.reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function renderBuySplits(){
+  const host=$('#b_splits'); if(!host)return; const cards=DB.cards||[];
+  host.innerHTML=buySplits.map((s,i)=>`<div class="split-row">
+    <select onchange="buySplits[${i}].method=this.value;renderBuySplits()">
+      <option value="cash" ${s.method==='cash'?'selected':''}>Cash</option>
+      <option value="bank" ${s.method==='bank'?'selected':''}>Bank</option>
+      <option value="card" ${s.method==='card'?'selected':''}>Card</option></select>
+    ${s.method==='card' ? `<select onchange="buySplitCardPick(${i},this.value)">
+        <option value="">— select card —</option>
+        ${cards.map(c=>`<option value="${c.id}" ${c.id===s.cardId?'selected':''}>${esc(c.name)} · avail ${money(cardAvailable(c))}</option>`).join('')}
+        <option value="__new">＋ Add new card…</option>
+      </select>`
+      : `<div style="color:var(--muted2);font-size:12px;align-self:center">${s.method==='bank'?'Bank transfer':'Cash'}</div>`}
+    <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal()">
+    <button class="li-x" onclick="buySplits.splice(${i},1);renderBuySplits()">✕</button>
+  </div>`).join('');
+  buyCalcTotal();
+}
+function addBuySplit(){ buySplits.push({method:'cash',cardId:'',amount:''}); renderBuySplits(); }
+function buySplitCardPick(i,val){ if(val==='__new'){ quickAddCardFromPurchase(i); return; } buySplits[i].cardId=val; buyCalcTotal(); }
+function quickAddCardFromPurchase(i){
+  openModal('Add Card',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Quick-add a card — it's saved to Card Master and selected for this payment. Fine-tune colour, alerts & opening balance later in Credit Cards.</p>
+    <div class="grid2">
+      <div class="field"><label>Card Name *</label><input id="qc_name" placeholder="e.g. ADCB Visa"></div>
+      <div class="field"><label>Bank / Issuer</label><input id="qc_bank" placeholder="e.g. ADCB"></div>
+    </div>
+    <div class="field"><label>Card Number</label><input id="qc_number" inputmode="numeric" placeholder="stored on device, shown masked (last 4)"></div>
+    <div class="grid3">
+      <div class="field"><label>Monthly Limit (${S().currency}) *</label><input id="qc_limit" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Commission Discount</label><select id="qc_disc">${[0,1,2,3,5].map(v=>`<option value="${v}">${v}%</option>`).join('')}</select></div>
+      <div class="field"><label>Payment Day (1–31)</label><input id="qc_day" type="number" min="1" max="31" value="1"></div>
+    </div>
+    <div class="field"><label>Max Discount / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
+     <button class="btn-sm" onclick="quickSaveCard(${i})">Save Card</button>`);
+  setTimeout(()=>$('#qc_name')?.focus(),30);
+}
+function quickSaveCard(i){
+  const name=$('#qc_name').value.trim(); if(!name)return toast('Card name is required',1);
+  const day=Math.min(31,Math.max(1,+$('#qc_day').value||1));
+  const c={id:uid(),name,bank:$('#qc_bank').value.trim(),number:$('#qc_number').value.trim(),theme:'indigo',
+    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,discountPercent:+$('#qc_disc').value||0,
+    maxDiscountMonthly:+$('#qc_maxdisc').value||0,paymentDay:day,openingOutstanding:0,txns:[]};
+  DB.cards.push(c); save(); renderBell();
+  buySplits[i].method='card'; buySplits[i].cardId=c.id;
+  toast('Card "'+name+'" added to Card Master');
+  renderPurchaseModal();
+}
+function buyFillRemaining(){ const rem=buyItemsTotal()-buySplits.reduce((a,s)=>a+(+s.amount||0),0);
+  if(rem>0.001){ if(buySplits.length)buySplits[buySplits.length-1].amount=(+buySplits[buySplits.length-1].amount||0)+rem; else buySplits.push({method:'cash',cardId:'',amount:rem}); renderBuySplits(); } }
+function buyCalcTotal(){
+  const tot=buyItemsTotal(), paid=buySplits.reduce((a,s)=>a+(+s.amount||0),0), rem=tot-paid;
+  const box=$('#b_tot'); if(box)box.innerHTML=`
+    <div class="totrow"><span>Items total</span><span>${money(tot)}</span></div>
+    <div class="totrow"><span>Paid now</span><span>${money(paid)}</span></div>
+    <div class="totrow grand"><span>${Math.abs(rem)<0.01?'Fully paid':(rem>0?'Balance (supplier credit)':'Overpaid')}</span>
+      <span style="color:${Math.abs(rem)<0.01?'var(--green)':(rem>0?'var(--amber)':'var(--red)')}">${money(Math.abs(rem))}</span></div>`;
+  $$('#b_rows .li-row').forEach((row,i)=>{const amt=row.querySelector('input[disabled]');if(amt&&buyItems[i])amt.value=num((+buyItems[i].qty||0)*(+buyItems[i].rate||0));});
+}
 function savePurchase(id){
-  const qty=+$('#b_qty').value,rate=+$('#b_rate').value;
-  if(!(qty>0))return toast('Enter a valid quantity',1);
-  if($('#b_rate').value===''||!(rate>=0))return toast('Enter the purchase rate',1);
-  const tot=qty*rate, method=$('#b_pay').value;
-  const paidRaw=$('#b_paid').value; let paid=paidRaw===''?tot:Math.max(0,+paidRaw); if(paid>tot)paid=tot;
-  const data={date:$('#b_date').value,productId:$('#b_prod').value,qty,rate,supplier:$('#b_sup').value.trim(),payment:method,cardRef:method==='card'?$('#b_card').value.trim():''};
-  if(id){const rec=DB.purchases.find(x=>x.id===id); Object.assign(rec,data); rec.paid=paid;
-    rec.payments=paid>0?[{id:uid(),date:data.date,amount:paid,method,ref:'Updated'}]:[];}
-  else{DB.counters.purchase++;DB.purchases.push({id:uid(),ref:'PUR-'+String(DB.counters.purchase).padStart(4,'0'),...data,paid,payments:paid>0?[{id:uid(),date:data.date,amount:paid,method,ref:'Initial'}]:[]});}
-  save();closeModal();renderPurchases();toast('Purchase saved');
+  const items=buyItems.filter(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}));
+  if(!items.length)return toast('Add at least one product with qty & cost',1);
+  const tot=items.reduce((a,it)=>a+it.qty*it.rate,0);
+  const rawSplits=buySplits.filter(s=>+s.amount>0);
+  if(rawSplits.some(s=>s.method==='card' && (DB.cards&&DB.cards.length) && !s.cardId))return toast('Pick a card for each card payment',1);
+  const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
+  const splits=rawSplits.map(s=>({method:s.method,cardId:s.method==='card'?(s.cardId||''):'',amount:+s.amount}));
+  let paid=splits.reduce((a,s)=>a+s.amount,0); if(paid>tot+0.01)paid=tot;
+  const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
+  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',ref:'Initial'}));
+  const data={date,supplier,items,payment:methodTag,paid,payments};
+  let purchaseId, ref;
+  if(id){const rec=DB.purchases.find(x=>x.id===id);
+    ['productId','qty','rate','cardId','cardRef'].forEach(k=>delete rec[k]);
+    Object.assign(rec,data); purchaseId=id; ref=rec.ref; unlinkPurchaseFromCards(id);
+  } else { DB.counters.purchase++; purchaseId=uid(); ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
+    DB.purchases.push({id:purchaseId,ref,...data}); }
+  const charged=[];
+  splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
+  save();closeModal();renderPurchases();renderBell();
+  toast(charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved');
 }
-function delPurchase(id){confirmBox('Delete purchase?','Inventory, cost & payments will recalculate.',()=>{DB.purchases=DB.purchases.filter(p=>p.id!==id);save();renderPurchases();toast('Purchase deleted');});}
+function delPurchase(id){confirmBox('Delete purchase?','Inventory, cost, card balance & payments will recalculate.',()=>{unlinkPurchaseFromCards(id);DB.purchases=DB.purchases.filter(p=>p.id!==id);save();renderPurchases();renderBell();toast('Purchase deleted');});}
 
 /* =========================================================
    SALES & BILLING
@@ -812,15 +1095,18 @@ function renderSales(){
       <button class="mini-btn red" onclick="delSale('${s.id}')">Del</button></td></tr>`}).join('')}
     </tbody></table></div>`;
 }
+let _saleEditId='', _saleOldQty={};
+function saleAvail(pid,eng){ return stockOf(pid,eng||computeEngine()) + (_saleOldQty[pid]||0); }
 function newSale(id){
   if(!DB.products.length)return confirmBox('No products yet','Add a product (and some stock) before selling.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
   const s=id?DB.sales.find(x=>x.id===id):null;
+  _saleEditId=id||''; _saleOldQty={}; if(s)s.items.forEach(it=>_saleOldQty[it.productId]=(_saleOldQty[it.productId]||0)+(+it.qty||0));
   saleDraft = s? s.items.map(i=>({...i})) : [{productId:DB.products[0].id,qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
       <div class="field"><label>Date *</label><input id="s_date" type="date" value="${date}"></div>
-      <div class="field"><label>Customer</label><input id="s_cust" value="${esc(cust||'')}" placeholder="Walk-in"></div>
+      <div class="field"><label>Customer (buyer name)</label><input id="s_cust" list="dl_cust" value="${esc(cust||'')}" placeholder="Walk-in">${dataList('dl_cust',allCustomers())}</div>
       <div class="field"><label>Customer Phone</label><input id="s_phone" value="${esc(phone||'')}" placeholder="optional"></div>
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Items *</label>
@@ -845,17 +1131,18 @@ function newSale(id){
 }
 function saleProdOpts(sel){return DB.products.map(x=>`<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)}</option>`).join('');}
 function renderSaleRows(){
-  const host=$('#s_rows');
-  host.innerHTML=saleDraft.map((it,i)=>`<div class="li-row">
-    <select onchange="saleDraft[${i}].productId=this.value;saleCalc()">${saleProdOpts(it.productId)}</select>
-    <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty">
-    <input type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Rate">
+  const host=$('#s_rows'); if(!host)return; const eng=computeEngine();
+  host.innerHTML=saleDraft.map((it,i)=>{ const avg=it.productId?avgCostOf(it.productId,eng):0, avail=it.productId?saleAvail(it.productId,eng):0, over=(+it.qty||0)>avail+1e-9;
+    return `<div class="li-row">
+    <select onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId)}</select>
+    <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" style="${over?'border-color:var(--red)':''}">
+    <input type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
     <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
-    <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows();saleCalc()">✕</button>
-  </div>`).join('');
+    <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows()">✕</button>
+  </div><div class="li-hint">Avg cost ${money(avg)} · available ${num(avail)}${over?` · <span style="color:var(--red)">⚠ exceeds stock</span>`:''}${(+it.rate>0&&+it.rate<avg)?` · <span style="color:var(--red)">below cost</span>`:''}</div>`; }).join('');
   saleCalc();
 }
-function addSaleRow(){saleDraft.push({productId:DB.products[0].id,qty:1,rate:''});renderSaleRows();}
+function addSaleRow(){saleDraft.push({productId:DB.products[0]?.id||'',qty:1,rate:''});renderSaleRows();}
 function saleCalc(){
   const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
   const disc=+($('#s_disc')?.value||0);
@@ -873,6 +1160,9 @@ function saleCalc(){
 function saveSale(id,print){
   const items=saleDraft.filter(i=>i.productId&&(+i.qty>0)&&i.rate!==''&&(+i.rate>=0));
   if(!items.length)return toast('Add at least one item with qty & rate',1);
+  // block selling more than available stock (accounting for this sale's own existing qty when editing)
+  const eng=computeEngine(), req={}; items.forEach(i=>req[i.productId]=(req[i.productId]||0)+(+i.qty||0));
+  for(const pid in req){ const avail=saleAvail(pid,eng); if(req[pid]>avail+1e-9){ const pr=productById(pid); return toast(`Not enough stock for ${pr?pr.name:'item'} — available ${num(avail)}, needed ${num(req[pid])}`,1); } }
   const t=$('#s_tot')._t, method=$('#s_pay').value;
   const paidRaw=$('#s_paid').value; let paid=paidRaw===''?t.total:Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
   const data={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
@@ -967,7 +1257,7 @@ views._after_payments=renderPayments;
 function renderPayments(){
   let inTot=0,outTot=0,recv=0,payl=0,inCash=0,inCard=0,inBank=0,outCash=0,outCard=0,outBank=0;
   DB.sales.forEach(s=>{inTot+=s.paid||0;recv+=Math.max(0,s.total-(s.paid||0));(s.payments||[]).forEach(pm=>{if(pm.method==='card')inCard+=pm.amount;else if(pm.method==='bank')inBank+=pm.amount;else inCash+=pm.amount;});});
-  DB.purchases.forEach(p=>{const tot=p.qty*p.rate;outTot+=p.paid||0;payl+=Math.max(0,tot-(p.paid||0));(p.payments||[]).forEach(pm=>{if(pm.method==='card')outCard+=pm.amount;else if(pm.method==='bank')outBank+=pm.amount;else outCash+=pm.amount;});});
+  DB.purchases.forEach(p=>{const tot=purchaseTotal(p);outTot+=p.paid||0;payl+=Math.max(0,tot-(p.paid||0));(p.payments||[]).forEach(pm=>{if(pm.method==='card')outCard+=pm.amount;else if(pm.method==='bank')outBank+=pm.amount;else outCash+=pm.amount;});});
   const cc=$('#payCards'); if(cc)cc.innerHTML=`
     <div class="stat green"><span class="ic">💵</span><div class="label">Money In (received)</div><div class="val">${money(inTot)}</div><div class="foot">Cash ${money(inCash)} · Card ${money(inCard)} · Bank ${money(inBank)}</div></div>
     <div class="stat blue"><span class="ic">💸</span><div class="label">Money Out (paid)</div><div class="val">${money(outTot)}</div><div class="foot">Cash ${money(outCash)} · Card ${money(outCard)} · Bank ${money(outBank)}</div></div>
@@ -981,10 +1271,10 @@ function renderPayments(){
       <td class="num"><button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button></td></tr>`).join('')}</tbody></table></div>`
     :emptyBox('✅','All collected','No customer balances outstanding.');
 
-  const payRows=DB.purchases.filter(p=>p.qty*p.rate-(p.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
+  const payRows=DB.purchases.filter(p=>purchaseTotal(p)-(p.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
   $('#payblList').innerHTML=payRows.length?`<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Supplier</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
-    <tbody>${payRows.map(p=>`<tr><td><b>${esc(p.ref)}</b></td><td>${esc(p.supplier||'—')}</td><td class="num">${money(p.qty*p.rate)}</td>
-      <td class="num" style="color:var(--red)">${money(p.qty*p.rate-(p.paid||0))}</td>
+    <tbody>${payRows.map(p=>`<tr><td><b>${esc(p.ref)}</b></td><td>${esc(p.supplier||'—')}</td><td class="num">${money(purchaseTotal(p))}</td>
+      <td class="num" style="color:var(--red)">${money(purchaseTotal(p)-(p.paid||0))}</td>
       <td class="num"><button class="mini-btn gold" onclick="recordPay('purchase','${p.id}')">Pay</button></td></tr>`).join('')}</tbody></table></div>`
     :emptyBox('✅','All settled','No supplier balances outstanding.');
 
@@ -1003,7 +1293,7 @@ function renderPayments(){
 function recordPay(kind,id){
   const rec = kind==='sale'? DB.sales.find(s=>s.id===id) : DB.purchases.find(p=>p.id===id);
   if(!rec)return;
-  const total = kind==='sale'? rec.total : rec.qty*rec.rate;
+  const total = kind==='sale'? rec.total : purchaseTotal(rec);
   const bal = total-(rec.paid||0);
   openModal(kind==='sale'?'Collect Payment':'Pay Supplier',`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13.5px">${kind==='sale'?'Invoice':'Ref'} <b style="color:var(--text)">${esc(kind==='sale'?rec.invoiceNo:rec.ref)}</b> · Balance <b style="color:var(--amber)">${money(bal)}</b></p>
@@ -1019,7 +1309,7 @@ function recordPay(kind,id){
 }
 function savePay(kind,id){
   const rec = kind==='sale'? DB.sales.find(s=>s.id===id) : DB.purchases.find(p=>p.id===id);
-  const total = kind==='sale'? rec.total : rec.qty*rec.rate;
+  const total = kind==='sale'? rec.total : purchaseTotal(rec);
   let amt=+$('#pm_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   const bal=total-(rec.paid||0); if(amt>bal+0.01)amt=bal;
   rec.paid=(rec.paid||0)+amt; if(!rec.payments)rec.payments=[];
@@ -1028,6 +1318,204 @@ function savePay(kind,id){
   toast(kind==='sale'?'Payment collected':'Payment recorded');
   const active=$('.nav-item.active')?.dataset.view;
   if(active==='payments')renderPayments(); else if(active==='sales')renderSales(); else if(active==='purchases')renderPurchases(); else go(active||'dashboard');
+}
+
+/* =========================================================
+   CREDIT CARDS  (module 2)
+   ========================================================= */
+const CARD_THEMES=[
+  {k:'indigo', g:'linear-gradient(135deg,#4f46e5,#7c3aed)'},
+  {k:'sky',    g:'linear-gradient(135deg,#0ea5e9,#2563eb)'},
+  {k:'emerald',g:'linear-gradient(135deg,#059669,#10b981)'},
+  {k:'gold',   g:'linear-gradient(135deg,#a9791b,#f5b301)'},
+  {k:'rose',   g:'linear-gradient(135deg,#e11d48,#fb7185)'},
+  {k:'slate',  g:'linear-gradient(135deg,#3b4a63,#0f172a)'}
+];
+function cardGrad(c){ return (CARD_THEMES.find(t=>t.k===(c&&c.theme))||CARD_THEMES[0]).g; }
+function cardById(id){ return (DB.cards||[]).find(c=>c.id===id); }
+function maskCard(n){ n=(n||'').replace(/\s+/g,''); if(!n)return '•••• •••• •••• ••••'; return '•••• •••• •••• '+n.slice(-4).padStart(4,'•'); }
+function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function ym(d){ return (d||'').slice(0,7); }
+/* outstanding = opening + purchases − (payments+recharges+discounts) */
+function cardOutstanding(c){ let o=+c.openingOutstanding||0;
+  (c.txns||[]).forEach(t=> o += (t.type==='purchase' ? (+t.amount||0) : -(+t.amount||0)) ); return o; }
+function cardAvailable(c){ return (+c.creditLimit||0) - cardOutstanding(c); }
+function cardDiscountInMonth(c,m){ return (c.txns||[]).filter(t=>t.type==='discount' && ym(t.date)===m).reduce((s,t)=>s+(+t.amount||0),0); }
+function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date(); t.setHours(0,0,0,0);
+  const mk=(y,m)=>new Date(y,m,Math.min(day,new Date(y,m+1,0).getDate()));
+  let y=t.getFullYear(),m=t.getMonth(),d=mk(y,m); if(d<t){ if(++m>11){m=0;y++;} d=mk(y,m); } return d; }
+function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
+function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
+  .filter(r=>r.dleft<=5).sort((a,b)=>a.dleft-b.dleft); }
+/* add a purchase charge to a card + auto commission discount (respecting monthly cap) */
+function chargeCard(c,amount,date,note,srcPurchaseId){
+  if(!c.txns)c.txns=[];
+  c.txns.push({id:uid(),date,type:'purchase',amount:+amount||0,note:note||'Purchase',srcPurchaseId});
+  const pct=+c.discountPercent||0;
+  if(pct>0 && amount>0){ const cap=+c.maxDiscountMonthly||0, used=cardDiscountInMonth(c,ym(date));
+    let disc=amount*pct/100; if(cap>0) disc=Math.min(disc,Math.max(0,cap-used)); disc=Math.round(disc*100)/100;
+    if(disc>0) c.txns.push({id:uid(),date,type:'discount',amount:disc,note:'Commission '+pct+'%',srcPurchaseId}); }
+}
+function unlinkPurchaseFromCards(pid){ (DB.cards||[]).forEach(c=>{ if(c.txns) c.txns=c.txns.filter(t=>t.srcPurchaseId!==pid); }); }
+
+/* ---- bell reminders ---- */
+function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length;
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+function toggleBell(e){ if(e)e.stopPropagation(); const pop=$('#bellPop'); if(!pop)return;
+  if(pop.classList.contains('hidden')){ renderBellPop(); pop.classList.remove('hidden'); } else pop.classList.add('hidden'); }
+function closeBell(){ $('#bellPop')?.classList.add('hidden'); }
+function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return; const rem=cardReminders();
+  pop.innerHTML=`<div class="bh"><span>🔔 Card payment reminders</span><span style="color:var(--muted2);font-weight:600">${rem.length}</span></div>`+
+    (rem.length? rem.map(r=>{ const warn=r.dleft<=1; return `<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${r.c.id}'),40)">
+        <span class="d" style="background:${warn?'var(--red)':'var(--amber)'}"></span>
+        <div style="flex:1"><b>${esc(r.c.name)}</b><div style="color:var(--muted);font-size:12px">Due ${fmtDate(isoDate(r.due))} · ${r.dleft===0?'today':'in '+r.dleft+' day'+(r.dleft===1?'':'s')}</div></div>
+        <div style="text-align:right;font-weight:800;color:${r.out>0?'var(--amber)':'var(--muted2)'}">${money(r.out)}</div></div>`}).join('')
+      : `<div class="bell-empty">No card payments due in the next 5 days 🎉</div>`);
+}
+
+/* ---- card visual ---- */
+function cardVisual(c){
+  const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
+  const usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
+  const due=nextDue(c.paymentDay), dleft=daysUntil(due), warn=dleft<=3;
+  const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
+  return `<div class="ccard" style="background:${cardGrad(c)}" onclick="cardDetail('${c.id}')">
+    ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% back</div>`:''}
+    <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}</div></div><div class="cc-chip"></div></div>
+    <div>
+      <div class="cc-num">${maskCard(c.number)}</div>
+      <div class="ccbar"><i style="width:${usedPct}%"></i></div>
+      <div class="cc-foot">
+        <div><div style="opacity:.85">Available${low?' ⚠️':''}</div><div class="cc-avail">${money(avail)}</div></div>
+        <div style="text-align:right"><div style="opacity:.85;margin-bottom:2px">Limit ${money(limit)}</div><span class="cc-due ${warn?'warn':''}">Due ${fmtDate(isoDate(due))} · ${dleft===0?'today':dleft+'d'}</span></div>
+      </div>
+    </div></div>`;
+}
+
+/* ---- Cards view ---- */
+views.cards=function(){
+  return `
+  <div class="page-head"><div><h2>Credit Cards</h2><p>Card limits, balances, monthly commission discount & payment-date reminders.</p></div>
+    <button class="btn-sm" onclick="editCard()">＋ Add Card</button></div>
+  <div id="cardStats" class="cards"></div>
+  <div id="cardsWrap"></div>`;
+};
+views._after_cards=renderCards;
+function renderCards(){
+  const host=$('#cardsWrap'); if(!host)return;
+  const cards=DB.cards||[], m=ym(todayStr());
+  let tL=0,tA=0,tO=0,tD=0;
+  cards.forEach(c=>{ const l=+c.creditLimit||0,o=cardOutstanding(c); tL+=l; tO+=o; tA+=l-o; tD+=cardDiscountInMonth(c,m); });
+  const cs=$('#cardStats'); if(cs)cs.innerHTML=cards.length?`
+    <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${cards.length} card${cards.length===1?'':'s'}</div></div>
+    <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
+    <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
+    <div class="stat gold"><span class="ic">％</span><div class="label">Discount · this month</div><div class="val">${money(tD)}</div></div>`:'';
+  host.innerHTML=cards.length ? `<div class="ccgrid">${cards.map(cardVisual).join('')}</div>`
+    : `<div class="panel">${emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`;
+  renderBell();
+}
+
+/* ---- card detail + ledger ---- */
+function cardDetail(id){
+  const c=cardById(id); if(!c)return;
+  const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, m=ym(todayStr());
+  const discUsed=cardDiscountInMonth(c,m), cap=+c.maxDiscountMonthly||0;
+  const txns=[...(c.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
+  const rows=txns.length? txns.map(t=>`<tr>
+      <td>${fmtDate(t.date)}</td>
+      <td><span class="tag ${t.type}">${t.type.toUpperCase()}</span></td>
+      <td>${esc(t.note||'')}</td>
+      <td class="num" style="color:${t.type==='purchase'?'var(--red)':'var(--green)'};font-weight:700">${t.type==='purchase'?'−':'+'}${money(t.amount)}</td>
+      <td class="num"><button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button></td></tr>`).join('')
+    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
+  openModal(esc(c.name),`
+    <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
+    <div class="grid3" style="margin-bottom:16px">
+      <div class="stat green"><div class="label">Available</div><div class="val">${money(avail)}</div><div class="foot">of ${money(limit)} limit</div></div>
+      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">pay by day ${c.paymentDay}</div></div>
+      <div class="stat gold"><div class="label">Discount · this month</div><div class="val">${money(discUsed)}</div><div class="foot">${c.discountPercent||0}% · ${cap>0?'cap '+money(cap):'no cap'}</div></div>
+    </div>
+    <div class="row-actions" style="margin-bottom:16px">
+      <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','payment')">＋ Payment</button>
+      <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
+      <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Discount</button>
+      <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','purchase')">− Manual charge</button>
+    </div>
+    <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    `<button class="btn-sm btn-red" onclick="delCard('${c.id}')">Delete Card</button>
+     <button class="btn-sm btn-ghost" onclick="editCard('${c.id}')">Edit</button>
+     <button class="btn-sm" onclick="closeModal()">Close</button>`);
+}
+function cardTxnModal(id,type){
+  const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Discount / Cashback',purchase:'Manual Charge'};
+  const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Commission or cashback received (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
+  openModal(titles[type]||'Card entry',`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
+    <div class="grid2">
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Date</label><input id="ct_date" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no."></div>`,
+    `<button class="btn-sm btn-ghost" onclick="cardDetail('${id}')">Back</button>
+     <button class="btn-sm" onclick="saveCardTxn('${id}','${type}')">Save</button>`);
+  setTimeout(()=>$('#ct_amt')?.focus(),30);
+}
+function saveCardTxn(id,type){
+  const c=cardById(id); if(!c)return; const amt=+$('#ct_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
+  if(!c.txns)c.txns=[];
+  c.txns.push({id:uid(),date:$('#ct_date').value||todayStr(),type,amount:amt,note:$('#ct_note').value.trim()});
+  save(); toast('Saved'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+}
+function delCardTxn(cid,tid){ const c=cardById(cid); if(!c)return;
+  confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
+    c.txns=(c.txns||[]).filter(t=>t.id!==tid); save(); cardDetail(cid); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+  },'Delete'); }
+
+/* ---- add / edit card (master data) ---- */
+let _cardTheme='indigo';
+function pickCardTheme(k){ _cardTheme=k; $$('#c_themes .sw').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); }
+function editCard(id){
+  const c=id?cardById(id):{name:'',bank:'',number:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1};
+  _cardTheme=c.theme||'indigo';
+  openModal(`${id?'Edit':'Add'} Card`,`
+    <div class="grid2">
+      <div class="field"><label>Card Name *</label><input id="c_name" value="${esc(c.name)}" placeholder="e.g. ADCB Visa Signature"></div>
+      <div class="field"><label>Bank / Issuer</label><input id="c_bank" value="${esc(c.bank||'')}" placeholder="e.g. ADCB"></div>
+    </div>
+    <div class="field"><label>Card Number</label><input id="c_number" value="${esc(c.number||'')}" inputmode="numeric" placeholder="Stored on your device only — shown masked (last 4)"></div>
+    <div class="field"><label>Card Colour</label>
+      <div class="swatches card-swatches" id="c_themes">${CARD_THEMES.map(t=>`<button type="button" class="sw" data-k="${t.k}" style="background:${t.g}" onclick="pickCardTheme('${t.k}')"></button>`).join('')}</div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00"></div>
+      <div class="field"><label>Alert When Available Below (${S().currency})</label><input id="c_alert" type="number" min="0" step="any" value="${c.balanceLimitAlert}" placeholder="optional low-balance warning"></div>
+    </div>
+    <div class="grid3">
+      <div class="field"><label>Commission Discount</label><select id="c_disc">${[0,1,2,3,5].map(v=>`<option value="${v}" ${(+c.discountPercent===v)?'selected':''}>${v}%</option>`).join('')}</select></div>
+      <div class="field"><label>Max Discount / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
+      <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}"></div>
+    </div>
+    ${id?'':`<div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="amount already owed on this card, if any"></div>`}`,
+    `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
+     <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
+  pickCardTheme(_cardTheme);
+}
+function saveCard(id){
+  const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
+  const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
+  const data={ name, bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
+    creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0,
+    discountPercent:+$('#c_disc').value||0, maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
+  if(id){ Object.assign(cardById(id),data); }
+  else{ data.openingOutstanding=+$('#c_open').value||0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
+  save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
+}
+function delCard(id){
+  const linked=DB.purchases.some(p=>p.cardId===id||(p.payments||[]).some(pm=>pm.cardId===id));
+  confirmBox('Delete card?', linked?'Some purchases are linked to this card. Those purchase records stay, but card tracking is removed. Continue?':'This removes the card and its whole ledger. Cannot be undone.',()=>{
+    DB.cards=DB.cards.filter(c=>c.id!==id); save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card deleted');
+  },'Delete');
 }
 
 /* =========================================================
@@ -1055,13 +1543,19 @@ function renderInventory(){
     <div class="stat"><span class="ic">🚫</span><div class="label">Out of Stock</div><div class="val">${out}</div></div>`;
   const host=$('#invList'); if(!host)return;
   if(!DB.products.length){host.innerHTML=`<div class="panel">${emptyBox('📦','No inventory','Add products & purchases to see stock.')}</div>`;return;}
-  host.innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>Product</th><th>Category</th><th class="num">In Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th></tr></thead>
-    <tbody>${data.map(x=>`<tr>
-      <td><div class="prodcell">${productThumb(x.p)}<b>${esc(x.p.name)}</b></div></td><td>${esc(x.p.category||'—')}</td>
-      <td class="num">${num(x.qty)} ${esc(x.p.unit||'')}</td><td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
-      <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td></tr>`).join('')}
-    </tbody></table></div>`;
+  if(!data.length){host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match your search.')}</div>`;return;}
+  // group by category
+  const groups={}; data.forEach(x=>{ const cat=(x.p.category||'').trim()||'Uncategorised'; (groups[cat]||(groups[cat]=[])).push(x); });
+  const cats=Object.keys(groups).sort((a,b)=>a==='Uncategorised'?1:b==='Uncategorised'?-1:a.localeCompare(b));
+  host.innerHTML=cats.map(cat=>{ const g=groups[cat]; const gVal=g.reduce((a,x)=>a+(x.val>0?x.val:0),0), gU=g.reduce((a,x)=>a+(x.qty>0?x.qty:0),0);
+    return `<div class="cat-head">📂 ${esc(cat)} <span class="cc">${g.length} item${g.length===1?'':'s'}</span> <span class="cc">${num(gU)} units</span> <span class="cc">${money(gVal)}</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Product</th><th class="num">In Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th></tr></thead>
+      <tbody>${g.map(x=>`<tr>
+        <td><div class="prodcell">${productThumb(x.p)}<b>${esc(x.p.name)}</b></div></td>
+        <td class="num">${num(x.qty)} ${esc(x.p.unit||'')}</td><td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
+        <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td></tr>`).join('')}
+      </tbody></table></div>`; }).join('');
 }
 
 /* =========================================================
@@ -1088,8 +1582,8 @@ function renderProfit(){
   const purch=DB.purchases.filter(p=>inRange(p.date));
   let rev=0,netRev=0,cogs=0,vat=0,disc=0,cashS=0,cardS=0;
   sales.forEach(s=>{rev+=s.total;netRev+=netOf(s);cogs+=eng.saleCost[s.id]||0;vat+=s.vat||0;disc+=s.discount||0;s.payment==='card'?cardS+=s.total:cashS+=s.total;});
-  const buyTot=purch.reduce((a,p)=>a+p.qty*p.rate,0);
-  let cashB=0,cardB=0;purch.forEach(p=>p.payment==='card'?cardB+=p.qty*p.rate:cashB+=p.qty*p.rate);
+  const buyTot=purch.reduce((a,p)=>a+purchaseTotal(p),0);
+  let cashB=0,cardB=0;purch.forEach(p=>(p.payments||[]).forEach(pm=>pm.method==='card'?cardB+=pm.amount:cashB+=pm.amount));
   const profit=netRev-cogs; const margin=netRev>0?(profit/netRev*100):0;
   const byProd={};
   sales.forEach(s=>s.items.forEach(it=>{const p=productById(it.productId); if(!p)return; const avg=avgCostOf(it.productId,eng);
@@ -1177,16 +1671,16 @@ views.settings=function(){
     <button class="btn-sm" onclick="saveSettings('bill')">Save Bill Settings</button>
   </div>
   <div class="panel">
-    <h3>🔐 My Password</h3><p class="psub">Change the password for your own account (${esc(session.username)}).</p>
+    <h3>🔐 My PIN</h3><p class="psub">Change the PIN for your own login (${esc(session.name)} · ${esc(session.phone||session.username||'')}).</p>
     <div class="grid3">
-      <div class="field"><label>Current</label><input id="pw_old" type="password"></div>
-      <div class="field"><label>New</label><input id="pw_new" type="password"></div>
-      <div class="field"><label>Confirm</label><input id="pw_conf" type="password"></div>
+      <div class="field"><label>Current PIN</label><input id="pw_old" type="password" inputmode="numeric"></div>
+      <div class="field"><label>New PIN</label><input id="pw_new" type="password" inputmode="numeric"></div>
+      <div class="field"><label>Confirm PIN</label><input id="pw_conf" type="password" inputmode="numeric"></div>
     </div>
-    <button class="btn-sm" onclick="changePw()">Update Password</button>
+    <button class="btn-sm" onclick="changePw()">Update PIN</button>
   </div>
   ${owner?`
-  <div class="panel"><h3>👥 Users &amp; Roles</h3><p class="psub">Owner-only. Create separate logins for staff.</p>
+  <div class="panel"><h3>👥 Users &amp; Roles</h3><p class="psub">Admin/owner only. Create owners & workers, set their phone, PIN, role and which screens a worker can open.</p>
     <div id="usersList"></div><button class="btn-sm" style="margin-top:12px" onclick="editUser()">＋ Add User</button></div>`:''}
   <div class="panel">
     <h3>💾 Backup &amp; Restore</h3><p class="psub">Data is stored on this device. Export a backup to move it to another device or keep it safe.</p>
@@ -1219,44 +1713,58 @@ function saveSettings(which){
   save();toast('Settings saved');
 }
 function changePw(){
-  const o=$('#pw_old').value,n=$('#pw_new').value,c=$('#pw_conf').value;
-  if(session.password!==o)return toast('Current password is wrong',1);
-  if(!n||n.length<3)return toast('New password too short',1);
-  if(n!==c)return toast('Passwords do not match',1);
-  session.password=n; DB.users.find(u=>u.id===session.id).password=n; save();
-  $('#pw_old').value=$('#pw_new').value=$('#pw_conf').value=''; toast('Password updated');
+  const o=$('#pw_old').value.trim(),n=$('#pw_new').value.trim(),c=$('#pw_conf').value.trim();
+  const cur=String(session.pin!==undefined?session.pin:session.password);
+  if(cur!==o)return toast('Current PIN is wrong',1);
+  if(!n||n.length<4)return toast('New PIN must be at least 4 digits',1);
+  if(n!==c)return toast('PINs do not match',1);
+  const u=DB.users.find(x=>x.id===session.id); u.pin=n; u.password=n; session.pin=n; session.password=n; save();
+  $('#pw_old').value=$('#pw_new').value=$('#pw_conf').value=''; toast('PIN updated');
 }
 function renderUsers(){
   const host=$('#usersList'); if(!host)return;
-  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th></th></tr></thead>
-  <tbody>${DB.users.map(u=>`<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td>
-    <td><span class="tag ${u.role==='owner'?'card':'ok'}">${u.role.toUpperCase()}</span></td>
+  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Access</th><th></th></tr></thead>
+  <tbody>${DB.users.map(u=>`<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.phone||u.username||'—')}</td>
+    <td><span class="tag ${u.role==='owner'?'card':'ok'}">${(u.role==='owner'?'OWNER':'WORKER')}</span></td>
+    <td style="white-space:normal;max-width:260px;color:var(--muted);font-size:12px">${u.role==='owner'?'Full access':userPerms(u).map(v=>VIEW_LABELS[v]||v).join(', ')}</td>
     <td class="num"><button class="mini-btn" onclick="editUser('${u.id}')">Edit</button>
     ${u.id!==session.id?`<button class="mini-btn red" onclick="delUser('${u.id}')">Del</button>`:''}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
 function editUser(id){
-  const u=id?DB.users.find(x=>x.id===id):{name:'',username:'',password:'1234',role:'employee'};
+  const u=id?DB.users.find(x=>x.id===id):{name:'',phone:'',pin:'1234',role:'worker',perms:WORKER_DEFAULT.slice()};
+  const perms=userPerms(u);
+  const permBoxes=ALL_VIEWS.filter(v=>v!=='profit'&&v!=='settings').map(v=>`<label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);padding:9px 11px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600">
+      <input type="checkbox" class="u_perm" value="${v}" ${perms.includes(v)?'checked':''} style="width:16px;height:16px;accent-color:var(--brand)"> ${VIEW_LABELS[v]}</label>`).join('');
   openModal(`${id?'Edit':'Add'} User`,`
     <div class="grid2">
       <div class="field"><label>Full Name *</label><input id="u_name" value="${esc(u.name)}"></div>
-      <div class="field"><label>Username *</label><input id="u_user" value="${esc(u.username)}"></div>
+      <div class="field"><label>Phone Number *</label><input id="u_phone" inputmode="tel" value="${esc(u.phone||'')}" placeholder="used to log in"></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Password *</label><input id="u_pass" value="${esc(u.password)}"></div>
-      <div class="field"><label>Role</label><select id="u_role">
-        <option value="employee" ${u.role==='employee'?'selected':''}>Employee (no profit access)</option>
+      <div class="field"><label>PIN *</label><input id="u_pin" inputmode="numeric" value="${esc(u.pin!==undefined?u.pin:(u.password||'1234'))}"></div>
+      <div class="field"><label>Role</label><select id="u_role" onchange="userRoleToggle()">
+        <option value="worker" ${u.role!=='owner'?'selected':''}>Worker (limited access)</option>
         <option value="owner" ${u.role==='owner'?'selected':''}>Owner (full access)</option></select></div>
+    </div>
+    <div class="field" id="u_permWrap" style="${u.role==='owner'?'display:none':''}">
+      <label>Worker can access these screens</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">${permBoxes}</div>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:7px">Profit & Reports and Settings stay owner-only. Owners always see everything.</div>
     </div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveUser('${id||''}')">Save User</button>`);
 }
+function userRoleToggle(){ const w=$('#u_permWrap'); if(w)w.style.display=$('#u_role').value==='owner'?'none':''; }
 function saveUser(id){
-  const name=$('#u_name').value.trim(),username=$('#u_user').value.trim().toLowerCase(),password=$('#u_pass').value,role=$('#u_role').value;
-  if(!name||!username||!password)return toast('All fields are required',1);
-  if(DB.users.some(u=>u.username.toLowerCase()===username&&u.id!==id))return toast('Username already exists',1);
-  if(id){const u=DB.users.find(x=>x.id===id);Object.assign(u,{name,username,password,role});if(u.id===session.id)session=u;}
-  else DB.users.push({id:uid(),name,username,password,role});
+  const name=$('#u_name').value.trim(), phone=$('#u_phone').value.trim(), pin=$('#u_pin').value.trim(), role=$('#u_role').value;
+  if(!name||!phone||!pin)return toast('Name, phone and PIN are required',1);
+  const norm=s=>(s||'').replace(/[\s-]/g,'').toLowerCase();
+  if(DB.users.some(u=>norm(u.phone)===norm(phone)&&u.id!==id))return toast('That phone number is already used',1);
+  const perms = role==='owner'?ALL_VIEWS.slice():$$('.u_perm:checked').map(c=>c.value);
+  if(role!=='owner'&&!perms.length)return toast('Give the worker at least one screen',1);
+  if(id){const u=DB.users.find(x=>x.id===id);Object.assign(u,{name,phone,pin,password:pin,role,perms});if(u.id===session.id){session=u;applyAccess();}}
+  else DB.users.push({id:uid(),name,phone,pin,password:pin,role,perms,username:''});
   save();closeModal();renderUsers();toast('User saved');
 }
 function delUser(id){
@@ -1352,7 +1860,13 @@ function confirmBox(title,msg,onYes,yesLabel){
 /* boot */
 applyTheme();
 $('#loginBadge').innerHTML=logoMark(58);
-$('#loginUser').value='owner';
+document.addEventListener('click',e=>{ const w=$('#bellWrap'); if(w&&!w.contains(e.target))$('#bellPop')?.classList.add('hidden'); });
+/* pull the shared cloud copy (if configured); refresh screen when it arrives */
+cloudPull().then(ok=>{
+  if(!ok) return;
+  applyTheme();
+  if(session){ applyBrand(); go($('.nav-item.active')?.dataset.view || 'dashboard'); }
+});
 </script>
 </body>
 </html>
