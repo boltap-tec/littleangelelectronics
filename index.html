@@ -1440,13 +1440,16 @@ views.cards=function(){
   return `
   <div class="page-head"><div><h2>Credit Cards</h2><p>Card limits, balances, monthly commission discount & payment-date reminders.</p></div>
     <button class="btn-sm" onclick="editCard()">＋ Add Card</button></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank or number..." oninput="renderCards()"></div></div>
   <div id="cardStats" class="cards"></div>
   <div id="cardsWrap"></div>`;
 };
 views._after_cards=renderCards;
 function renderCards(){
   const host=$('#cardsWrap'); if(!host)return;
-  const cards=DB.cards||[], m=ym(todayStr());
+  const all=DB.cards||[], m=ym(todayStr());
+  const q=($('#cardSearch')?.value||'').toLowerCase().trim();
+  const cards=q? all.filter(c=>[c.name,c.owner,c.bank,c.number].some(v=>(v||'').toLowerCase().includes(q))) : all;
   let tL=0,tA=0,tO=0,tD=0;
   cards.forEach(c=>{ const l=+c.creditLimit||0,o=cardOutstanding(c); tL+=l; tO+=o; tA+=l-o; tD+=cardDiscountInMonth(c,m); });
   const cs=$('#cardStats'); if(cs)cs.innerHTML=cards.length?`
@@ -1454,7 +1457,7 @@ function renderCards(){
     <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
     <div class="stat gold"><span class="ic">％</span><div class="label">Discount · this month</div><div class="val">${money(tD)}</div></div>`:'';
-  if(!cards.length){ host.innerHTML=`<div class="panel">${emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
+  if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
   // group cards by owner
   const groups={}; cards.forEach(c=>{ const o=cardOwnerLabel(c); (groups[o]||(groups[o]=[])).push(c); });
   const owners=Object.keys(groups).sort((a,b)=>a==='My own'?-1:b==='My own'?1:a.localeCompare(b));
