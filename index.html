@@ -304,9 +304,13 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
 #invoiceArea{background:#fff;color:#111}
 @media print{
-  body *{visibility:hidden}
-  #printRoot,#printRoot *{visibility:visible}
-  #printRoot{position:absolute;inset:0;margin:0;padding:0}
+  @page{margin:10mm}
+  html,body{height:auto!important;background:#fff!important;overflow:visible!important}
+  /* hide the app entirely (display:none removes its height so no blank pages) */
+  body>*{display:none!important}
+  #printRoot{display:block!important;position:static!important;margin:0!important;padding:0!important}
+  #printRoot *{visibility:visible}
+  #invoiceArea{max-width:100%!important;padding:0!important}
   .no-print{display:none !important}
 }
 @media(max-width:860px){
@@ -319,17 +323,23 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
   .backdrop{position:fixed;inset:63px 0 0 0;background:rgba(0,0,0,.5);z-index:65;display:none}
   body.light .backdrop{background:rgba(20,30,60,.35)}
   .backdrop.show{display:block}
-  .main{padding:16px 16px 88px}
+  .main{padding:16px 16px calc(96px + env(safe-area-inset-bottom))}
   .bottomnav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;justify-content:space-around;align-items:stretch;
-    background:var(--bg2);border-top:1px solid var(--line);box-shadow:0 -6px 20px rgba(0,0,0,.22);padding:6px 2px}
-  .bottomnav button{flex:1;background:none;border:none;color:var(--muted);cursor:pointer;
-    display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:700;padding:5px 2px;border-radius:10px}
+    background:var(--bg2);border-top:1px solid var(--line);box-shadow:0 -6px 20px rgba(0,0,0,.22);padding:6px 2px calc(6px + env(safe-area-inset-bottom))}
+  .bottomnav button{flex:1;background:none;border:none;color:var(--muted);cursor:pointer;min-height:46px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10.5px;font-weight:700;padding:5px 2px;border-radius:10px}
   .bottomnav button .bi{font-size:19px;line-height:1}
   .bottomnav button.active{color:var(--brand)}
   .bottomnav button.active .bi{transform:translateY(-1px)}
   .li-head{display:none}
   .li-row{grid-template-columns:1fr 1fr;gap:8px}
   .li-row .li-x{grid-column:span 2}
+  /* keep every top-bar action reachable (logout was getting cut off) */
+  .topbar{gap:6px;padding:10px 10px}
+  .topbar .t-sub{display:none}
+  .topbar .t-name{max-width:34vw;font-size:13.5px}
+  #who,#walletChip{display:none !important}
+  .icon-btn{width:34px;height:34px;font-size:15px;flex:0 0 auto}
 }
 </style>
 </head>
@@ -379,12 +389,12 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
       <div class="nav-tag">Overview</div>
       <div class="nav-item active" data-view="dashboard" onclick="go('dashboard')"><span class="ico">📊</span> Dashboard</div>
       <div class="nav-tag">Operations</div>
+      <div class="nav-item" data-view="inventory" onclick="go('inventory')"><span class="ico">📦</span> Inventory</div>
       <div class="nav-item" data-view="purchases" onclick="go('purchases')"><span class="ico">📥</span> Purchases</div>
       <div class="nav-item" data-view="sales" onclick="go('sales')"><span class="ico">🧾</span> Sales &amp; Billing</div>
       <div class="nav-item" data-view="payments" onclick="go('payments')"><span class="ico">💵</span> Payments</div>
       <div class="nav-item" data-view="cards" data-owner onclick="go('cards')"><span class="ico">💳</span> Credit Cards</div>
       <div class="nav-item" data-view="cashbook" onclick="go('cashbook')"><span class="ico">🧰</span> Cash Book</div>
-      <div class="nav-item" data-view="inventory" onclick="go('inventory')"><span class="ico">📦</span> Inventory</div>
       <div class="nav-item" data-view="products" onclick="go('products')"><span class="ico">🏷️</span> Products</div>
       <div class="nav-item" data-view="compare" onclick="go('compare')"><span class="ico">🔎</span> Price Compare</div>
       <div class="nav-sep"></div>
@@ -392,6 +402,8 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
       <div class="nav-item" data-view="approvals" data-owner onclick="go('approvals')"><span class="ico">📝</span> Approvals <span class="nav-badge hidden" id="apprBadge"></span></div>
       <div class="nav-item" data-view="profit" data-owner onclick="go('profit')"><span class="ico">💰</span> Profit &amp; Reports</div>
       <div class="nav-item" data-view="settings" onclick="go('settings')"><span class="ico">⚙️</span> Settings</div>
+      <div class="nav-sep"></div>
+      <div class="nav-item" onclick="logout()"><span class="ico">⎋</span> Logout</div>
     </aside>
     <main class="main" id="main"></main>
   </div>
@@ -543,7 +555,7 @@ function migrate(){
   if(!DB.cards)DB.cards=[];
   if(!Array.isArray(DB.approvals))DB.approvals=[];
   if(!Array.isArray(DB.cash))DB.cash=[];
-  (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; });
+  (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
   if(DB.settings.avgWindowUnit===undefined)DB.settings.avgWindowUnit='all';
@@ -1069,7 +1081,7 @@ function splitHintText(s){ const c=s.cardId?cardById(s.cardId):null; if(!c)retur
   return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${amt>av+1e-6?` · <span style="color:var(--red)">⚠ exceeds available balance</span>`:''}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
 function renderBuySplits(){
-  const host=$('#b_splits'); if(!host)return; const cards=DB.cards||[];
+  const host=$('#b_splits'); if(!host)return; const cards=activeCards();
   host.innerHTML=buySplits.map((s,i)=>`<div class="split-row">
     <select onchange="buySplits[${i}].method=this.value;renderBuySplits()">
       <option value="cash" ${s.method==='cash'?'selected':''}>Cash</option>
@@ -1077,7 +1089,7 @@ function renderBuySplits(){
       <option value="card" ${s.method==='card'?'selected':''}>Card</option></select>
     ${s.method==='card' ? `<select onchange="buySplitCardPick(${i},this.value)">
         <option value="">— select card —</option>
-        ${cards.map(c=>`<option value="${c.id}" ${c.id===s.cardId?'selected':''}>${esc(c.name)} · avail ${money(cardAvailForSplit(c))}</option>`).join('')}
+        ${cards.map(c=>`<option value="${c.id}" ${c.id===s.cardId?'selected':''}>${esc(cardLabel(c))} · avail ${money(cardAvailForSplit(c))}</option>`).join('')}
         <option value="__new">＋ Add new card…</option>
       </select>`
       : `<div style="color:var(--muted2);font-size:12px;align-self:center">${s.method==='bank'?'Bank transfer':'Cash'}</div>`}
@@ -1201,6 +1213,14 @@ function renderSales(){
 }
 let _saleEditId='', _saleOldQty={};
 function saleAvail(pid,eng){ return stockOf(pid,eng||computeEngine()) + (_saleOldQty[pid]||0); }
+/* when a known customer is picked, auto-fill phone/address/VAT from their most recent bill (only empty fields) */
+function saleCustAutofill(){ const name=($('#s_cust')?.value||'').trim().toLowerCase(); if(!name)return;
+  const past=[...DB.sales].filter(s=>(s.customer||'').trim().toLowerCase()===name).sort((a,b)=>a.date<b.date?1:-1)[0]; if(!past)return;
+  const ph=$('#s_phone'), ad=$('#s_addr'), vt=$('#s_vat');
+  if(ph&&!ph.value.trim()&&past.custPhone)ph.value=past.custPhone;
+  if(ad&&!ad.value.trim()&&past.custAddress)ad.value=past.custAddress;
+  if(vt&&!vt.value.trim()&&past.custVat)vt.value=past.custVat;
+}
 function newSale(id,prefillPid){
   if(!DB.products.length)return confirmBox('No products yet','Add a product (and some stock) before selling.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
   const s=id?DB.sales.find(x=>x.id===id):null;
@@ -1213,7 +1233,7 @@ function newSale(id,prefillPid){
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
       <div class="field"><label>Date *</label><input id="s_date" type="date" value="${date}"></div>
-      <div class="field"><label>Customer (buyer name)</label><input id="s_cust" list="dl_cust" value="${esc(cust||'')}" placeholder="Walk-in">${dataList('dl_cust',allCustomers())}</div>
+      <div class="field"><label>Customer (buyer name)</label><input id="s_cust" list="dl_cust" value="${esc(cust||'')}" placeholder="Walk-in" onchange="saleCustAutofill()" oninput="saleCustAutofill()">${dataList('dl_cust',allCustomers())}</div>
       <div class="field"><label>Customer Phone</label><input id="s_phone" value="${esc(phone||'')}" placeholder="optional"></div>
     </div>
     <div class="grid2">
@@ -1657,14 +1677,14 @@ function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return;
   html+=sec('🔔 Bill due reminders');
   html+= due.length? due.map(r=>{ const warn=r.dleft<=1; return `<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${r.c.id}'),40)">
       <span class="d" style="background:${warn?'var(--red)':'var(--amber)'}"></span>
-      <div style="flex:1"><b>${esc(r.c.name)}</b><div style="color:var(--muted);font-size:12px">Due ${fmtDate(isoDate(r.due))} · ${r.dleft<=0?'today':'in '+r.dleft+' day'+(r.dleft===1?'':'s')}</div></div>
+      <div style="flex:1"><b>${esc(cardLabel(r.c))}</b><div style="color:var(--muted);font-size:12px">Due ${fmtDate(isoDate(r.due))} · ${r.dleft<=0?'today':'in '+r.dleft+' day'+(r.dleft===1?'':'s')}</div></div>
       <div style="text-align:right;font-weight:800;color:var(--amber)">${money(r.out)}</div></div>`}).join('')
     : `<div class="bell-empty" style="padding:12px 14px">No card payments due 🎉</div>`;
   /* 2) Low balance warnings */
   if(low.length){ html+=sec('⚠️ Low balance');
     html+=low.map(c=>`<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${c.id}'),40)">
       <span class="d" style="background:var(--red)"></span>
-      <div style="flex:1"><b>${esc(c.name)}</b><div style="color:var(--muted);font-size:12px">Available below alert (${money(c.balanceLimitAlert)})</div></div>
+      <div style="flex:1"><b>${esc(cardLabel(c))}</b><div style="color:var(--muted);font-size:12px">Available below alert (${money(c.balanceLimitAlert)})</div></div>
       <div style="text-align:right;font-weight:800;color:var(--red)">${money(cardAvailable(c))}</div></div>`).join(''); }
   /* 3) Recent purchases & sales */
   if(act.length){ html+=sec('🕑 Recent purchases & sales');
@@ -1675,14 +1695,19 @@ function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return;
   pop.innerHTML=html;
 }
 
+function cardActive(c){ return c && c.status!=='inactive'; }
+function activeCards(){ return (DB.cards||[]).filter(cardActive); }
+/* label: owner · ••last4 · card name */
+function cardLabel(c){ if(!c)return ''; const l4=(c.number||'').replace(/\D/g,'').slice(-4); const p=[]; if(c.owner&&c.owner.trim())p.push(c.owner.trim()); if(l4)p.push('••'+l4); p.push(c.name); return p.join(' · '); }
 /* ---- card visual ---- */
 function cardVisual(c){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
   const usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
   const due=nextDue(c.paymentDay), dleft=daysUntil(due), warn=dleft<=3;
   const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
-  return `<div class="ccard" style="background:${cardGrad(c)}" onclick="cardDetail('${c.id}')">
+  return `<div class="ccard" style="background:${cardGrad(c)};${cardActive(c)?'':'opacity:.6'}" onclick="cardDetail('${c.id}')">
     ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% redeem</div>`:''}
+    ${!cardActive(c)?`<div class="cc-pct" style="left:16px;right:auto;background:rgba(0,0,0,.35)">INACTIVE</div>`:''}
     <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}${c.owner&&c.owner.trim()?` · 👤 ${esc(c.owner.trim())}`:''}</div></div><div class="cc-chip"></div></div>
     <div>
       <div class="cc-num">${maskCard(c.number)}</div>
@@ -1696,7 +1721,7 @@ function cardVisual(c){
 
 /* ---- Cards view ---- */
 let _cardView='owners';
-function setCardView(v){ _cardView=v; renderCards(); }
+function setCardView(v){ _cardView=v; $$('#cardViewTgl button').forEach(b=>b.classList.toggle('active', b.dataset.cv===v)); renderCards(); }
 function cardCell(c,badge){ return `<div>${badge?`<div style="text-align:center;font-size:11px;font-weight:800;color:var(--green);margin-bottom:6px">${badge}</div>`:''}${cardVisual(c)}
   <div class="row-actions" style="margin-top:9px;justify-content:center">
     <button class="mini-btn" onclick="event.stopPropagation();cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
@@ -1708,9 +1733,10 @@ views.cards=function(){
   <div class="page-head"><div><h2>Credit Cards</h2><p>Card limits, balances, monthly commission discount & payment-date reminders.</p></div>
     <button class="btn-sm" onclick="editCard()">＋ Add Card</button></div>
   <div class="toolbar">
-    <div class="role-toggle" id="cardViewTgl" style="margin:0;max-width:340px;flex:0 0 auto">
-      <button class="${_cardView==='owners'?'active':''}" onclick="setCardView('owners')">👤 By owner</button>
-      <button class="${_cardView==='credit'?'active':''}" onclick="setCardView('credit')">💳 View credit</button>
+    <div class="role-toggle" id="cardViewTgl" style="margin:0;max-width:460px;flex:0 0 auto">
+      <button data-cv="owners" class="${_cardView==='owners'?'active':''}" onclick="setCardView('owners')">👤 Owner</button>
+      <button data-cv="status" class="${_cardView==='status'?'active':''}" onclick="setCardView('status')">🟢 Status</button>
+      <button data-cv="credit" class="${_cardView==='credit'?'active':''}" onclick="setCardView('credit')">💳 View credit</button>
     </div>
     <div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank or number..." oninput="renderCards()"></div>
   </div>
@@ -1747,6 +1773,13 @@ function renderCards(){
         <td>${r.out>0.005?`<span class="tag ${warn?'due':'partial'}">${fmtDate(isoDate(r.due))} · ${r.dl<=0?'today':r.dl+'d'}</span>`:'<span class="tag ok">paid</span>'}</td>
         <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="cardTxnModal('${r.c.id}','recharge')">↑ Recharge</button> <button class="mini-btn gold" onclick="cardTxnModal('${r.c.id}','payment')">＋ Pay</button> <button class="mini-btn" onclick="cardDetail('${r.c.id}')">Details</button></td></tr>`; }).join('')}
       </tbody></table></div>`;
+    renderBell(); return;
+  }
+  if(_cardView==='status'){
+    const act=cards.filter(cardActive).sort((a,b)=>cardAvailable(b)-cardAvailable(a));
+    const inact=cards.filter(c=>!cardActive(c)).sort((a,b)=>cardAvailable(b)-cardAvailable(a));
+    const sec=(title,arr,color)=>arr.length?`<div class="cat-head">${title} <span class="cc" style="color:${color}">${arr.length} card${arr.length===1?'':'s'}</span></div><div class="ccgrid">${arr.map(c=>cardCell(c)).join('')}</div>`:'';
+    host.innerHTML=(sec('🟢 Active',act,'var(--green)')+sec('⚪ Inactive',inact,'var(--muted)'))||`<div class="panel">${emptyBox('💳','No cards','—')}</div>`;
     renderBell(); return;
   }
   // group cards by owner
@@ -1852,7 +1885,7 @@ function delCardTxn(cid,tid){ const c=cardById(cid); if(!c)return;
 let _cardTheme='indigo';
 function pickCardTheme(k){ _cardTheme=k; $$('#c_themes .sw').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); }
 function editCard(id){
-  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1};
+  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,status:'active'};
   _cardTheme=c.theme||'indigo';
   openModal(`${id?'Edit':'Add'} Card`,`
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
@@ -1874,6 +1907,7 @@ function editCard(id){
       <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
       <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}"></div>
     </div>
+    <div class="field"><label>Status</label><select id="c_status"><option value="active" ${c.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${c.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
     ${id?'':`<div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="amount already owed on this card, if any"></div>`}`,
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
@@ -1883,7 +1917,7 @@ function saveCard(id){
   const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
-    creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0,
+    creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
   if(id){ Object.assign(cardById(id),data); }
   else{ data.openingOutstanding=+$('#c_open').value||0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
@@ -1908,13 +1942,13 @@ function invRow(x){
   const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
   return `<tr>
     <td><div class="prodcell">${productThumb(x.p)}<b>${esc(x.p.name)}</b></div></td>
-    <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
+    <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
     <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td>
     <td class="num" style="white-space:nowrap">${acts}</td></tr>`;
 }
-const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Balance (stock)</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
+const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
 views.inventory=function(){
   return `
   <div class="page-head"><div><h2>Inventory</h2><p>Total purchased, sold & balance stock — with weighted-average cost. Buy or sell any item in one click.</p></div>
@@ -1989,8 +2023,8 @@ views.cashbook=function(){
     <div class="row-actions">
       <button class="btn-sm btn-green" onclick="cashModal('in')">＋ Cash In</button>
       <button class="btn-sm btn-red" onclick="cashModal('expense')">－ Expense</button>
-      <button class="btn-sm btn-ghost" onclick="transferModal()">⇄ Transfer</button>
-      <button class="btn-sm btn-ghost" onclick="cardCashModal()">💳 Card recharge / pay</button>
+      <button class="btn-sm" style="background:linear-gradient(135deg,#0ea5e9,#2563eb);box-shadow:0 6px 16px rgba(37,99,235,.32)" onclick="transferModal()">⇄ Transfer</button>
+      <button class="btn-sm btn-gold" onclick="cardCashModal()">💳 Card recharge / pay</button>
     </div></div>
   ${owner?`<div class="toolbar"><div class="field" style="margin:0;min-width:230px"><label>View wallet</label>
     <select id="wsel" onchange="setWallet(this.value)"><option value="">All wallets</option>${DB.users.map(u=>`<option value="${u.id}" ${_walletSel===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
@@ -2058,7 +2092,9 @@ function cashModal(kind){
   setTimeout(()=>$('#cb_amt')?.focus(),30);
 }
 function saveCashEntry(kind){
-  const amt=+$('#cb_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
+  const amt=+$('#cb_amt').value||0;
+  if(kind==='opening'){ if(amt<0)return toast('Amount cannot be negative',1); }
+  else if(!(amt>0))return toast('Enter a valid amount',1);
   const desc=$('#cb_desc').value.trim();
   if(kind==='expense'&&!desc)return toast('Enter the purpose of the expense',1);
   const who = $('#cb_who')?.value||session.id;
@@ -2097,12 +2133,12 @@ function saveTransfer(){
 }
 /* recharge / pay a credit card using cash from a wallet — posts to BOTH the card ledger and this wallet */
 function cardCashModal(){
-  if(!(DB.cards||[]).length)return toast('No cards yet — ask admin to add a card first',1);
+  if(!activeCards().length)return toast('No active cards available',1);
   const owner=isOwner();
   openModal('Card Recharge / Payment (from cash)',`
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Deposit cash to a card or pay its due from a wallet. Recorded in the card ledger AND deducted from the wallet.</p>
     <div class="grid2">
-      <div class="field"><label>Card *</label><select id="cc_card" onchange="cardCashDue()">${DB.cards.map(c=>`<option value="${c.id}">${esc(c.name)} · due ${money(Math.max(0,cardOutstanding(c)))}</option>`).join('')}</select></div>
+      <div class="field"><label>Card *</label><select id="cc_card" onchange="cardCashDue()"><option value="">— select card —</option>${activeCards().map(c=>`<option value="${c.id}">${esc(cardLabel(c))} · due ${money(Math.max(0,cardOutstanding(c)))}</option>`).join('')}</select></div>
       <div class="field"><label>Type *</label><select id="cc_type"><option value="payment">Payment (reduce card due)</option><option value="recharge">Recharge (add funds)</option></select></div>
     </div>
     <div class="grid2">
@@ -2237,6 +2273,19 @@ function renderProfit(){
     const pr=byProd[it.productId]||(byProd[it.productId]={name:p.name,qty:0,rev:0,profit:0});
     pr.qty+=it.qty; pr.rev+=it.qty*it.rate; pr.profit+=it.qty*(it.rate-avg);}));
   const top=Object.values(byProd).sort((a,b)=>b.profit-a.profit).slice(0,8);
+  /* daily report — date-wise sales/purchases split by cash & card */
+  const daily={}; const D=d=>daily[d]||(daily[d]={sales:0,purch:0,cashS:0,cardS:0,cashP:0,cardP:0});
+  sales.forEach(s=>{ D(s.date).sales+=s.total; });
+  purch.forEach(p=>{ D(p.date).purch+=purchaseTotal(p); });
+  DB.sales.forEach(s=>(s.payments||[]).forEach(pm=>{ if(!inRange(pm.date))return; const r=D(pm.date); if(pm.method==='card')r.cardS+=pm.amount; else if(pm.method==='cash')r.cashS+=pm.amount; }));
+  DB.purchases.forEach(p=>(p.payments||[]).forEach(pm=>{ if(!inRange(pm.date))return; const r=D(pm.date); if(pm.method==='card')r.cardP+=pm.amount; else if(pm.method==='cash')r.cashP+=pm.amount; }));
+  const days=Object.keys(daily).sort((a,b)=>a<b?1:-1);
+  const dailyHtml=days.length?`<div class="table-wrap"><table style="min-width:760px">
+    <thead><tr><th>Date</th><th class="num">Sales</th><th class="num">Cash Sales</th><th class="num">Card Sales</th><th class="num">Purchases</th><th class="num">Cash Purch.</th><th class="num">Card Purch.</th></tr></thead>
+    <tbody>${days.map(d=>{const r=daily[d];return `<tr><td><b>${fmtDate(d)}</b></td>
+      <td class="num">${money(r.sales)}</td><td class="num" style="color:var(--green)">${money(r.cashS)}</td><td class="num" style="color:var(--brand2)">${money(r.cardS)}</td>
+      <td class="num">${money(r.purch)}</td><td class="num" style="color:var(--green)">${money(r.cashP)}</td><td class="num" style="color:var(--brand2)">${money(r.cardP)}</td></tr>`;}).join('')}</tbody></table></div>`
+    :emptyBox('📅','No activity','No sales or purchases in this period.');
   $('#profitBody').innerHTML=`
   <div class="cards">
     <div class="stat gold"><span class="ic">🧾</span><div class="label">Net Sales (excl VAT)</div><div class="val">${money(netRev)}</div><div class="foot">${sales.length} sale(s) · gross ${money(rev)}</div></div>
@@ -2257,7 +2306,8 @@ function renderProfit(){
       ${top.length?`<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Revenue</th><th class="num">Profit</th></tr></thead>
       <tbody>${top.map(t=>`<tr><td>${esc(t.name)}</td><td class="num">${num(t.qty)}</td><td class="num">${money(t.rev)}</td><td class="num" style="color:${t.profit>=0?'var(--green)':'var(--red)'}">${money(t.profit)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📈','No data','No sales in this period.')}
     </div>
-  </div>`;
+  </div>
+  <div class="panel"><h3>📅 Daily Report</h3><p class="psub">Date-wise sales & purchases, split by cash and card (newest first)</p>${dailyHtml}</div>`;
 }
 
 /* =========================================================
