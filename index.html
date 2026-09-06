@@ -420,8 +420,8 @@ const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Bi
    3) Paste them below. Leave as-is to run offline (localStorage only).
    4) Run the SQL from SUPABASE_SETUP.sql in the Supabase SQL Editor.
    ========================================================= */
-const SUPABASE_URL      = 'https://YOUR-PROJECT.supabase.co'; // ← paste Project URL
-const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';             // ← paste anon public key
+const SUPABASE_URL      = 'https://qnbhzeciebrpuuvzoljc.supabase.co'; // Project URL
+const SUPABASE_ANON_KEY = 'sb_publishable_atQ3d2SUrIgvyaP2DhqhAg_oM8ciR4U'; // publishable (anon) key
 const CLOUD_ROW_ID = 'main';   // one row holds the whole shop's data
 let sb = null;
 const cloudOn = () => /^https:\/\/.+\.supabase\.co/.test(SUPABASE_URL)
@@ -447,14 +447,16 @@ async function cloudPull(){           // fetch cloud copy; seed cloud if empty
   try{
     const { data, error } = await sb.from('app_state').select('data').eq('id',CLOUD_ROW_ID).maybeSingle();
     if(error) throw error;
-    if(data && data.data){
-      DB = data.data;
+    const cloud = data && data.data;
+    const cloudHasData = cloud && Array.isArray(cloud.users) && cloud.users.length>0;   // real data, not an empty {} seed row
+    if(cloudHasData){
+      DB = cloud;
       if(!DB.settings) DB.settings = seed().settings;
       migrate();
       localStorage.setItem(KEY, JSON.stringify(DB)); // refresh offline cache (no re-push)
       return true;
     }
-    cloudPush();                      // cloud is empty → seed it from this device
+    cloudPush();                      // cloud empty / not seeded → push THIS device's data up
     return false;
   }catch(e){ console.warn('Cloud load failed:',e.message||e); toast('Cloud offline — using this device','bad'); return false; }
 }
@@ -498,6 +500,12 @@ function load(){ try{DB=JSON.parse(localStorage.getItem(KEY))||seed()}catch(e){D
 function save(){ localStorage.setItem(KEY,JSON.stringify(DB)); cloudPush(); }
 /* migrate old records to include payment ledger */
 function migrate(){
+  /* guarantee core structure — never leave the app without an admin login */
+  const sd=seed();
+  if(!DB.settings) DB.settings=sd.settings;
+  ['products','purchases','sales','cards'].forEach(k=>{ if(!Array.isArray(DB[k]))DB[k]=[]; });
+  if(!DB.counters) DB.counters={purchase:0,sale:0};
+  if(!Array.isArray(DB.users) || !DB.users.length) DB.users=sd.users;
   (DB.purchases||[]).forEach(p=>{ const tot=(+p.qty||0)*(+p.rate||0);
     if(p.paid===undefined){ p.paid=tot; p.payments=[{id:uid(),date:p.date,amount:tot,method:p.payment||'cash',ref:'Initial'}]; }
     if(!p.payments)p.payments=[];
