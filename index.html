@@ -181,6 +181,8 @@ td.num,th.num{text-align:right}
 .tag.cash{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.card{background:var(--brandsoft);color:#c7c9ff;border:1px solid #4338ca}
 .tag.bank{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
+.tag.cheque{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
+body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 .tag.low{background:var(--redsoft);color:#fca5a5;border:1px solid #7f1d2b}
 .tag.ok{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.paid{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
@@ -1225,10 +1227,10 @@ function newSale(id,prefillPid){
   if(!DB.products.length)return confirmBox('No products yet','Add a product (and some stock) before selling.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
   const s=id?DB.sales.find(x=>x.id===id):null;
   _saleEditId=id||''; _saleOldQty={}; if(s)s.items.forEach(it=>_saleOldQty[it.productId]=(_saleOldQty[it.productId]||0)+(+it.qty||0));
-  _salePaidTouched = !!s;   // editing: keep saved amount; new: auto-fill full until user edits
+  _salePaidTouched = true;   // never auto-fill — the amount received is entered manually
   saleDraft = s? s.items.map(i=>({...i})) : [{productId:prefillPid||'',qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
-  const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):(S().applyVat?'exclusive':'none');
+  const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):'none';
   const collBy=s?(s.collectedBy||s.byId||session.id):session.id;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
@@ -1254,7 +1256,8 @@ function newSale(id,prefillPid){
       <div class="field"><label>Payment Method</label><select id="s_pay">
         <option value="cash" ${pay==='cash'?'selected':''}>Cash</option>
         <option value="card" ${pay==='card'?'selected':''}>Credit / Debit Card</option>
-        <option value="bank" ${pay==='bank'?'selected':''}>Bank Transfer</option></select></div>
+        <option value="bank" ${pay==='bank'?'selected':''}>Bank Transfer</option>
+        <option value="cheque" ${pay==='cheque'?'selected':''}>Cheque</option></select></div>
     </div>
     <div class="grid2">
       <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="_salePaidTouched=false;saleCalc()"></div>
@@ -1458,8 +1461,8 @@ views.payments=function(){
 views._after_payments=renderPayments;
 function renderPayments(){
   let inTot=0,outTot=0,recv=0,payl=0,inCash=0,inCard=0,inBank=0,outCash=0,outCard=0,outBank=0;
-  DB.sales.forEach(s=>{inTot+=s.paid||0;recv+=Math.max(0,s.total-(s.paid||0));(s.payments||[]).forEach(pm=>{if(pm.method==='card')inCard+=pm.amount;else if(pm.method==='bank')inBank+=pm.amount;else inCash+=pm.amount;});});
-  DB.purchases.forEach(p=>{const tot=purchaseTotal(p);outTot+=p.paid||0;payl+=Math.max(0,tot-(p.paid||0));(p.payments||[]).forEach(pm=>{if(pm.method==='card')outCard+=pm.amount;else if(pm.method==='bank')outBank+=pm.amount;else outCash+=pm.amount;});});
+  DB.sales.forEach(s=>{inTot+=s.paid||0;recv+=Math.max(0,s.total-(s.paid||0));(s.payments||[]).forEach(pm=>{if(pm.method==='card')inCard+=pm.amount;else if(pm.method==='bank'||pm.method==='cheque')inBank+=pm.amount;else inCash+=pm.amount;});});
+  DB.purchases.forEach(p=>{const tot=purchaseTotal(p);outTot+=p.paid||0;payl+=Math.max(0,tot-(p.paid||0));(p.payments||[]).forEach(pm=>{if(pm.method==='card')outCard+=pm.amount;else if(pm.method==='bank'||pm.method==='cheque')outBank+=pm.amount;else outCash+=pm.amount;});});
   const cc=$('#payCards'); if(cc)cc.innerHTML=`
     <div class="stat green"><span class="ic">💵</span><div class="label">Money In (received)</div><div class="val">${money(inTot)}</div><div class="foot">Cash ${money(inCash)} · Card ${money(inCard)} · Bank ${money(inBank)}</div></div>
     <div class="stat blue"><span class="ic">💸</span><div class="label">Money Out (paid)</div><div class="val">${money(outTot)}</div><div class="foot">Cash ${money(outCash)} · Card ${money(outCard)} · Bank ${money(outBank)}</div></div>
@@ -1503,7 +1506,7 @@ function recordPay(kind,id){
       <div class="field"><label>Amount (${S().currency})</label><input id="pm_amt" type="number" min="0" step="any" value="${(+bal.toFixed(2))}"></div>
       <div class="field"><label>Date</label><input id="pm_date" type="date" value="${todayStr()}"></div>
       <div class="field"><label>Method</label><select id="pm_method">
-        <option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank Transfer</option></select></div>
+        <option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank Transfer</option><option value="cheque">Cheque</option></select></div>
     </div>
     <div class="field"><label>Reference (optional)</label><input id="pm_ref" placeholder="e.g. receipt no. / card ••1234"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
