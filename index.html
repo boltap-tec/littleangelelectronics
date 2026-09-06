@@ -279,6 +279,8 @@ body.light .tag.payment,body.light .tag.recharge{background:#e3f7ea;color:#1f8a4
 body.light .tag.discount{background:#fdf1d8;color:#9a6b0f;border-color:#f0dca6}
 .tag.split{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
 body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
+.tag.adjust{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
+body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
 /* ===== dashboard quick-tiles (screenshot style) ===== */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px;margin-bottom:8px}
@@ -1008,7 +1010,7 @@ function buyItemsTotal(){ return buyItems.reduce((a,it)=>a+(+it.qty||0)*(+it.rat
 function cardAvailForSplit(card){ let adj=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId) adj += (t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return cardAvailable(card)+adj; }
 function splitHintText(s){ const c=s.cardId?cardById(s.cardId):null; if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
   const av=cardAvailForSplit(c), amt=+s.amount||0;
-  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}%`:''}${amt>av+1e-6?` · <span style="color:var(--red)">⚠ exceeds available balance</span>`:''}`; }
+  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${amt>av+1e-6?` · <span style="color:var(--red)">⚠ exceeds available balance</span>`:''}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
 function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=DB.cards||[];
@@ -1041,10 +1043,10 @@ function quickAddCardFromPurchase(i){
     <div class="field"><label>Card Number</label><input id="qc_number" inputmode="numeric" placeholder="stored on device, shown masked (last 4)"></div>
     <div class="grid3">
       <div class="field"><label>Monthly Limit (${S().currency}) *</label><input id="qc_limit" type="number" min="0" step="any" placeholder="0.00"></div>
-      <div class="field"><label>Commission Discount</label><select id="qc_disc">${[0,1,2,3,5].map(v=>`<option value="${v}">${v}%</option>`).join('')}</select></div>
+      <div class="field"><label>Redeem Points (%)</label>${redeemSelect('qc_disc','qc_discOther',0)}</div>
       <div class="field"><label>Payment Day (1–31)</label><input id="qc_day" type="number" min="1" max="31" value="1"></div>
     </div>
-    <div class="field"><label>Max Discount / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>`,
+    <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>`,
     `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
      <button class="btn-sm" onclick="quickSaveCard(${i})">Save Card</button>`);
   setTimeout(()=>$('#qc_name')?.focus(),30);
@@ -1053,7 +1055,7 @@ function quickSaveCard(i){
   const name=$('#qc_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#qc_day').value||1));
   const c={id:uid(),name,owner:$('#qc_owner').value.trim(),bank:$('#qc_bank').value.trim(),number:$('#qc_number').value.trim(),theme:'indigo',
-    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,discountPercent:+$('#qc_disc').value||0,
+    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,discountPercent:redeemVal('qc_disc','qc_discOther'),
     maxDiscountMonthly:+$('#qc_maxdisc').value||0,paymentDay:day,openingOutstanding:0,txns:[]};
   DB.cards.push(c); save(); renderBell();
   buySplits[i].method='card'; buySplits[i].cardId=c.id;
@@ -1398,16 +1400,53 @@ function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date();
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
 function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
   .filter(r=>r.dleft<=5).sort((a,b)=>a.dleft-b.dleft); }
-/* add a purchase charge to a card + auto commission discount (respecting monthly cap) */
+/* add a purchase charge to a card + auto redeem points (respecting monthly cap) */
 function chargeCard(c,amount,date,note,srcPurchaseId){
   if(!c.txns)c.txns=[];
   c.txns.push({id:uid(),date,type:'purchase',amount:+amount||0,note:note||'Purchase',srcPurchaseId});
   const pct=+c.discountPercent||0;
   if(pct>0 && amount>0){ const cap=+c.maxDiscountMonthly||0, used=cardDiscountInMonth(c,ym(date));
     let disc=amount*pct/100; if(cap>0) disc=Math.min(disc,Math.max(0,cap-used)); disc=Math.round(disc*100)/100;
-    if(disc>0) c.txns.push({id:uid(),date,type:'discount',amount:disc,note:'Commission '+pct+'%',srcPurchaseId}); }
+    if(disc>0) c.txns.push({id:uid(),date,type:'discount',amount:disc,note:'Redeem '+pct+'%',srcPurchaseId}); }
 }
 function unlinkPurchaseFromCards(pid){ (DB.cards||[]).forEach(c=>{ if(c.txns) c.txns=c.txns.filter(t=>t.srcPurchaseId!==pid); }); }
+/* ---- ledger display + redeem-% picker + owner balance edit ---- */
+const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'REDEEM',adjust:'EDITED'};
+function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
+function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase');
+  return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
+function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && ![1,2,3,4,5].includes(pct);
+  return `<select id="${idSel}" onchange="redeemToggle('${idSel}','${idOther}')">
+      <option value="0" ${pct===0?'selected':''}>None</option>
+      ${[1,2,3,4,5].map(v=>`<option value="${v}" ${pct===v?'selected':''}>${v}%</option>`).join('')}
+      <option value="__other" ${custom?'selected':''}>Other…</option>
+    </select>
+    <input id="${idOther}" type="number" min="0" step="any" placeholder="type %" value="${custom?pct:''}" style="${custom?'':'display:none'};margin-top:8px">`; }
+function redeemToggle(sel,other){ const o=$('#'+other); if(o)o.style.display=$('#'+sel).value==='__other'?'':'none'; }
+function redeemVal(sel,other){ const v=$('#'+sel).value; return v==='__other'?(+$('#'+other).value||0):(+v||0); }
+function adjustBalanceModal(id){
+  const c=cardById(id); if(!c)return; const avail=cardAvailable(c);
+  openModal('Edit Balance · '+esc(c.name),`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Owner correction. Set the card's available balance to the correct amount — the difference is logged in the ledger & statement as an <b>EDITED</b> entry.</p>
+    <div class="grid2">
+      <div class="field"><label>Current Available</label><input value="${money(avail)}" disabled></div>
+      <div class="field"><label>Set Available To (${S().currency}) *</label><input id="adj_target" type="number" step="any" value="${(+avail.toFixed(2))}"></div>
+    </div>
+    <div class="field"><label>Date</label><input id="adj_date" type="date" value="${todayStr()}"></div>
+    <div class="field"><label>Reason (optional)</label><input id="adj_note" placeholder="e.g. correcting opening balance"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="cardDetail('${id}')">Back</button>
+     <button class="btn-sm" onclick="saveAdjust('${id}')">Save Edit</button>`);
+  setTimeout(()=>$('#adj_target')?.select?.(),30);
+}
+function saveAdjust(id){
+  const c=cardById(id); if(!c)return; const tv=$('#adj_target').value;
+  if(tv==='')return toast('Enter the target available balance',1);
+  const target=+tv, delta=Math.round((target-cardAvailable(c))*100)/100;
+  if(Math.abs(delta)<0.005)return toast('No change — balance already that amount',1);
+  if(!c.txns)c.txns=[];
+  c.txns.push({id:uid(),date:$('#adj_date').value||todayStr(),type:'adjust',amount:delta,note:('Balance edited'+($('#adj_note').value.trim()?' · '+$('#adj_note').value.trim():''))});
+  save(); toast('Balance edited'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+}
 
 /* ---- bell reminders ---- */
 function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length;
@@ -1431,7 +1470,7 @@ function cardVisual(c){
   const due=nextDue(c.paymentDay), dleft=daysUntil(due), warn=dleft<=3;
   const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
   return `<div class="ccard" style="background:${cardGrad(c)}" onclick="cardDetail('${c.id}')">
-    ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% back</div>`:''}
+    ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% redeem</div>`:''}
     <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}${c.owner&&c.owner.trim()?` · 👤 ${esc(c.owner.trim())}`:''}</div></div><div class="cc-chip"></div></div>
     <div>
       <div class="cc-num">${maskCard(c.number)}</div>
@@ -1478,7 +1517,7 @@ function renderCards(){
     <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${cards.length} card${cards.length===1?'':'s'}</div></div>
     <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
-    <div class="stat gold"><span class="ic">％</span><div class="label">Discount · this month</div><div class="val">${money(tD)}</div></div>`:'';
+    <div class="stat gold"><span class="ic">％</span><div class="label">Redeem · this month</div><div class="val">${money(tD)}</div></div>`:'';
   if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
   if(_cardView==='credit'){
     // all cards sorted by available balance — highest at top
@@ -1507,15 +1546,15 @@ function ownerStatement(owner){
   led.sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
   const rows=led.length? led.slice(0,120).map(t=>`<tr>
       <td>${fmtDate(t.date)}</td><td>${esc(t.card)}</td>
-      <td><span class="tag ${t.type}">${t.type.toUpperCase()}</span></td>
+      <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       <td>${esc(t.note||'')}</td>
-      <td class="num" style="color:${t.type==='purchase'?'var(--red)':'var(--green)'};font-weight:700">${t.type==='purchase'?'−':'+'}${money(t.amount)}</td></tr>`).join('')
+      ${txnAmtCell(t)}</tr>`).join('')
     : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:18px">No transactions yet</td></tr>`;
   openModal('Statement · 👤 '+esc(owner),`
     <div class="grid3" style="margin-bottom:14px">
       <div class="stat red"><div class="label">You Owe (${cards.length} card${cards.length===1?'':'s'})</div><div class="val">${money(tO)}</div></div>
       <div class="stat blue"><div class="label">Total Limit</div><div class="val">${money(tL)}</div></div>
-      <div class="stat gold"><div class="label">Discount · this month</div><div class="val">${money(tD)}</div></div>
+      <div class="stat gold"><div class="label">Redeem · this month</div><div class="val">${money(tD)}</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:14px">${cards.map(c=>`<button class="mini-btn" onclick="cardDetail('${c.id}')">${esc(c.name)} · owe ${money(cardOutstanding(c))}</button>`).join('')}</div>
     <div style="font-weight:700;font-size:13px;margin-bottom:8px">Combined ledger</div>
@@ -1531,9 +1570,9 @@ function cardDetail(id){
   const txns=[...(c.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
   const rows=txns.length? txns.map(t=>`<tr>
       <td>${fmtDate(t.date)}</td>
-      <td><span class="tag ${t.type}">${t.type.toUpperCase()}</span></td>
+      <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       <td>${esc(t.note||'')}</td>
-      <td class="num" style="color:${t.type==='purchase'?'var(--red)':'var(--green)'};font-weight:700">${t.type==='purchase'?'−':'+'}${money(t.amount)}</td>
+      ${txnAmtCell(t)}
       <td class="num"><button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button></td></tr>`).join('')
     : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(c.name),`
@@ -1541,13 +1580,14 @@ function cardDetail(id){
     <div class="grid3" style="margin-bottom:16px">
       <div class="stat green"><div class="label">Available</div><div class="val">${money(avail)}</div><div class="foot">of ${money(limit)} limit</div></div>
       <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">pay by day ${c.paymentDay}</div></div>
-      <div class="stat gold"><div class="label">Discount · this month</div><div class="val">${money(discUsed)}</div><div class="foot">${c.discountPercent||0}% · ${cap>0?'cap '+money(cap):'no cap'}</div></div>
+      <div class="stat gold"><div class="label">Redeem · this month</div><div class="val">${money(discUsed)}</div><div class="foot">${c.discountPercent||0}% · ${cap>0?'cap '+money(cap):'no cap'}</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:16px">
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','payment')">＋ Payment</button>
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
-      <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Discount</button>
+      <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Redeem</button>
       <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','purchase')">− Manual charge</button>
+      ${isOwner()?`<button class="btn-sm btn-ghost" onclick="adjustBalanceModal('${c.id}')">✎ Edit balance</button>`:''}
     </div>
     <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm btn-red" onclick="delCard('${c.id}')">Delete Card</button>
@@ -1555,8 +1595,8 @@ function cardDetail(id){
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
 }
 function cardTxnModal(id,type){
-  const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Discount / Cashback',purchase:'Manual Charge'};
-  const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Commission or cashback received (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
+  const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Redeem Points',purchase:'Manual Charge'};
+  const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Redeem points / cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
   openModal(titles[type]||'Card entry',`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
     <div class="grid2">
@@ -1601,8 +1641,8 @@ function editCard(id){
       <div class="field"><label>Alert When Available Below (${S().currency})</label><input id="c_alert" type="number" min="0" step="any" value="${c.balanceLimitAlert}" placeholder="optional low-balance warning"></div>
     </div>
     <div class="grid3">
-      <div class="field"><label>Commission Discount</label><select id="c_disc">${[0,1,2,3,5].map(v=>`<option value="${v}" ${(+c.discountPercent===v)?'selected':''}>${v}%</option>`).join('')}</select></div>
-      <div class="field"><label>Max Discount / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
+      <div class="field"><label>Redeem Points (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}</div>
+      <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
       <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}"></div>
     </div>
     ${id?'':`<div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="amount already owed on this card, if any"></div>`}`,
@@ -1615,7 +1655,7 @@ function saveCard(id){
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0,
-    discountPercent:+$('#c_disc').value||0, maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
+    discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
   if(id){ Object.assign(cardById(id),data); }
   else{ data.openingOutstanding=+$('#c_open').value||0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
