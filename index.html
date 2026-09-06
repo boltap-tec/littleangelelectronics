@@ -788,8 +788,8 @@ views.dashboard=function(){
       ${canView('purchases')?`<button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📥 New Purchase</button>`:''}
     </div>
   </div>
-  ${owner?`<div class="panel" style="padding:16px 18px 6px"><h3 style="margin-bottom:2px">📦 Inventory · average cost · profit/loss</h3><p class="psub">Live per-product stock, weighted-average cost & profit earned so far</p>${dashInvProfit(eng)}</div>`:''}
   ${dashTiles()}
+  ${owner?`<div class="panel" style="padding:16px 18px 6px;margin-top:14px"><h3 style="margin-bottom:2px">📦 Inventory · average cost · profit/loss</h3><p class="psub">Live per-product stock, weighted-average cost & profit earned so far</p>${dashInvProfit(eng)}</div>`:''}
   <div class="cards" style="margin-top:14px">
     <div class="stat gold"><span class="ic">🧾</span><div class="label">Total Sales</div><div class="val">${money(totSell)}</div><div class="foot">${DB.sales.length} invoice(s)</div></div>
     <div class="stat blue"><span class="ic">📥</span><div class="label">Total Purchases</div><div class="val">${money(totBuy)}</div><div class="foot">${DB.purchases.length} entry(s)</div></div>
