@@ -297,6 +297,10 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 .split-row{display:grid;grid-template-columns:1.1fr 1.4fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px;border-top:1px solid var(--line)}
 .split-row select,.split-row input{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
 @media(max-width:860px){ .split-row{grid-template-columns:1fr 1fr} .split-row .li-x{grid-column:span 2} }
+.qty-over{border-color:var(--red)!important;color:var(--red)!important;animation:qtyblink .7s steps(1,end) infinite}
+@keyframes qtyblink{50%{box-shadow:0 0 0 3px rgba(239,68,68,.55);background:rgba(239,68,68,.14)}}
+.blink{animation:txtblink .8s steps(1,end) infinite}
+@keyframes txtblink{50%{opacity:.35}}
 
 #invoiceArea{background:#fff;color:#111}
 @media print{
@@ -490,7 +494,7 @@ function seed(){
       trn:'104224414300003',
       currency:'AED', vatPercent:5, applyVat:true,
       invoicePrefix:'INV-',
-      logoUrl:'',
+      logoUrl:'', sealUrl:'', signUrl:'',
       footer:'Thank you for your business!',
       terms:'Goods sold are checked before delivery. Warranty as per manufacturer.',
       showTrn:true, showPhone:true, showEmail:false, showTerms:true, showLogo:true,
@@ -535,6 +539,8 @@ function migrate(){
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
   if(DB.settings.avgWindowUnit===undefined)DB.settings.avgWindowUnit='all';
+  if(DB.settings.sealUrl===undefined)DB.settings.sealUrl='';
+  if(DB.settings.signUrl===undefined)DB.settings.signUrl='';
   (DB.products||[]).forEach(p=>{ if(p.compPrices===undefined)p.compPrices=[]; });
 }
 load();
@@ -677,7 +683,7 @@ function avgBuyPrice(pid,eng){
   return q>0? c/q : avgCostOf(pid,eng);
 }
 function avgWindowLabel(){ const st=S(); if((st.avgWindowUnit||'all')==='all'||!(+st.avgWindowN>0))return 'all-time'; return 'last '+(+st.avgWindowN)+' '+st.avgWindowUnit; }
-function netOf(s){ return (s.subtotal||0) - (s.discount||0); } // sale revenue excl VAT
+function netOf(s){ return (s.net!==undefined) ? s.net : ((s.subtotal||0) - (s.discount||0)); } // sale revenue excl VAT
 
 /* ---- purchase helpers (support legacy single-item + new multi-item) ---- */
 function purchaseItems(p){ return (p.items&&p.items.length)? p.items : (p.productId!==undefined?[{productId:p.productId,qty:+p.qty||0,rate:+p.rate||0}]:[]); }
@@ -908,6 +914,23 @@ function uploadProdImg(input){
   }; img.onerror=()=>toast('Could not read image',1); img.src=r.result; };
   r.readAsDataURL(f); input.value='';
 }
+/* seal / signature upload — stored permanently in settings, printed on every bill */
+function uploadStampImg(input,kind){
+  const f=input.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ const img=new Image(); img.onload=()=>{
+    const max=360; let{width:w,height:h}=img; if(w>h){if(w>max){h=h*max/w;w=max}}else{if(h>max){w=w*max/h;h=max}}
+    const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
+    const url=c.toDataURL('image/png');
+    if(kind==='seal')S().sealUrl=url; else S().signUrl=url; save();
+    const pv=$('#'+(kind==='seal'?'sealPrev':'signPrev')); if(pv)pv.innerHTML=`<img src="${url}" style="width:100%;height:100%;object-fit:contain">`;
+    toast((kind==='seal'?'Seal':'Signature')+' saved');
+  }; img.onerror=()=>toast('Could not read image',1); img.src=r.result; };
+  r.readAsDataURL(f); input.value='';
+}
+function clearStampImg(kind){ if(kind==='seal')S().sealUrl=''; else S().signUrl=''; save();
+  const pv=$('#'+(kind==='seal'?'sealPrev':'signPrev')); if(pv)pv.innerHTML=`<span style="font-size:11px;color:#999">no ${kind}</span>`;
+  toast((kind==='seal'?'Seal':'Signature')+' removed'); }
 function saveProduct(id){
   const name=$('#p_name').value.trim(); if(!name)return toast('Product name is required',1);
   const color=$('#p_color').value.trim();
@@ -958,7 +981,7 @@ function newPurchase(id,prefillPid){
   buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||'',qty:1,rate:''}];
   if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
   buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:pm.method||'cash',cardId:pm.cardId||'',cardRef:pm.cardId?'':'',amount:pm.amount}))
-    : [{method:(DB.cards&&DB.cards.length)?'card':'cash',cardId:(DB.cards&&DB.cards.length)?DB.cards[0].id:'',amount:''}];
+    : [{method:'cash',cardId:'',amount:''}];
   renderPurchaseModal();
 }
 function renderPurchaseModal(){
@@ -1156,11 +1179,16 @@ function newSale(id,prefillPid){
   _salePaidTouched = !!s;   // editing: keep saved amount; new: auto-fill full until user edits
   saleDraft = s? s.items.map(i=>({...i})) : [{productId:prefillPid||'',qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
+  const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):(S().applyVat?'exclusive':'none');
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
       <div class="field"><label>Date *</label><input id="s_date" type="date" value="${date}"></div>
       <div class="field"><label>Customer (buyer name)</label><input id="s_cust" list="dl_cust" value="${esc(cust||'')}" placeholder="Walk-in">${dataList('dl_cust',allCustomers())}</div>
       <div class="field"><label>Customer Phone</label><input id="s_phone" value="${esc(phone||'')}" placeholder="optional"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Customer Address</label><input id="s_addr" value="${esc(addr)}" placeholder="optional — shown on bill"></div>
+      <div class="field"><label>Customer VAT No.</label><input id="s_vat" value="${esc(vatNo)}" placeholder="TRN — shown on VAT bill"></div>
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Items *</label>
     <div class="line-items" id="s_items">
@@ -1168,12 +1196,18 @@ function newSale(id,prefillPid){
       <div id="s_rows"></div>
     </div>
     <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button>
-    <div class="grid3" style="margin-top:14px">
+    <div class="grid2" style="margin-top:14px">
+      <div class="field"><label>VAT Mode</label><select id="s_vatmode" onchange="_salePaidTouched=false;saleCalc()">
+        <option value="none" ${vmode==='none'?'selected':''}>Without VAT</option>
+        <option value="exclusive" ${vmode==='exclusive'?'selected':''}>With VAT — added to price (excl.)</option>
+        <option value="inclusive" ${vmode==='inclusive'?'selected':''}>With VAT — included in price (incl.)</option></select></div>
       <div class="field"><label>Payment Method</label><select id="s_pay">
         <option value="cash" ${pay==='cash'?'selected':''}>Cash</option>
         <option value="card" ${pay==='card'?'selected':''}>Credit / Debit Card</option>
         <option value="bank" ${pay==='bank'?'selected':''}>Bank Transfer</option></select></div>
-      <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="saleCalc()"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="_salePaidTouched=false;saleCalc()"></div>
       <div class="field"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Enter less than total for a credit sale — the balance is tracked in Payments.</div></div>
     </div>
     <div class="totbox" id="s_tot"></div>`,
@@ -1184,26 +1218,36 @@ function newSale(id,prefillPid){
 }
 function saleProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
   return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join(''); }
+/* stock available for THIS line = product stock − qty already used by OTHER lines of the same product */
+function saleLineAvail(i,eng){ const it=saleDraft[i]; if(!it||!it.productId)return 0; eng=eng||computeEngine();
+  const used=saleDraft.reduce((a,x,j)=> a + (j!==i && x.productId===it.productId ? (+x.qty||0):0), 0);
+  return saleAvail(it.productId,eng) - used; }
+function saleHintHtml(i,eng){ const it=saleDraft[i]; if(!it||!it.productId)return 'Search &amp; pick a product (most recent shown first)';
+  const bp=avgBuyPrice(it.productId,eng), avail=saleLineAvail(i,eng), over=(+it.qty||0)>avail+1e-9;
+  return `Avg buy price <b style="color:var(--gold2)">${money(bp)}</b> <span style="opacity:.6">(${avgWindowLabel()})</span> · available <b style="color:${over?'var(--red)':'var(--green)'}">${num(Math.max(0,avail))}</b>${over?` · <span class="blink" style="color:#fff;background:var(--red);padding:1px 7px;border-radius:6px;font-weight:800">⚠ only ${num(Math.max(0,avail))} in stock</span>`:''}${(+it.rate>0&&+it.rate<bp)?` · <span style="color:var(--red)">below cost</span>`:''}`; }
 function renderSaleRows(){
   const host=$('#s_rows'); if(!host)return; const eng=computeEngine();
-  host.innerHTML=saleDraft.map((it,i)=>{ const bp=it.productId?avgBuyPrice(it.productId,eng):0, avail=it.productId?saleAvail(it.productId,eng):0, over=(+it.qty||0)>avail+1e-9;
+  host.innerHTML=saleDraft.map((it,i)=>{ const over=it.productId&&(+it.qty||0)>saleLineAvail(i,eng)+1e-9;
     return `<div class="li-row">
     <select onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId,eng)}</select>
-    <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" style="${over?'border-color:var(--red)':''}">
+    <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" class="${over?'qty-over':''}">
     <input type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
     <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
     <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows()">✕</button>
-  </div><div class="li-hint">${it.productId?`Avg buy price <b style="color:var(--gold2)">${money(bp)}</b> <span style="opacity:.6">(${avgWindowLabel()})</span> · available <b style="color:var(--green)">${num(avail)}</b>${over?` · <span style="color:var(--red)">⚠ exceeds stock</span>`:''}${(+it.rate>0&&+it.rate<bp)?` · <span style="color:var(--red)">below cost</span>`:''}`:'Search & pick a product (most recent shown first)'}</div>`; }).join('');
+  </div><div class="li-hint">${saleHintHtml(i,eng)}</div>`; }).join('');
   saleCalc();
 }
 function addSaleRow(){saleDraft.push({productId:'',qty:1,rate:''});renderSaleRows();}
 let _salePaidTouched=false;
 function saleCalc(){
+  const eng=computeEngine();
   const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
   const disc=+($('#s_disc')?.value||0);
   const base=Math.max(0,sub-disc);
-  const vat=S().applyVat? base*(S().vatPercent/100):0;
-  const total=base+vat;
+  const mode=$('#s_vatmode')?.value||'none', r=+S().vatPercent||0;
+  let vat=0,total=base,net=base;
+  if(mode==='inclusive'){ vat=Math.round(base*r/(100+r)*100)/100; net=Math.round((base-vat)*100)/100; total=base; }
+  else if(mode==='exclusive'){ vat=Math.round(base*r/100*100)/100; total=Math.round((base+vat)*100)/100; net=base; }
   const box=$('#s_tot'); if(!box)return;
   const paidEl=$('#s_paid');
   if(paidEl && !_salePaidTouched) paidEl.value = +total.toFixed(2);   // auto-fill full until user edits
@@ -1211,12 +1255,18 @@ function saleCalc(){
   const bal=total-received;
   box.innerHTML=`<div class="totrow"><span>Subtotal</span><span>${money(sub)}</span></div>
     ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div>`:''}
-    ${S().applyVat?`<div class="totrow"><span>VAT ${S().vatPercent}%</span><span>${money(vat)}</span></div>`:''}
+    ${mode!=='none'?`<div class="totrow"><span>VAT ${r}%${mode==='inclusive'?' (incl.)':''}</span><span>${money(vat)}</span></div>`:''}
     <div class="totrow grand"><span>Total</span><span>${money(total)}</span></div>
     <div class="totrow"><span>Received now</span><span>${money(received)}</span></div>
     <div class="totrow" style="font-weight:800;color:${bal>0.01?'var(--red)':'var(--green)'}"><span>${bal>0.01?'Credit — to collect later':'Fully paid'}</span><span>${money(bal>0?bal:0)}</span></div>`;
-  box._t={sub,disc,vat,total};
-  $$('#s_rows .li-row').forEach((row,i)=>{const amt=row.querySelector('input[disabled]');if(amt&&saleDraft[i])amt.value=num((+saleDraft[i].qty||0)*(+saleDraft[i].rate||0));});
+  box._t={sub,disc,vat,total,net,mode};
+  /* live per-row amount + stock warning */
+  $$('#s_rows .li-row').forEach((row,i)=>{ if(!saleDraft[i])return;
+    const amt=row.querySelector('input[disabled]'); if(amt)amt.value=num((+saleDraft[i].qty||0)*(+saleDraft[i].rate||0));
+    const qtyIn=row.querySelector('input:not([disabled])'); const over=saleDraft[i].productId&&(+saleDraft[i].qty||0)>saleLineAvail(i,eng)+1e-9;
+    if(qtyIn)qtyIn.classList.toggle('qty-over',!!over);
+    const hint=row.nextElementSibling; if(hint&&hint.classList.contains('li-hint'))hint.innerHTML=saleHintHtml(i,eng);
+  });
 }
 function saveSale(id,print){
   const items=saleDraft.filter(i=>i.productId&&(+i.qty>0)&&i.rate!==''&&(+i.rate>=0));
@@ -1229,9 +1279,10 @@ function saveSale(id,print){
   if(paidRaw==='')return toast('Enter the amount received (0 for a full-credit sale)',1);
   let paid=Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
   const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
+    custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
-    payment:method,discount:+($('#s_disc').value||0),
-    subtotal:t.sub,vat:t.vat,vatPercent:S().applyVat?S().vatPercent:0,total:t.total};
+    payment:method,discount:+($('#s_disc').value||0),vatMode:t.mode,
+    subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
   if(id){ // EDIT — confirm; workers route to admin approval
     const rec=DB.sales.find(x=>x.id===id); const inv=rec?rec.invoiceNo:'';
     const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Updated'}]:[]};
@@ -1262,6 +1313,7 @@ function printSale(id){
     <td style="padding:10px;border-bottom:1px solid #eee;text-align:right">${num(it.rate)}</td>
     <td style="padding:10px;border-bottom:1px solid #eee;text-align:right">${num(it.qty*it.rate)}</td></tr>`}).join('');
   const bal=s.total-(s.paid||0);
+  const hasVat=(s.vatMode? s.vatMode!=='none' : ((s.vat||0)>0));
   const logo=st.showLogo?(st.logoUrl?`<img src="${esc(st.logoUrl)}" style="height:60px;object-fit:contain">`:logoMark(60)):'';
   const html=`
   <div id="invoiceArea" style="max-width:760px;margin:0 auto;padding:34px;font-family:Segoe UI,Arial,sans-serif;">
@@ -1277,7 +1329,7 @@ function printSale(id){
         </div>
       </div>
       <div style="text-align:right">
-        <div style="font-size:24px;font-weight:800;color:#c9962f;letter-spacing:1px">${st.applyVat?'TAX INVOICE':'INVOICE'}</div>
+        <div style="font-size:24px;font-weight:800;color:#c9962f;letter-spacing:1px">${hasVat?'TAX INVOICE':'INVOICE'}</div>
         <div style="margin-top:6px;font-size:13px"><b>${esc(s.invoiceNo)}</b></div>
         <div style="color:#666;font-size:12.5px">Date: ${fmtDate(s.date)}</div>
         <div style="color:#666;font-size:12.5px">Payment: ${s.payment==='card'?'Card':s.payment==='bank'?'Bank':'Cash'}</div>
@@ -1285,7 +1337,9 @@ function printSale(id){
     </div>
     <div style="margin:18px 0 6px"><div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px">Bill To</div>
       <div style="font-weight:700;color:#111;font-size:15px">${esc(s.customer||'Walk-in Customer')}</div>
-      ${s.custPhone?`<div style="color:#666;font-size:12.5px">${esc(s.custPhone)}</div>`:''}</div>
+      ${s.custAddress?`<div style="color:#666;font-size:12.5px">${esc(s.custAddress)}</div>`:''}
+      ${s.custPhone?`<div style="color:#666;font-size:12.5px">📞 ${esc(s.custPhone)}</div>`:''}
+      ${hasVat&&s.custVat?`<div style="color:#111;font-size:12.5px"><b>Customer TRN:</b> ${esc(s.custVat)}</div>`:''}</div>
     <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px">
       <thead><tr style="background:#faf4e6;color:#5a4415">
         <th style="padding:10px;text-align:left;width:34px">#</th><th style="padding:10px;text-align:left">Description</th>
@@ -1296,7 +1350,7 @@ function printSale(id){
       <table style="font-size:13.5px;min-width:270px">
         <tr><td style="padding:5px 10px;color:#666">Subtotal</td><td style="padding:5px 10px;text-align:right">${st.currency} ${num(s.subtotal)}</td></tr>
         ${s.discount>0?`<tr><td style="padding:5px 10px;color:#666">Discount</td><td style="padding:5px 10px;text-align:right">− ${st.currency} ${num(s.discount)}</td></tr>`:''}
-        ${s.vat>0?`<tr><td style="padding:5px 10px;color:#666">VAT ${s.vatPercent}%</td><td style="padding:5px 10px;text-align:right">${st.currency} ${num(s.vat)}</td></tr>`:''}
+        ${hasVat&&s.vat>0?`<tr><td style="padding:5px 10px;color:#666">VAT ${s.vatPercent}%${s.vatMode==='inclusive'?' (incl.)':''}</td><td style="padding:5px 10px;text-align:right">${st.currency} ${num(s.vat)}</td></tr>`:''}
         <tr style="border-top:2px solid #c9962f"><td style="padding:9px 10px;font-weight:800;font-size:16px">TOTAL</td><td style="padding:9px 10px;text-align:right;font-weight:800;font-size:16px;color:#c9962f">${st.currency} ${num(s.total)}</td></tr>
         <tr><td style="padding:4px 10px;color:#666">Paid</td><td style="padding:4px 10px;text-align:right">${st.currency} ${num(s.paid||0)}</td></tr>
         ${bal>0.01?`<tr><td style="padding:4px 10px;color:#b4241f;font-weight:700">Balance Due</td><td style="padding:4px 10px;text-align:right;color:#b4241f;font-weight:700">${st.currency} ${num(bal)}</td></tr>`:''}
@@ -1305,7 +1359,13 @@ function printSale(id){
     ${st.showTerms&&st.terms?`<div style="margin-top:24px;padding-top:12px;border-top:1px dashed #ccc;color:#777;font-size:11.5px"><b>Terms:</b> ${esc(st.terms)}</div>`:''}
     <div style="margin-top:26px;display:flex;justify-content:space-between;align-items:flex-end">
       <div style="color:#c9962f;font-weight:700;font-size:14px">${esc(st.footer)}</div>
-      <div style="text-align:center;color:#999;font-size:12px"><div style="width:150px;border-top:1px solid #999;padding-top:5px">Authorized Signature</div></div>
+      <div style="text-align:center;color:#999;font-size:12px">
+        <div style="height:74px;display:flex;align-items:flex-end;justify-content:center;gap:12px">
+          ${st.sealUrl?`<img src="${esc(st.sealUrl)}" style="max-height:74px;max-width:120px;object-fit:contain">`:''}
+          ${st.signUrl?`<img src="${esc(st.signUrl)}" style="max-height:58px;max-width:150px;object-fit:contain">`:''}
+        </div>
+        <div style="width:180px;border-top:1px solid #999;padding-top:5px;margin:4px auto 0">Authorized Signature &amp; Seal</div>
+      </div>
     </div>
   </div>`;
   const pr=$('#printRoot'); pr.innerHTML=html; pr.classList.remove('hidden');
@@ -1421,8 +1481,14 @@ function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date();
   const mk=(y,m)=>new Date(y,m,Math.min(day,new Date(y,m+1,0).getDate()));
   let y=t.getFullYear(),m=t.getMonth(),d=mk(y,m); if(d<t){ if(++m>11){m=0;y++;} d=mk(y,m); } return d; }
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
+/* due reminders: only UNPAID cards (outstanding>0), soonest due first; paid cards never show */
 function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
-  .filter(r=>r.dleft<=5).sort((a,b)=>a.dleft-b.dleft); }
+  .filter(r=>r.out>0.005 && r.dleft<=10).sort((a,b)=>a.dleft-b.dleft); }
+function lowBalanceCards(){ return (DB.cards||[]).filter(c=>{ const al=+c.balanceLimitAlert||0; return al>0 && cardAvailable(c)<=al; }); }
+function recentActivity(n){ const a=[];
+  DB.sales.forEach(s=>a.push({t:'sale',date:s.date,ref:s.invoiceNo,name:s.customer||'Walk-in',amt:s.total}));
+  DB.purchases.forEach(p=>a.push({t:'purchase',date:p.date,ref:p.ref,name:p.supplier||'—',amt:purchaseTotal(p)}));
+  a.sort((x,y)=>x.date<y.date?1:(x.date>y.date?-1:0)); return a.slice(0,n||5); }
 /* add a purchase charge to a card + auto redeem points (respecting monthly cap) */
 function chargeCard(c,amount,date,note,srcPurchaseId){
   if(!c.txns)c.txns=[];
@@ -1528,18 +1594,35 @@ function saveAdjust(id){
 }
 
 /* ---- bell reminders ---- */
-function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length;
+function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length;
   if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
 function toggleBell(e){ if(e)e.stopPropagation(); const pop=$('#bellPop'); if(!pop)return;
   if(pop.classList.contains('hidden')){ renderBellPop(); pop.classList.remove('hidden'); } else pop.classList.add('hidden'); }
 function closeBell(){ $('#bellPop')?.classList.add('hidden'); }
-function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return; const rem=cardReminders();
-  pop.innerHTML=`<div class="bh"><span>🔔 Card payment reminders</span><span style="color:var(--muted2);font-weight:600">${rem.length}</span></div>`+
-    (rem.length? rem.map(r=>{ const warn=r.dleft<=1; return `<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${r.c.id}'),40)">
-        <span class="d" style="background:${warn?'var(--red)':'var(--amber)'}"></span>
-        <div style="flex:1"><b>${esc(r.c.name)}</b><div style="color:var(--muted);font-size:12px">Due ${fmtDate(isoDate(r.due))} · ${r.dleft===0?'today':'in '+r.dleft+' day'+(r.dleft===1?'':'s')}</div></div>
-        <div style="text-align:right;font-weight:800;color:${r.out>0?'var(--amber)':'var(--muted2)'}">${money(r.out)}</div></div>`}).join('')
-      : `<div class="bell-empty">No card payments due in the next 5 days 🎉</div>`);
+function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return;
+  const due=cardReminders(), low=lowBalanceCards(), act=recentActivity(5);
+  const sec=(t)=>`<div class="bh" style="background:var(--panel2)"><span>${t}</span></div>`;
+  let html='';
+  /* 1) Bill due reminders — TOP, soonest first, paid cards excluded */
+  html+=sec('🔔 Bill due reminders');
+  html+= due.length? due.map(r=>{ const warn=r.dleft<=1; return `<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${r.c.id}'),40)">
+      <span class="d" style="background:${warn?'var(--red)':'var(--amber)'}"></span>
+      <div style="flex:1"><b>${esc(r.c.name)}</b><div style="color:var(--muted);font-size:12px">Due ${fmtDate(isoDate(r.due))} · ${r.dleft<=0?'today':'in '+r.dleft+' day'+(r.dleft===1?'':'s')}</div></div>
+      <div style="text-align:right;font-weight:800;color:var(--amber)">${money(r.out)}</div></div>`}).join('')
+    : `<div class="bell-empty" style="padding:12px 14px">No card payments due 🎉</div>`;
+  /* 2) Low balance warnings */
+  if(low.length){ html+=sec('⚠️ Low balance');
+    html+=low.map(c=>`<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${c.id}'),40)">
+      <span class="d" style="background:var(--red)"></span>
+      <div style="flex:1"><b>${esc(c.name)}</b><div style="color:var(--muted);font-size:12px">Available below alert (${money(c.balanceLimitAlert)})</div></div>
+      <div style="text-align:right;font-weight:800;color:var(--red)">${money(cardAvailable(c))}</div></div>`).join(''); }
+  /* 3) Recent purchases & sales */
+  if(act.length){ html+=sec('🕑 Recent purchases & sales');
+    html+=act.map(a=>`<div class="bi2" onclick="closeBell();go('${a.t==='sale'?'sales':'purchases'}')">
+      <span class="d" style="background:${a.t==='sale'?'var(--green)':'var(--blue)'}"></span>
+      <div style="flex:1"><b>${a.t==='sale'?'Sale':'Purchase'} ${esc(a.ref)}</b><div style="color:var(--muted);font-size:12px">${esc(a.name)} · ${fmtDate(a.date)}</div></div>
+      <div style="text-align:right;font-weight:700">${money(a.amt)}</div></div>`).join(''); }
+  pop.innerHTML=html;
 }
 
 /* ---- card visual ---- */
@@ -1599,10 +1682,21 @@ function renderCards(){
     <div class="stat gold"><span class="ic">％</span><div class="label">Redeem · this month</div><div class="val">${money(tD)}</div></div>`:'';
   if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
   if(_cardView==='credit'){
-    // all cards sorted by available balance — highest at top
-    const sorted=[...cards].sort((a,b)=>cardAvailable(b)-cardAvailable(a));
-    host.innerHTML=`<div class="cat-head">💳 All cards by available balance <span class="cc">highest first</span> <span class="cc" style="color:var(--green)">available ${money(tA)}</span></div>
-      <div class="ccgrid">${sorted.map((c,i)=>cardCell(c,i===0?'⭐ Highest available':'')).join('')}</div>`;
+    // compact due-date & usage list — soonest due first (paid cards after)
+    const rows=[...cards].map(c=>{ const lim=+c.creditLimit||0,out=cardOutstanding(c),av=lim-out,use=lim>0?Math.min(100,Math.max(0,out/lim*100)):0,due=nextDue(c.paymentDay),dl=daysUntil(due);
+      return {c,lim,out,av,use,due,dl}; })
+      .sort((a,b)=> (b.out>0.005)-(a.out>0.005) || a.dl-b.dl );  // unpaid first, then soonest due
+    host.innerHTML=`<div class="cat-head">💳 Cards by due date & usage <span class="cc">soonest due first</span> <span class="cc" style="color:var(--green)">available ${money(tA)}</span></div>
+      <div class="table-wrap"><table style="min-width:640px">
+      <thead><tr><th>Card</th><th class="num">Available</th><th class="num">Used / Limit</th><th class="num">Outstanding</th><th>Due date</th><th></th></tr></thead>
+      <tbody>${rows.map(r=>{ const warn=r.out>0.005&&r.dl<=3; return `<tr>
+        <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.owner?` · 👤 ${esc(r.c.owner)}`:''}</div></td>
+        <td class="num" style="color:${r.av<0?'var(--red)':'var(--green)'};font-weight:700">${money(r.av)}</td>
+        <td class="num"><div>${money(r.out)} / ${money(r.lim)}</div><div class="bar" style="margin-top:4px"><i style="width:${r.use}%"></i></div></td>
+        <td class="num">${money(r.out)}</td>
+        <td>${r.out>0.005?`<span class="tag ${warn?'due':'partial'}">${fmtDate(isoDate(r.due))} · ${r.dl<=0?'today':r.dl+'d'}</span>`:'<span class="tag ok">paid</span>'}</td>
+        <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="cardTxnModal('${r.c.id}','recharge')">↑ Recharge</button> <button class="mini-btn gold" onclick="cardTxnModal('${r.c.id}','payment')">＋ Pay</button> <button class="mini-btn" onclick="cardDetail('${r.c.id}')">Details</button></td></tr>`; }).join('')}
+      </tbody></table></div>`;
     renderBell(); return;
   }
   // group cards by owner
@@ -1977,6 +2071,27 @@ views.settings=function(){
         <input id="st_logo" value="${esc(st.logoUrl)}" placeholder="https://raw.githubusercontent.com/.../logo.png" style="flex:1;min-width:220px">
       </div>
     </div>
+    <div class="grid2">
+      <div class="field"><label>Company Seal / Stamp (shown on the sales bill)</label>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <div class="thumb lg" id="sealPrev" style="width:70px;height:70px;background:#fff">${st.sealUrl?`<img src="${esc(st.sealUrl)}" style="width:100%;height:100%;object-fit:contain">`:'<span style="font-size:11px;color:#999">no seal</span>'}</div>
+          <div style="flex:1;min-width:180px">
+            <div class="row-actions"><label class="mini-btn" style="cursor:pointer">📤 Upload seal<input type="file" accept="image/*" style="display:none" onchange="uploadStampImg(this,'seal')"></label>
+            <button class="mini-btn red" onclick="clearStampImg('seal')">Remove</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="field"><label>Authorised Signature (shown on the sales bill)</label>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <div class="thumb lg" id="signPrev" style="width:70px;height:70px;background:#fff">${st.signUrl?`<img src="${esc(st.signUrl)}" style="width:100%;height:100%;object-fit:contain">`:'<span style="font-size:11px;color:#999">no sign</span>'}</div>
+          <div style="flex:1;min-width:180px">
+            <div class="row-actions"><label class="mini-btn" style="cursor:pointer">📤 Upload signature<input type="file" accept="image/*" style="display:none" onchange="uploadStampImg(this,'sign')"></label>
+            <button class="mini-btn red" onclick="clearStampImg('sign')">Remove</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="color:var(--muted2);font-size:11.5px;margin:2px 0 12px">Seal & signature are saved permanently and printed on every sales bill until you replace or remove them. Uploads are auto-shrunk.</div>
     <button class="btn-sm" onclick="saveSettings('company')">Save Company Profile</button>
   </div>
   <div class="panel">
