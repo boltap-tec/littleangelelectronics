@@ -360,6 +360,7 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
     </div>
     <div class="spacer"></div>
     <span class="chip"><span class="dot"></span><span id="who">Owner</span></span>
+    <button class="icon-btn" id="walletBtn" title="My cash wallet" onclick="go('cashbook')">👛</button>
     <div class="bellwrap" id="bellWrap" data-owner>
       <button class="icon-btn" title="Card payment reminders" onclick="toggleBell(event)">🔔<span class="bell-badge hidden" id="bellBadge">0</span></button>
       <div class="bell-pop hidden" id="bellPop"></div>
@@ -419,7 +420,7 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 const KEY='lae_db_v1';
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','cashbook','inventory','products','compare','profit','settings'];
-const WORKER_DEFAULT=['purchases','sales'];
+const WORKER_DEFAULT=['purchases','sales','cashbook'];
 const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
 
 /* =========================================================
@@ -529,6 +530,7 @@ function migrate(){
     if(u.perms===undefined)u.perms= u.role==='owner'?ALL_VIEWS.slice():WORKER_DEFAULT.slice();
   });
   if((DB.users||[]).length && !DB.users.some(u=>u.role==='owner')) DB.users[0].role='owner';
+  if(!DB.settings._cbGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&!u.perms.includes('cashbook'))u.perms.push('cashbook'); }); DB.settings._cbGrant=true; }
   (DB.sales||[]).forEach(s=>{ const tot=+s.total||0;
     if(s.paid===undefined){ s.paid=tot; s.payments=[{id:uid(),date:s.date,amount:tot,method:s.payment||'cash',ref:'Initial'}]; }
     if(!s.payments)s.payments=[];
@@ -729,6 +731,8 @@ function applyAccess(){
   $$('[data-owner]').forEach(el=>el.style.display=owner?'':'none');
   $$('.nav-item[data-view]').forEach(el=>{ const v=el.dataset.view; if(v)el.style.display=canView(v)?'':'none'; });
   $$('#bottomnav button[data-view]').forEach(el=>{ const v=el.dataset.view; if(v)el.style.display=canView(v)?'':'none'; });
+  const wb=$('#walletBtn'); if(wb){ const on=canView('cashbook'); wb.style.display=on?'':'none';
+    if(on){ const bal=walletBalance(session.id); wb.title='My cash wallet: '+money(bal); } }
 }
 function logout(){ session=null; $('#app').style.display='none'; $('#login').style.display='flex'; $('#loginPass').value=''; closeModal(); }
 function applyBrand(){ $('#brandName').textContent=S().company; $('#brandCity').textContent=S().city; document.title='Little Angel Electronics';
@@ -749,7 +753,7 @@ function go(v){
   $('#main').innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
   if(window.innerWidth<=860) closeNav();
-  window.scrollTo(0,0); renderBell(); renderApprovalsBadge();
+  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); if(session)applyAccess();
 }
 function toggleNav(){ $('#sidebar').classList.toggle('open'); $('#backdrop').classList.toggle('show'); }
 function closeNav(){ $('#sidebar').classList.remove('open'); $('#backdrop').classList.remove('show'); }
