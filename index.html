@@ -373,6 +373,7 @@ body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
       <div class="nav-item" data-view="cards" data-owner onclick="go('cards')"><span class="ico">💳</span> Credit Cards</div>
       <div class="nav-item" data-view="inventory" onclick="go('inventory')"><span class="ico">📦</span> Inventory</div>
       <div class="nav-item" data-view="products" onclick="go('products')"><span class="ico">🏷️</span> Products</div>
+      <div class="nav-item" data-view="compare" onclick="go('compare')"><span class="ico">🔎</span> Price Compare</div>
       <div class="nav-sep"></div>
       <div class="nav-tag" data-owner>Owner</div>
       <div class="nav-item" data-view="profit" data-owner onclick="go('profit')"><span class="ico">💰</span> Profit &amp; Reports</div>
@@ -408,9 +409,9 @@ body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 
 const KEY='lae_db_v1';
 /* roles & permissions — declared before load()/seed()/migrate() use them */
-const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','inventory','products','profit','settings'];
+const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','inventory','products','compare','profit','settings'];
 const WORKER_DEFAULT=['purchases','sales'];
-const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',inventory:'Inventory',products:'Products',profit:'Profit & Reports',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
 
 /* =========================================================
    SUPABASE CLOUD SYNC  (single shared JSON row)
@@ -728,6 +729,7 @@ function dashTiles(){
     {v:'cards',ic:'💳',lab:'Credit Cards'},
     {v:'payments',ic:'💵',lab:'Payments'},
     {v:'products',ic:'🏷️',lab:'Products'},
+    {v:'compare',ic:'🔎',lab:'Price Compare'},
     {v:'profit',ic:'💰',lab:'Profit & Reports'},
     {v:'settings',ic:'⚙️',lab:'Settings'}
   ].filter(t=>canView(t.v));
@@ -1557,6 +1559,82 @@ function renderInventory(){
         <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td></tr>`).join('')}
       </tbody></table></div>`; }).join('');
 }
+
+/* =========================================================
+   PRICE COMPARE (competitor prices + online search)
+   ========================================================= */
+function compPrices(p){ return p.compPrices||[]; }
+function bestComp(p){ const cp=compPrices(p).filter(c=>+c.price>0); if(!cp.length)return null; return cp.reduce((a,b)=>(+b.price<+a.price?b:a)); }
+function allStores(){ const a=[]; DB.products.forEach(p=>compPrices(p).forEach(c=>{ if(c.store)a.push(c.store); })); return uniqSorted(a); }
+function compareOnline(pid){ const p=productById(pid); if(!p)return; const url='https://www.google.com/search?tbm=shop&q='+encodeURIComponent(p.name+' price UAE'); const w=window.open(url,'_blank'); if(!w)toast('Allow pop-ups to open the online search',1); }
+views.compare=function(){
+  return `
+  <div class="page-head"><div><h2>Price Compare</h2><p>Track competitor prices & mall offers per product across Abu Dhabi, Dubai & Sharjah — and search online in one click.</p></div></div>
+  <div class="note" style="margin-bottom:14px">🔎 <b>Online search</b> opens a live Google Shopping search in a new tab. Competitor prices below are the ones <b>you log</b> — they build your own reliable comparison history over time.</div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cmpSearch" placeholder="Search product..." oninput="renderCompare()"></div></div>
+  <div id="cmpList"></div>`;
+};
+views._after_compare=renderCompare;
+function renderCompare(){
+  const host=$('#cmpList'); if(!host)return; const eng=computeEngine();
+  const q=($('#cmpSearch')?.value||'').toLowerCase();
+  const list=DB.products.filter(p=>p.name.toLowerCase().includes(q)||(p.category||'').toLowerCase().includes(q));
+  if(!DB.products.length){host.innerHTML=`<div class="panel">${emptyBox('🔎','No products yet','Add products first, then track competitor prices.')}</div>`;return;}
+  if(!list.length){host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match your search.')}</div>`;return;}
+  host.innerHTML=`<div class="table-wrap"><table>
+    <thead><tr><th>Product</th><th class="num">Your Avg Cost</th><th class="num">Best Competitor</th><th>Where</th><th class="num">Logged</th><th></th></tr></thead>
+    <tbody>${list.map(p=>{const avg=avgCostOf(p.id,eng),best=bestComp(p);return `<tr>
+      <td><div class="prodcell">${productThumb(p)}<span>${esc(p.name)}</span></div></td>
+      <td class="num">${money(avg)}</td>
+      <td class="num">${best?`<b style="color:${+best.price<avg?'var(--green)':'var(--text)'}">${money(best.price)}</b>`:'—'}</td>
+      <td>${best?esc((best.store||'—')+(best.emirate?' · '+best.emirate:'')):'—'}</td>
+      <td class="num">${compPrices(p).length}</td>
+      <td class="num"><button class="mini-btn gold" onclick="compareDetail('${p.id}')">Compare</button>
+        <button class="mini-btn" onclick="compareOnline('${p.id}')">🔎 Online</button></td></tr>`}).join('')}
+    </tbody></table></div>`;
+}
+function compareDetail(pid){
+  const p=productById(pid); if(!p)return; const eng=computeEngine(); const avg=avgCostOf(pid,eng), best=bestComp(p);
+  const cps=[...compPrices(p)].sort((a,b)=>(+a.price)-(+b.price));
+  const rows=cps.length? cps.map(c=>`<tr>
+     <td>${esc(c.store||'—')}</td><td>${esc(c.emirate||'—')}</td>
+     <td class="num"><b style="color:${+c.price<avg?'var(--green)':'var(--text)'}">${money(c.price)}</b></td>
+     <td>${c.offer?`<span class="tag partial">${esc(c.offer)}</span>`:'—'}</td>
+     <td>${fmtDate(c.date)}</td>
+     <td class="num"><button class="mini-btn red" onclick="delCompPrice('${pid}','${c.id}')">✕</button></td></tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:18px">No competitor prices logged yet — add one below</td></tr>`;
+  openModal('Compare · '+esc(p.name),`
+    <div class="grid3" style="margin-bottom:14px">
+      <div class="stat"><div class="label">Your Avg Cost</div><div class="val">${money(avg)}</div></div>
+      <div class="stat gold"><div class="label">Best Competitor</div><div class="val">${best?money(best.price):'—'}</div><div class="foot">${best?esc((best.store||'—')+' · '+(best.emirate||'')):'log one below'}</div></div>
+      <div class="stat blue"><div class="label">Prices Logged</div><div class="val">${cps.length}</div></div>
+    </div>
+    <button class="btn-sm btn-ghost" style="margin-bottom:14px" onclick="compareOnline('${pid}')">🔎 Search this product online (Google Shopping)</button>
+    <div style="background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin-bottom:14px">
+      <div style="font-weight:700;font-size:13px;margin-bottom:10px">＋ Log a competitor price / offer</div>
+      <div class="grid2">
+        <div class="field"><label>Store / Mall</label><input id="cp_store" list="dl_store" placeholder="e.g. Carrefour, Sharaf DG">${dataList('dl_store',allStores())}</div>
+        <div class="field"><label>Emirate</label><select id="cp_emirate">${['Abu Dhabi','Dubai','Sharjah','Ajman','Ras Al Khaimah','Other'].map(e=>`<option>${e}</option>`).join('')}</select></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Price (${S().currency}) *</label><input id="cp_price" type="number" min="0" step="any" placeholder="0.00"></div>
+        <div class="field"><label>Offer / Discount</label><input id="cp_offer" placeholder="e.g. 10% off, BOGO"></div>
+        <div class="field"><label>Date</label><input id="cp_date" type="date" value="${todayStr()}"></div>
+      </div>
+      <button class="btn-sm btn-gold" style="margin-bottom:10px" onclick="saveCompPrice('${pid}')">Add price</button>
+    </div>
+    <div class="table-wrap"><table style="min-width:520px"><thead><tr><th>Store / Mall</th><th>Emirate</th><th class="num">Price</th><th>Offer</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    `<button class="btn-sm" onclick="closeModal()">Close</button>`);
+  setTimeout(()=>$('#cp_store')?.focus(),30);
+}
+function saveCompPrice(pid){
+  const p=productById(pid); if(!p)return; const price=+$('#cp_price').value; if(!(price>0))return toast('Enter a valid price',1);
+  if(!p.compPrices)p.compPrices=[];
+  p.compPrices.push({id:uid(),store:$('#cp_store').value.trim(),emirate:$('#cp_emirate').value,price,offer:$('#cp_offer').value.trim(),date:$('#cp_date').value||todayStr()});
+  save(); toast('Competitor price logged'); compareDetail(pid); if($('.nav-item.active')?.dataset.view==='compare')renderCompare();
+}
+function delCompPrice(pid,cid){ const p=productById(pid); if(!p)return;
+  p.compPrices=(p.compPrices||[]).filter(c=>c.id!==cid); save(); compareDetail(pid); if($('.nav-item.active')?.dataset.view==='compare')renderCompare(); }
 
 /* =========================================================
    PROFIT & REPORTS (owner only)
