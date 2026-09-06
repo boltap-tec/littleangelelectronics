@@ -1183,6 +1183,7 @@ function newSale(id,prefillPid){
   saleDraft = s? s.items.map(i=>({...i})) : [{productId:prefillPid||'',qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):(S().applyVat?'exclusive':'none');
+  const collBy=s?(s.collectedBy||s.byId||session.id):session.id;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
       <div class="field"><label>Date *</label><input id="s_date" type="date" value="${date}"></div>
@@ -1212,6 +1213,9 @@ function newSale(id,prefillPid){
     <div class="grid2">
       <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="_salePaidTouched=false;saleCalc()"></div>
       <div class="field"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Enter less than total for a credit sale — the balance is tracked in Payments.</div></div>
+    </div>
+    <div class="field"><label>Cash collected by (wallet credited when paid in cash)</label>
+      ${isOwner()?`<select id="s_collby">${DB.users.map(u=>`<option value="${u.id}" ${u.id===collBy?'selected':''}>${esc(u.name)}${u.id===session.id?' (you)':''}</option>`).join('')}</select>`:`<input value="${esc(session.name)} (you)" disabled><input type="hidden" id="s_collby" value="${session.id}">`}
     </div>
     <div class="totbox" id="s_tot"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
@@ -1282,7 +1286,7 @@ function saveSale(id,print){
   if(paidRaw==='')return toast('Enter the amount received (0 for a full-credit sale)',1);
   let paid=Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
   const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
-    custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),
+    custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),collectedBy:($('#s_collby')?.value||session.id),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
     payment:method,discount:+($('#s_disc').value||0),vatMode:t.mode,
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
@@ -1921,7 +1925,7 @@ function userName(id){ const u=(DB.users||[]).find(x=>x.id===id); return u?u.nam
 function cashEntries(){
   const e=[];
   (DB.cash||[]).forEach(m=>e.push({id:m.id,date:m.date||'',dir:m.dir,amount:+m.amount||0,cat:m.cat||'manual',desc:m.desc||'',who:m.who||'',recBy:m.byId||'',linkId:m.linkId||'',manual:true}));
-  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||s.date,dir:'in',amount:+pm.amount,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:''),who:s.byId||''}); }));
+  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||s.date,dir:'in',amount:+pm.amount,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:''),who:s.collectedBy||s.byId||''}); }));
   (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||p.date,dir:'out',amount:+pm.amount,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:''),who:p.byId||''}); }));
   (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:t.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
@@ -1987,18 +1991,20 @@ function renderCash(){
       <td class="num">${x.manual?`<button class="mini-btn red" title="Delete entry" onclick="delCashEntry('${x.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
-function whoSelectField(sel){ return `<div class="field"><label>Whose wallet *</label><select id="cb_who">${DB.users.map(u=>`<option value="${u.id}" ${u.id===sel?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>`; }
+function whoSelectField(sel,label){ label=label||'Whose wallet';
+  if(isOwner()) return `<div class="field"><label>${label} *</label><select id="cb_who">${DB.users.map(u=>`<option value="${u.id}" ${u.id===sel?'selected':''}>${esc(u.name)}${u.id===session.id?' (you)':''}</option>`).join('')}</select></div>`;
+  return `<div class="field"><label>${label}</label><input value="${esc(session.name)} (you)" disabled><input type="hidden" id="cb_who" value="${session.id}"></div>`; }
 function cashModal(kind){
   const titles={in:'Add Cash In',out:'Cash Out',expense:'Add Expense',opening:'Set Opening Balance'};
-  const isExp=kind==='expense', owner=isOwner();
-  const defWho = owner?(_walletSel||session.id):session.id;
+  const isExp=kind==='expense';
+  const defWho = session.id;   // default to the logged-in person
   openModal(titles[kind]||'Cash entry',`
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${isExp?'Money spent from a wallet (e.g. food, transport, misc).':kind==='opening'?'Opening cash placed in a wallet.':kind==='in'?'Cash added to a wallet (not from a sale).':'Cash taken out of a wallet.'}</p>
     <div class="grid2">
       <div class="field"><label>Amount (${S().currency}) *</label><input id="cb_amt" type="number" min="0" step="any" placeholder="0.00"></div>
       <div class="field"><label>Date</label><input id="cb_date" type="date" value="${todayStr()}"></div>
     </div>
-    ${owner?whoSelectField(defWho):''}
+    ${whoSelectField(defWho, isExp?'Paid by (owner / staff)':'Whose wallet')}
     <div class="field"><label>${isExp?'Purpose *':'Description'}</label><input id="cb_desc" placeholder="${isExp?'e.g. lunch, fuel, tea':'note'}"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveCashEntry('${kind}')">Save</button>`);
@@ -2008,7 +2014,7 @@ function saveCashEntry(kind){
   const amt=+$('#cb_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   const desc=$('#cb_desc').value.trim();
   if(kind==='expense'&&!desc)return toast('Enter the purpose of the expense',1);
-  const who = isOwner()? ($('#cb_who')?.value||session.id) : session.id;
+  const who = $('#cb_who')?.value||session.id;
   const dir = (kind==='in'||kind==='opening')?'in':'out';
   const cat = kind==='in'?'cashin':kind==='out'?'cashout':kind;
   if(!DB.cash)DB.cash=[];
