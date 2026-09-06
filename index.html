@@ -1799,12 +1799,15 @@ function cardDetail(id){
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
 }
 function cardTxnModal(id,type){
+  const c=cardById(id); const out=c?cardOutstanding(c):0;
   const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Redeem Points',purchase:'Manual Charge'};
   const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Redeem points / cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
+  const dueDate=c?nextDue(c.paymentDay):null;
   openModal(titles[type]||'Card entry',`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
+    ${type==='payment'?`<div class="totbox" style="margin-bottom:14px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div>${dueDate?`<div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div>`:''}</div>`:''}
     <div class="grid2">
-      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00" value="${type==='payment'&&out>0.005?(+out.toFixed(2)):''}"></div>
       <div class="field"><label>Date</label><input id="ct_date" type="date" value="${todayStr()}"></div>
     </div>
     <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no."></div>
