@@ -489,6 +489,7 @@ function seed(){
       terms:'Goods sold are checked before delivery. Warranty as per manufacturer.',
       showTrn:true, showPhone:true, showEmail:false, showTerms:true, showLogo:true,
       lowStockLevel:3,
+      avgWindowN:0, avgWindowUnit:'all',
       theme:'light'
     }
   };
@@ -519,6 +520,9 @@ function migrate(){
   if(!DB.cards)DB.cards=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; });
   if(DB.settings.theme===undefined)DB.settings.theme='light';
+  if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
+  if(DB.settings.avgWindowUnit===undefined)DB.settings.avgWindowUnit='all';
+  (DB.products||[]).forEach(p=>{ if(p.compPrices===undefined)p.compPrices=[]; });
 }
 load();
 
@@ -648,6 +652,18 @@ function lastKnownRate(pid){ const rows=[]; DB.purchases.forEach(p=>purchaseItem
 function productById(id){ return DB.products.find(p=>p.id===id); }
 function stockOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s?s.qty:0; }
 function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s&&s.qty>0? s.totalCost/s.qty : lastKnownRate(pid); }
+/* average BUYING price for reference display — respects the Settings averaging window (falls back to moving-average) */
+function avgBuyPrice(pid,eng){
+  const st=S(), unit=st.avgWindowUnit||'all', n=+st.avgWindowN||0;
+  if(unit==='all'||n<=0) return avgCostOf(pid,eng);
+  const days = unit==='months'? n*30 : n;
+  const cutoff=new Date(); cutoff.setHours(0,0,0,0); cutoff.setDate(cutoff.getDate()-days);
+  const cutISO=isoDate(cutoff);
+  let q=0,c=0;
+  DB.purchases.forEach(p=>{ if((p.date||'')>=cutISO) purchaseItems(p).forEach(it=>{ if(it.productId===pid){ q+=+it.qty||0; c+=(+it.qty||0)*(+it.rate||0); } }); });
+  return q>0? c/q : avgCostOf(pid,eng);
+}
+function avgWindowLabel(){ const st=S(); if((st.avgWindowUnit||'all')==='all'||!(+st.avgWindowN>0))return 'all-time'; return 'last '+(+st.avgWindowN)+' '+st.avgWindowUnit; }
 function netOf(s){ return (s.subtotal||0) - (s.discount||0); } // sale revenue excl VAT
 
 /* ---- purchase helpers (support legacy single-item + new multi-item) ---- */
@@ -956,17 +972,17 @@ function renderPurchaseModal(){
      <button class="btn-sm" onclick="savePurchase('${id||''}')">Save Purchase</button>`);
   renderBuyRows(); renderBuySplits();
 }
-function buyProdOpts(sel){ return DB.products.length? DB.products.map(x=>`<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)}</option>`).join('') : '<option value="">— add a product first —</option>'; }
+function buyProdOpts(sel,eng){ eng=eng||computeEngine(); return DB.products.length? DB.products.map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}</option>`;}).join('') : '<option value="">— add a product first —</option>'; }
 function renderBuyRows(){
   const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
-  host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
+  host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, bp=it.productId?avgBuyPrice(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
     return `<div class="li-row">
-      <select onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId)}</select>
+      <select onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId,eng)}</select>
       <input type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="buyItems[${i}].qty=+this.value;buyCalcTotal()">
       <input type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
       <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
       <button class="li-x" onclick="buyItems.splice(${i},1);renderBuyRows()">✕</button>
-    </div><div class="li-hint">In stock ${num(st)}${last?` · last cost ${money(last)}`:''}</div>`; }).join('');
+    </div><div class="li-hint">In stock ${num(st)} · avg buy ${money(bp)}${last?` · last cost ${money(last)}`:''}</div>`; }).join('');
   buyCalcTotal();
 }
 function addBuyRow(){ buyItems.push({productId:DB.products[0]?.id||'',qty:1,rate:''}); renderBuyRows(); }
@@ -1114,6 +1130,7 @@ function newSale(id){
   if(!DB.products.length)return confirmBox('No products yet','Add a product (and some stock) before selling.',()=>{closeModal();go('products');setTimeout(()=>editProduct(),60);},'Add Product');
   const s=id?DB.sales.find(x=>x.id===id):null;
   _saleEditId=id||''; _saleOldQty={}; if(s)s.items.forEach(it=>_saleOldQty[it.productId]=(_saleOldQty[it.productId]||0)+(+it.qty||0));
+  _salePaidTouched = !!s;   // editing: keep saved amount; new: auto-fill full until user edits
   saleDraft = s? s.items.map(i=>({...i})) : [{productId:DB.products[0].id,qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
@@ -1134,7 +1151,7 @@ function newSale(id){
         <option value="card" ${pay==='card'?'selected':''}>Credit / Debit Card</option>
         <option value="bank" ${pay==='bank'?'selected':''}>Bank Transfer</option></select></div>
       <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="saleCalc()"></div>
-      <div class="field"><label>Amount Received (${S().currency})</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Blank = full"></div>
+      <div class="field"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Enter less than total for a credit sale — the balance is tracked in Payments.</div></div>
     </div>
     <div class="totbox" id="s_tot"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
@@ -1142,20 +1159,21 @@ function newSale(id){
      <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Print Bill</button>`);
   renderSaleRows();
 }
-function saleProdOpts(sel){return DB.products.map(x=>`<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)}</option>`).join('');}
+function saleProdOpts(sel,eng){ eng=eng||computeEngine(); return DB.products.map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join('');}
 function renderSaleRows(){
   const host=$('#s_rows'); if(!host)return; const eng=computeEngine();
-  host.innerHTML=saleDraft.map((it,i)=>{ const avg=it.productId?avgCostOf(it.productId,eng):0, avail=it.productId?saleAvail(it.productId,eng):0, over=(+it.qty||0)>avail+1e-9;
+  host.innerHTML=saleDraft.map((it,i)=>{ const bp=it.productId?avgBuyPrice(it.productId,eng):0, avail=it.productId?saleAvail(it.productId,eng):0, over=(+it.qty||0)>avail+1e-9;
     return `<div class="li-row">
-    <select onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId)}</select>
+    <select onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId,eng)}</select>
     <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" style="${over?'border-color:var(--red)':''}">
     <input type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
     <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
     <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows()">✕</button>
-  </div><div class="li-hint">Avg cost ${money(avg)} · available ${num(avail)}${over?` · <span style="color:var(--red)">⚠ exceeds stock</span>`:''}${(+it.rate>0&&+it.rate<avg)?` · <span style="color:var(--red)">below cost</span>`:''}</div>`; }).join('');
+  </div><div class="li-hint">Avg buy price ${money(bp)} <span style="opacity:.7">(${avgWindowLabel()})</span> · available ${num(avail)}${over?` · <span style="color:var(--red)">⚠ exceeds stock</span>`:''}${(+it.rate>0&&+it.rate<bp)?` · <span style="color:var(--red)">below cost</span>`:''}</div>`; }).join('');
   saleCalc();
 }
 function addSaleRow(){saleDraft.push({productId:DB.products[0]?.id||'',qty:1,rate:''});renderSaleRows();}
+let _salePaidTouched=false;
 function saleCalc(){
   const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
   const disc=+($('#s_disc')?.value||0);
@@ -1163,10 +1181,16 @@ function saleCalc(){
   const vat=S().applyVat? base*(S().vatPercent/100):0;
   const total=base+vat;
   const box=$('#s_tot'); if(!box)return;
+  const paidEl=$('#s_paid');
+  if(paidEl && !_salePaidTouched) paidEl.value = +total.toFixed(2);   // auto-fill full until user edits
+  let received=+((paidEl&&paidEl.value)||0); if(received>total)received=total;
+  const bal=total-received;
   box.innerHTML=`<div class="totrow"><span>Subtotal</span><span>${money(sub)}</span></div>
     ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div>`:''}
     ${S().applyVat?`<div class="totrow"><span>VAT ${S().vatPercent}%</span><span>${money(vat)}</span></div>`:''}
-    <div class="totrow grand"><span>Total</span><span>${money(total)}</span></div>`;
+    <div class="totrow grand"><span>Total</span><span>${money(total)}</span></div>
+    <div class="totrow"><span>Received now</span><span>${money(received)}</span></div>
+    <div class="totrow" style="font-weight:800;color:${bal>0.01?'var(--red)':'var(--green)'}"><span>${bal>0.01?'Credit — to collect later':'Fully paid'}</span><span>${money(bal>0?bal:0)}</span></div>`;
   box._t={sub,disc,vat,total};
   $$('#s_rows .li-row').forEach((row,i)=>{const amt=row.querySelector('input[disabled]');if(amt&&saleDraft[i])amt.value=num((+saleDraft[i].qty||0)*(+saleDraft[i].rate||0));});
 }
@@ -1177,7 +1201,9 @@ function saveSale(id,print){
   const eng=computeEngine(), req={}; items.forEach(i=>req[i.productId]=(req[i.productId]||0)+(+i.qty||0));
   for(const pid in req){ const avail=saleAvail(pid,eng); if(req[pid]>avail+1e-9){ const pr=productById(pid); return toast(`Not enough stock for ${pr?pr.name:'item'} — available ${num(avail)}, needed ${num(req[pid])}`,1); } }
   const t=$('#s_tot')._t, method=$('#s_pay').value;
-  const paidRaw=$('#s_paid').value; let paid=paidRaw===''?t.total:Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
+  const paidRaw=$('#s_paid').value;
+  if(paidRaw==='')return toast('Enter the amount received (0 for a full-credit sale)',1);
+  let paid=Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
   const data={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
     payment:method,discount:+($('#s_disc').value||0),
@@ -1799,7 +1825,20 @@ views.settings=function(){
       ${toggle('st_showEmail','Show email',st.showEmail)}
       ${toggle('st_showTerms','Show terms',st.showTerms)}
     </div>
-    <div class="field" style="max-width:220px"><label>Low-stock alert level</label><input id="st_low" type="number" min="0" value="${st.lowStockLevel}"></div>
+    <div class="grid2">
+      <div class="field"><label>Low-stock alert level</label><input id="st_low" type="number" min="0" value="${st.lowStockLevel}"></div>
+      <div class="field"><label>Average buying price based on</label>
+        <div style="display:flex;gap:8px">
+          <input id="st_avgN" type="number" min="0" step="1" value="${st.avgWindowN||0}" style="flex:1" ${st.avgWindowUnit==='all'?'disabled':''}>
+          <select id="st_avgUnit" onchange="$('#st_avgN').disabled=(this.value==='all')" style="flex:1.2">
+            <option value="all" ${(st.avgWindowUnit||'all')==='all'?'selected':''}>All-time (moving avg)</option>
+            <option value="days" ${st.avgWindowUnit==='days'?'selected':''}>Last N days</option>
+            <option value="months" ${st.avgWindowUnit==='months'?'selected':''}>Last N months</option>
+          </select>
+        </div>
+        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Sets the period for the "avg buy price" shown while buying/selling. Profit & stock value always use true moving-average cost.</div>
+      </div>
+    </div>
     <button class="btn-sm" onclick="saveSettings('bill')">Save Bill Settings</button>
   </div>
   <div class="panel">
@@ -1841,6 +1880,7 @@ function saveSettings(which){
     st.applyVat=$('#st_applyVat').checked; st.showLogo=$('#st_showLogo').checked; st.showTrn=$('#st_showTrn').checked;
     st.showPhone=$('#st_showPhone').checked; st.showEmail=$('#st_showEmail').checked; st.showTerms=$('#st_showTerms').checked;
     st.lowStockLevel=+$('#st_low').value||0;
+    st.avgWindowUnit=$('#st_avgUnit').value; st.avgWindowN=Math.max(0,+$('#st_avgN').value||0);
   }
   save();toast('Settings saved');
 }
