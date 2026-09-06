@@ -1990,6 +1990,7 @@ views.cashbook=function(){
       <button class="btn-sm btn-green" onclick="cashModal('in')">＋ Cash In</button>
       <button class="btn-sm btn-red" onclick="cashModal('expense')">－ Expense</button>
       <button class="btn-sm btn-ghost" onclick="transferModal()">⇄ Transfer</button>
+      <button class="btn-sm btn-ghost" onclick="cardCashModal()">💳 Card recharge / pay</button>
     </div></div>
   ${owner?`<div class="toolbar"><div class="field" style="margin:0;min-width:230px"><label>View wallet</label>
     <select id="wsel" onchange="setWallet(this.value)"><option value="">All wallets</option>${DB.users.map(u=>`<option value="${u.id}" ${_walletSel===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
@@ -2093,6 +2094,36 @@ function saveTransfer(){
   DB.cash.push({id:uid(),date,dir:'out',amount:amt,cat:'transfer',desc:'To '+userName(to)+(note?' · '+note:''),who:from,byId:session.id,linkId:link});
   DB.cash.push({id:uid(),date,dir:'in',amount:amt,cat:'transfer',desc:'From '+userName(from)+(note?' · '+note:''),who:to,byId:session.id,linkId:link});
   save(); closeModal(); toast('Cash transferred'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
+}
+/* recharge / pay a credit card using cash from a wallet — posts to BOTH the card ledger and this wallet */
+function cardCashModal(){
+  if(!(DB.cards||[]).length)return toast('No cards yet — ask admin to add a card first',1);
+  const owner=isOwner();
+  openModal('Card Recharge / Payment (from cash)',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Deposit cash to a card or pay its due from a wallet. Recorded in the card ledger AND deducted from the wallet.</p>
+    <div class="grid2">
+      <div class="field"><label>Card *</label><select id="cc_card" onchange="cardCashDue()">${DB.cards.map(c=>`<option value="${c.id}">${esc(c.name)} · due ${money(Math.max(0,cardOutstanding(c)))}</option>`).join('')}</select></div>
+      <div class="field"><label>Type *</label><select id="cc_type"><option value="payment">Payment (reduce card due)</option><option value="recharge">Recharge (add funds)</option></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="cc_amt" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Date</label><input id="cc_date" type="date" value="${todayStr()}"></div>
+    </div>
+    ${owner?`<div class="field"><label>From wallet *</label><select id="cc_who">${DB.users.map(u=>`<option value="${u.id}" ${u.id===session.id?'selected':''}>${esc(u.name)}${u.id===session.id?' (you)':''}</option>`).join('')}</select></div>`:`<div class="field"><label>From wallet</label><input value="${esc(session.name)} (you)" disabled><input type="hidden" id="cc_who" value="${session.id}"></div>`}
+    <div class="field"><label>Note (optional)</label><input id="cc_note" placeholder="e.g. deposited at bank"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveCardCash()">Save</button>`);
+  setTimeout(()=>$('#cc_amt')?.focus(),30);
+}
+function cardCashDue(){ const c=cardById($('#cc_card').value); if(c&&$('#cc_type').value==='payment'&&!$('#cc_amt').value){ const o=cardOutstanding(c); if(o>0.005)$('#cc_amt').value=+o.toFixed(2); } }
+function saveCardCash(){
+  const c=cardById($('#cc_card').value); if(!c)return toast('Pick a card',1);
+  const amt=+$('#cc_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
+  const type=$('#cc_type').value, who=$('#cc_who')?.value||session.id, date=$('#cc_date').value||todayStr(), note=$('#cc_note').value.trim();
+  if(!c.txns)c.txns=[];
+  c.txns.push({id:uid(),date,type,amount:amt,note:note||(type==='recharge'?'Cash recharge':'Cash payment'),fromCash:true,byId:who});
+  save(); closeModal(); toast('Card '+(type==='recharge'?'recharged':'paid')+' from '+userName(who)+"'s cash");
+  if($('.nav-item.active')?.dataset.view==='cashbook')renderCash(); renderBell();
 }
 function delCashEntry(id){ if(!isOwner())return toast('Only admin can delete cash entries',1); const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
   confirmBox('Delete cash entry?', link?'This is a transfer — both sides will be removed. Continue?':'This removes the entry and recalculates the wallet.',()=>{
