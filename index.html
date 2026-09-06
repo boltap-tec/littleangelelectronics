@@ -1129,7 +1129,7 @@ function savePurchase(id){
   }
   // NEW purchase (allowed for owner & worker)
   DB.counters.purchase++; const purchaseId=uid(), ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
-  DB.purchases.push({id:purchaseId,ref,...data});
+  DB.purchases.push({id:purchaseId,ref,byId:session.id,...data});
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
   save();closeModal();renderPurchases();renderBell();
@@ -1295,7 +1295,7 @@ function saveSale(id,print){
   }
   // NEW sale
   DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
-  DB.sales.push({id:nid,invoiceNo:inv,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Initial'}]:[]});
+  DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Initial'}]:[]});
   save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
   if(print)setTimeout(()=>printSale(nid),120);
 }
@@ -1790,7 +1790,7 @@ function saveCardTxn(id,type){
   const c=cardById(id); if(!c)return; const amt=+$('#ct_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   if(!c.txns)c.txns=[];
   const fromCash=!!$('#ct_cash')?.checked;
-  c.txns.push({id:uid(),date:$('#ct_date').value||todayStr(),type,amount:amt,note:$('#ct_note').value.trim(),fromCash});
+  c.txns.push({id:uid(),date:$('#ct_date').value||todayStr(),type,amount:amt,note:$('#ct_note').value.trim(),fromCash,byId:session.id});
   save(); toast(fromCash?'Saved · cash deducted':'Saved'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 function delCardTxn(cid,tid){ const c=cardById(cid); if(!c)return;
@@ -1916,87 +1916,135 @@ function renderInventory(){
    Auto: sales cash in, purchase cash out, card recharge/payment paid from cash out.
    Manual: opening balance, expenses (with who + purpose), other cash in/out.
    ========================================================= */
+function userName(id){ const u=(DB.users||[]).find(x=>x.id===id); return u?u.name:'Unassigned'; }
+/* full ledger of wallet movements, each attributed to a person (who = userId) */
 function cashEntries(){
   const e=[];
-  (DB.cash||[]).forEach(m=>e.push({id:m.id,date:m.date||'',dir:m.dir,amount:+m.amount||0,cat:m.cat||'manual',desc:m.desc||'',who:m.who||'',manual:true}));
-  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||s.date,dir:'in',amount:+pm.amount,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:''),who:''}); }));
-  (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||p.date,dir:'out',amount:+pm.amount,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:''),who:''}); }));
-  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:''}); }));
+  (DB.cash||[]).forEach(m=>e.push({id:m.id,date:m.date||'',dir:m.dir,amount:+m.amount||0,cat:m.cat||'manual',desc:m.desc||'',who:m.who||'',recBy:m.byId||'',linkId:m.linkId||'',manual:true}));
+  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||s.date,dir:'in',amount:+pm.amount,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:''),who:s.byId||''}); }));
+  (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||p.date,dir:'out',amount:+pm.amount,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:''),who:p.byId||''}); }));
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:t.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return e;
 }
+function walletBalance(pid){ return cashEntries().filter(x=>x.who===pid).reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
 function cashBalance(){ return cashEntries().reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
-const CASH_TAG={sale:'ok',purchase:'card',card:'partial',expense:'due',opening:'bank',cashin:'ok',cashout:'due',manual:'bank'};
+const CASH_TAG={sale:'ok',purchase:'card',card:'partial',expense:'due',opening:'bank',cashin:'ok',cashout:'due',transfer:'split',manual:'bank'};
+let _walletSel='';
+function setWallet(v){ _walletSel=v; renderCash(); }
 views.cashbook=function(){
+  const owner=isOwner();
   return `
-  <div class="page-head"><div><h2>Cash Book</h2><p>Daily cash-in-hand ledger. Sales add cash, purchases & cash card top-ups reduce it, and you log expenses with who & why.</p></div>
+  <div class="page-head"><div><h2>Cash Wallets</h2><p>Each person's cash-in-hand. Sales add cash, purchases & cash card top-ups reduce it, and staff log expenses & transfers with who & why.</p></div>
     <div class="row-actions">
       <button class="btn-sm btn-green" onclick="cashModal('in')">＋ Cash In</button>
       <button class="btn-sm btn-red" onclick="cashModal('expense')">－ Expense</button>
+      <button class="btn-sm btn-ghost" onclick="transferModal()">⇄ Transfer</button>
     </div></div>
+  ${owner?`<div class="toolbar"><div class="field" style="margin:0;min-width:230px"><label>View wallet</label>
+    <select id="wsel" onchange="setWallet(this.value)"><option value="">All wallets</option>${DB.users.map(u=>`<option value="${u.id}" ${_walletSel===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
+    <div class="search"><span class="si">🔎</span><input id="cashSearch" placeholder="Search description..." oninput="renderCash()"></div>
+    <button class="mini-btn" onclick="cashModal('opening')">Set opening</button></div>`
+   :`<div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cashSearch" placeholder="Search description..." oninput="renderCash()"></div></div>`}
   <div id="cashStats" class="cards"></div>
-  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cashSearch" placeholder="Search description / who..." oninput="renderCash()"></div>
-    <button class="mini-btn" onclick="cashModal('out')">－ Other cash out</button>
-    <button class="mini-btn" onclick="cashModal('opening')">Set opening balance</button></div>
+  <div id="cashWallets"></div>
   <div id="cashList"></div>`;
 };
 views._after_cashbook=renderCash;
 function renderCash(){
   const host=$('#cashList'); if(!host)return;
-  const all=cashEntries(); let run=0; const withRun=all.map(x=>{ run+=x.dir==='in'?x.amount:-x.amount; return {...x,run}; });
+  const owner=isOwner(); const person = owner? _walletSel : session.id;
+  const all=cashEntries();
+  const scoped = person? all.filter(x=>x.who===person) : all;
+  let run=0; const withRun=scoped.map(x=>{ run+=x.dir==='in'?x.amount:-x.amount; return {...x,run}; });
   const bal=run, today=todayStr();
-  const tin=all.filter(x=>x.date===today&&x.dir==='in').reduce((a,x)=>a+x.amount,0);
-  const tout=all.filter(x=>x.date===today&&x.dir==='out').reduce((a,x)=>a+x.amount,0);
+  const tin=scoped.filter(x=>x.date===today&&x.dir==='in').reduce((a,x)=>a+x.amount,0);
+  const tout=scoped.filter(x=>x.date===today&&x.dir==='out').reduce((a,x)=>a+x.amount,0);
+  const label = person? (userName(person)+"'s wallet") : 'All wallets';
   const cs=$('#cashStats'); if(cs)cs.innerHTML=`
-    <div class="stat ${bal<0?'red':'green'}"><span class="ic">🧰</span><div class="label">Cash in Hand</div><div class="val">${money(bal)}</div><div class="foot">current balance</div></div>
+    <div class="stat ${bal<0?'red':'green'}"><span class="ic">🧰</span><div class="label">${esc(label)}</div><div class="val">${money(bal)}</div><div class="foot">cash in hand</div></div>
     <div class="stat green"><span class="ic">⬆️</span><div class="label">Cash In · today</div><div class="val">${money(tin)}</div></div>
     <div class="stat red"><span class="ic">⬇️</span><div class="label">Cash Out · today</div><div class="val">${money(tout)}</div></div>
-    <div class="stat gold"><span class="ic">📒</span><div class="label">Entries</div><div class="val">${all.length}</div></div>`;
+    <div class="stat gold"><span class="ic">📒</span><div class="label">Entries</div><div class="val">${scoped.length}</div></div>`;
+  // per-person wallet summary (owner, All view)
+  const ws=$('#cashWallets'); if(ws){ ws.innerHTML = (owner && !person && all.length)? `<div class="cat-head">👛 Wallet balances</div><div class="cards">${DB.users.map(u=>{const b=walletBalance(u.id);return `<div class="stat ${b<0?'red':''}" style="cursor:pointer" onclick="setWallet('${u.id}');document.getElementById('wsel').value='${u.id}'"><div class="label">${esc(u.name)}</div><div class="val">${money(b)}</div><div class="foot">${u.role==='owner'?'Owner':'Worker'}</div></div>`;}).join('')}${walletBalance('')!==0?`<div class="stat"><div class="label">Unassigned</div><div class="val">${money(walletBalance(''))}</div><div class="foot">no person tagged</div></div>`:''}</div>`:''; }
   const q=($('#cashSearch')?.value||'').toLowerCase();
   let rows=[...withRun].reverse();
-  if(q)rows=rows.filter(x=>(x.desc||'').toLowerCase().includes(q)||(x.who||'').toLowerCase().includes(q)||(x.cat||'').toLowerCase().includes(q));
-  if(!all.length){ host.innerHTML=`<div class="panel">${emptyBox('🧰','No cash entries yet','Set your opening balance, then log expenses & cash movements.')}</div>`; return; }
-  host.innerHTML=`<div class="table-wrap"><table style="min-width:680px">
-    <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>By</th><th class="num">Cash In</th><th class="num">Cash Out</th><th class="num">Balance</th><th></th></tr></thead>
+  if(q)rows=rows.filter(x=>(x.desc||'').toLowerCase().includes(q)||userName(x.who).toLowerCase().includes(q)||(x.cat||'').toLowerCase().includes(q));
+  if(!scoped.length){ host.innerHTML=`<div class="panel">${emptyBox('🧰','No cash entries','Log an opening balance, expense or transfer to start this wallet.')}</div>`; return; }
+  const showWho = !person; // show wallet column in All view
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:${showWho?720:640}px">
+    <thead><tr><th>Date</th><th>Type</th>${showWho?'<th>Wallet</th>':''}<th>Description</th><th>Recorded by</th><th class="num">In</th><th class="num">Out</th><th class="num">Balance</th><th></th></tr></thead>
     <tbody>${rows.map(x=>`<tr>
       <td>${fmtDate(x.date)}</td>
       <td><span class="tag ${CASH_TAG[x.cat]||'bank'}">${(x.cat||'').toUpperCase()}</span></td>
+      ${showWho?`<td>${esc(userName(x.who))}</td>`:''}
       <td style="white-space:normal">${esc(x.desc||'')}</td>
-      <td>${esc(x.who||'')}</td>
+      <td>${x.recBy?esc(userName(x.recBy)):'<span style="color:var(--muted2)">—</span>'}</td>
       <td class="num" style="color:var(--green)">${x.dir==='in'?money(x.amount):''}</td>
       <td class="num" style="color:var(--red)">${x.dir==='out'?money(x.amount):''}</td>
       <td class="num"><b>${money(x.run)}</b></td>
       <td class="num">${x.manual?`<button class="mini-btn red" title="Delete entry" onclick="delCashEntry('${x.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
+function whoSelectField(sel){ return `<div class="field"><label>Whose wallet *</label><select id="cb_who">${DB.users.map(u=>`<option value="${u.id}" ${u.id===sel?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>`; }
 function cashModal(kind){
   const titles={in:'Add Cash In',out:'Cash Out',expense:'Add Expense',opening:'Set Opening Balance'};
-  const isExp=kind==='expense';
+  const isExp=kind==='expense', owner=isOwner();
+  const defWho = owner?(_walletSel||session.id):session.id;
   openModal(titles[kind]||'Cash entry',`
-    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${isExp?'Money spent from the cash box (e.g. food, transport, misc).':kind==='opening'?'Starting cash in hand — logged as a cash-in entry.':kind==='in'?'Cash received into the box (not from a sale).':'Cash paid out (not a purchase/card/expense).'}</p>
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${isExp?'Money spent from a wallet (e.g. food, transport, misc).':kind==='opening'?'Opening cash placed in a wallet.':kind==='in'?'Cash added to a wallet (not from a sale).':'Cash taken out of a wallet.'}</p>
     <div class="grid2">
       <div class="field"><label>Amount (${S().currency}) *</label><input id="cb_amt" type="number" min="0" step="any" placeholder="0.00"></div>
       <div class="field"><label>Date</label><input id="cb_date" type="date" value="${todayStr()}"></div>
     </div>
-    ${isExp?`<div class="grid2">
-      <div class="field"><label>Paid by (owner / staff) *</label><input id="cb_who" value="${esc(session.name)}"></div>
-      <div class="field"><label>Purpose *</label><input id="cb_desc" placeholder="e.g. lunch, fuel, tea"></div>
-    </div>`:`<div class="field"><label>Description</label><input id="cb_desc" placeholder="note"></div>`}`,
+    ${owner?whoSelectField(defWho):''}
+    <div class="field"><label>${isExp?'Purpose *':'Description'}</label><input id="cb_desc" placeholder="${isExp?'e.g. lunch, fuel, tea':'note'}"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveCashEntry('${kind}')">Save</button>`);
   setTimeout(()=>$('#cb_amt')?.focus(),30);
 }
 function saveCashEntry(kind){
   const amt=+$('#cb_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
-  const desc=$('#cb_desc').value.trim(); const who=$('#cb_who')?.value.trim()||'';
+  const desc=$('#cb_desc').value.trim();
   if(kind==='expense'&&!desc)return toast('Enter the purpose of the expense',1);
+  const who = isOwner()? ($('#cb_who')?.value||session.id) : session.id;
   const dir = (kind==='in'||kind==='opening')?'in':'out';
   const cat = kind==='in'?'cashin':kind==='out'?'cashout':kind;
   if(!DB.cash)DB.cash=[];
-  DB.cash.push({id:uid(),date:$('#cb_date').value||todayStr(),dir,amount:amt,cat,desc:desc||(kind==='opening'?'Opening balance':''),who});
+  DB.cash.push({id:uid(),date:$('#cb_date').value||todayStr(),dir,amount:amt,cat,desc:desc||(kind==='opening'?'Opening balance':''),who,byId:session.id});
   save(); closeModal(); toast('Saved'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
 }
-function delCashEntry(id){ confirmBox('Delete cash entry?','This removes the entry and recalculates the balance.',()=>{ DB.cash=(DB.cash||[]).filter(e=>e.id!==id); save(); renderCash(); toast('Entry deleted'); },'Delete'); }
+function transferModal(){
+  const owner=isOwner(); const from=owner?(_walletSel||session.id):session.id;
+  const others=DB.users;
+  openModal('Transfer Cash',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Move cash from one person's wallet to another. It's logged in both wallets.</p>
+    <div class="grid2">
+      <div class="field"><label>From wallet *</label>${owner?`<select id="tr_from">${others.map(u=>`<option value="${u.id}" ${u.id===from?'selected':''}>${esc(u.name)}</option>`).join('')}</select>`:`<input value="${esc(session.name)} (you)" disabled><input type="hidden" id="tr_from" value="${session.id}">`}</div>
+      <div class="field"><label>To wallet *</label><select id="tr_to">${others.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="tr_amt" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Date</label><input id="tr_date" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="field"><label>Note</label><input id="tr_note" placeholder="optional"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveTransfer()">Transfer</button>`);
+  setTimeout(()=>$('#tr_amt')?.focus(),30);
+}
+function saveTransfer(){
+  const from=$('#tr_from').value, to=$('#tr_to').value, amt=+$('#tr_amt').value, date=$('#tr_date').value||todayStr(), note=$('#tr_note').value.trim();
+  if(!(amt>0))return toast('Enter a valid amount',1);
+  if(!from||!to||from===to)return toast('Pick two different people',1);
+  const link=uid(); if(!DB.cash)DB.cash=[];
+  DB.cash.push({id:uid(),date,dir:'out',amount:amt,cat:'transfer',desc:'To '+userName(to)+(note?' · '+note:''),who:from,byId:session.id,linkId:link});
+  DB.cash.push({id:uid(),date,dir:'in',amount:amt,cat:'transfer',desc:'From '+userName(from)+(note?' · '+note:''),who:to,byId:session.id,linkId:link});
+  save(); closeModal(); toast('Cash transferred'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
+}
+function delCashEntry(id){ const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
+  confirmBox('Delete cash entry?', link?'This is a transfer — both sides will be removed. Continue?':'This removes the entry and recalculates the wallet.',()=>{
+    DB.cash=(DB.cash||[]).filter(e=> link? e.linkId!==link : e.id!==id); save(); renderCash(); toast('Entry deleted'); },'Delete'); }
 
 /* =========================================================
    PRICE COMPARE (competitor prices + online search)
