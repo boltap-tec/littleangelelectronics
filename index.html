@@ -490,7 +490,7 @@ function seed(){
       showTrn:true, showPhone:true, showEmail:false, showTerms:true, showLogo:true,
       lowStockLevel:3,
       avgWindowN:0, avgWindowUnit:'all',
-      theme:'light'
+      theme:'dark'
     }
   };
 }
@@ -519,7 +519,7 @@ function migrate(){
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
   if(!DB.cards)DB.cards=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; });
-  if(DB.settings.theme===undefined)DB.settings.theme='light';
+  if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
   if(DB.settings.avgWindowUnit===undefined)DB.settings.avgWindowUnit='all';
   (DB.products||[]).forEach(p=>{ if(p.compPrices===undefined)p.compPrices=[]; });
@@ -1798,7 +1798,7 @@ views.settings=function(){
   return `
   <div class="page-head"><div><h2>Settings</h2><p>Appearance, company profile, sales-bill layout, users & data backup.</p></div></div>
   <div class="panel">
-    <h3>🎨 Appearance</h3><p class="psub">Choose your theme. Bright is the default.</p>
+    <h3>🎨 Appearance</h3><p class="psub">Choose your theme. Dark is the default.</p>
     <div class="theme-choose">
       <button class="theme-opt ${st.theme!=='dark'?'on':''}" onclick="setTheme('light')">
         <div class="tp tp-light"><span></span><span></span><span></span></div>Bright</button>
