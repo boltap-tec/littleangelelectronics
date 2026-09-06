@@ -135,6 +135,7 @@ body.light ::-webkit-scrollbar-thumb{background:#c9d3e8}
 .nav-item.active{background:linear-gradient(135deg,rgba(99,102,241,.22),rgba(99,102,241,.05));color:#fff;border-color:var(--line2)}
 .nav-sep{height:1px;background:var(--line);margin:12px 6px}
 .nav-tag{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--muted2);padding:6px 13px;font-weight:700}
+.nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;min-width:19px;height:19px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
 
 .main{flex:1;padding:22px;max-width:1200px;margin:0 auto;width:100%}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap}
@@ -378,6 +379,7 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
       <div class="nav-item" data-view="compare" onclick="go('compare')"><span class="ico">🔎</span> Price Compare</div>
       <div class="nav-sep"></div>
       <div class="nav-tag" data-owner>Owner</div>
+      <div class="nav-item" data-view="approvals" data-owner onclick="go('approvals')"><span class="ico">📝</span> Approvals <span class="nav-badge hidden" id="apprBadge"></span></div>
       <div class="nav-item" data-view="profit" data-owner onclick="go('profit')"><span class="ico">💰</span> Profit &amp; Reports</div>
       <div class="nav-item" data-view="settings" onclick="go('settings')"><span class="ico">⚙️</span> Settings</div>
     </aside>
@@ -528,6 +530,7 @@ function migrate(){
   });
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
   if(!DB.cards)DB.cards=[];
+  if(!Array.isArray(DB.approvals))DB.approvals=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; });
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
@@ -686,6 +689,7 @@ function uniqSorted(a){ return [...new Set((a||[]).map(x=>(x||'').trim()).filter
 function allSuppliers(){ return uniqSorted(DB.purchases.map(p=>p.supplier)); }
 function allCustomers(){ return uniqSorted(DB.sales.map(s=>s.customer)); }
 function allCategories(){ return uniqSorted(DB.products.map(p=>p.category)); }
+function productsByRecent(){ return [...DB.products].sort((a,b)=>(lastBuyDate(b.id)||'').localeCompare(lastBuyDate(a.id)||'')||a.name.localeCompare(b.name)); }
 function dataList(id,arr){ return `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`; }
 /* ---- roles & permissions (ALL_VIEWS/WORKER_DEFAULT/VIEW_LABELS declared near top, before load()) ---- */
 function userPerms(u){ if(!u)return[]; if(u.role==='owner')return ALL_VIEWS.slice(); return (u.perms&&u.perms.length)?u.perms.slice():WORKER_DEFAULT.slice(); }
@@ -709,7 +713,7 @@ function doLogin(){
 function enterApp(){
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell();
+  applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
 }
 /* show/hide nav + bell + bottom-nav by this user's permissions */
 function applyAccess(){
@@ -737,7 +741,7 @@ function go(v){
   $('#main').innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
   if(window.innerWidth<=860) closeNav();
-  window.scrollTo(0,0); renderBell();
+  window.scrollTo(0,0); renderBell(); renderApprovalsBadge();
 }
 function toggleNav(){ $('#sidebar').classList.toggle('open'); $('#backdrop').classList.toggle('show'); }
 function closeNav(){ $('#sidebar').classList.remove('open'); $('#backdrop').classList.remove('show'); }
@@ -756,6 +760,7 @@ function dashTiles(){
     {v:'payments',ic:'💵',lab:'Payments'},
     {v:'products',ic:'🏷️',lab:'Products'},
     {v:'compare',ic:'🔎',lab:'Price Compare'},
+    {v:'approvals',ic:'📝',lab:'Approvals'},
     {v:'profit',ic:'💰',lab:'Profit & Reports'},
     {v:'settings',ic:'⚙️',lab:'Settings'}
   ].filter(t=>canView(t.v));
@@ -950,8 +955,8 @@ let buyItems=[], buySplits=[], _buyEditId='';
 function newPurchase(id,prefillPid){
   const p=id?DB.purchases.find(x=>x.id===id):null;
   _buyEditId=id||'';
-  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||DB.products[0]?.id||'',qty:1,rate:''}];
-  if(!buyItems.length)buyItems=[{productId:DB.products[0]?.id||'',qty:1,rate:''}];
+  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||'',qty:1,rate:''}];
+  if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
   buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:pm.method||'cash',cardId:pm.cardId||'',cardRef:pm.cardId?'':'',amount:pm.amount}))
     : [{method:(DB.cards&&DB.cards.length)?'card':'cash',cardId:(DB.cards&&DB.cards.length)?DB.cards[0].id:'',amount:''}];
   renderPurchaseModal();
@@ -982,7 +987,8 @@ function renderPurchaseModal(){
      <button class="btn-sm" onclick="savePurchase('${id||''}')">Save Purchase</button>`);
   renderBuyRows(); renderBuySplits();
 }
-function buyProdOpts(sel,eng){ eng=eng||computeEngine(); return DB.products.length? DB.products.map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}</option>`;}).join('') : '<option value="">— add a product first —</option>'; }
+function buyProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
+  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}</option>`;}).join(''); }
 function renderBuyRows(){
   const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, bp=it.productId?avgBuyPrice(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
@@ -992,10 +998,10 @@ function renderBuyRows(){
       <input type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
       <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
       <button class="li-x" onclick="buyItems.splice(${i},1);renderBuyRows()">✕</button>
-    </div><div class="li-hint">In stock ${num(st)} · avg buy ${money(bp)}${last?` · last cost ${money(last)}`:''}</div>`; }).join('');
+    </div><div class="li-hint">${it.productId?`In stock <b style="color:var(--green)">${num(st)}</b> · avg buy <b style="color:var(--gold2)">${money(bp)}</b>${last?` · last cost ${money(last)}`:''}`:'Search & pick a product (most recently stocked shown first)'}</div>`; }).join('');
   buyCalcTotal();
 }
-function addBuyRow(){ buyItems.push({productId:DB.products[0]?.id||'',qty:1,rate:''}); renderBuyRows(); }
+function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); }
 function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#np_name')?.focus(),30); }
 function buyAddNewProduct(){
   const name=$('#np_name').value.trim(); if(!name)return toast('Enter a product name',1);
@@ -1089,18 +1095,25 @@ function savePurchase(id){
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
   const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',ref:'Initial'}));
   const data={date,supplier,items,payment:methodTag,paid,payments};
-  let purchaseId, ref;
-  if(id){const rec=DB.purchases.find(x=>x.id===id);
-    ['productId','qty','rate','cardId','cardRef'].forEach(k=>delete rec[k]);
-    Object.assign(rec,data); purchaseId=id; ref=rec.ref; unlinkPurchaseFromCards(id);
-  } else { DB.counters.purchase++; purchaseId=uid(); ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
-    DB.purchases.push({id:purchaseId,ref,...data}); }
+  if(id){ // EDIT existing — confirm; workers route to admin approval
+    const rec=DB.purchases.find(x=>x.id===id); const ref=rec?rec.ref:'';
+    if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
+    return confirmBox('Save changes?',`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated.`,()=>{
+      commitPurchase(id,data); save();closeModal();renderPurchases();renderBell();toast('Purchase updated'); },'Save');
+  }
+  // NEW purchase (allowed for owner & worker)
+  DB.counters.purchase++; const purchaseId=uid(), ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
+  DB.purchases.push({id:purchaseId,ref,...data});
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
   save();closeModal();renderPurchases();renderBell();
   toast(charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved');
 }
-function delPurchase(id){confirmBox('Delete purchase?','Inventory, cost, card balance & payments will recalculate.',()=>{unlinkPurchaseFromCards(id);DB.purchases=DB.purchases.filter(p=>p.id!==id);save();renderPurchases();renderBell();toast('Purchase deleted');});}
+function delPurchase(id){
+  const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
+  if(!isOwner()) return confirmBox('Send for approval?',`Deleting purchase <b>${esc(ref)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('purchase','delete',id,ref,null),'Send');
+  confirmBox('Delete purchase?',`Delete <b>${esc(ref)}</b>? Inventory, cost, card balance & payments will recalculate. This cannot be undone.`,()=>{commitPurchaseDelete(id);save();renderPurchases();renderBell();toast('Purchase deleted');},'Delete');
+}
 
 /* =========================================================
    SALES & BILLING
@@ -1141,7 +1154,7 @@ function newSale(id,prefillPid){
   const s=id?DB.sales.find(x=>x.id===id):null;
   _saleEditId=id||''; _saleOldQty={}; if(s)s.items.forEach(it=>_saleOldQty[it.productId]=(_saleOldQty[it.productId]||0)+(+it.qty||0));
   _salePaidTouched = !!s;   // editing: keep saved amount; new: auto-fill full until user edits
-  saleDraft = s? s.items.map(i=>({...i})) : [{productId:prefillPid||DB.products[0].id,qty:1,rate:''}];
+  saleDraft = s? s.items.map(i=>({...i})) : [{productId:prefillPid||'',qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
     <div class="grid3">
@@ -1169,7 +1182,8 @@ function newSale(id,prefillPid){
      <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Print Bill</button>`);
   renderSaleRows();
 }
-function saleProdOpts(sel,eng){ eng=eng||computeEngine(); return DB.products.map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join('');}
+function saleProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
+  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join(''); }
 function renderSaleRows(){
   const host=$('#s_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=saleDraft.map((it,i)=>{ const bp=it.productId?avgBuyPrice(it.productId,eng):0, avail=it.productId?saleAvail(it.productId,eng):0, over=(+it.qty||0)>avail+1e-9;
@@ -1179,10 +1193,10 @@ function renderSaleRows(){
     <input type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
     <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
     <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows()">✕</button>
-  </div><div class="li-hint">Avg buy price ${money(bp)} <span style="opacity:.7">(${avgWindowLabel()})</span> · available ${num(avail)}${over?` · <span style="color:var(--red)">⚠ exceeds stock</span>`:''}${(+it.rate>0&&+it.rate<bp)?` · <span style="color:var(--red)">below cost</span>`:''}</div>`; }).join('');
+  </div><div class="li-hint">${it.productId?`Avg buy price <b style="color:var(--gold2)">${money(bp)}</b> <span style="opacity:.6">(${avgWindowLabel()})</span> · available <b style="color:var(--green)">${num(avail)}</b>${over?` · <span style="color:var(--red)">⚠ exceeds stock</span>`:''}${(+it.rate>0&&+it.rate<bp)?` · <span style="color:var(--red)">below cost</span>`:''}`:'Search & pick a product (most recent shown first)'}</div>`; }).join('');
   saleCalc();
 }
-function addSaleRow(){saleDraft.push({productId:DB.products[0]?.id||'',qty:1,rate:''});renderSaleRows();}
+function addSaleRow(){saleDraft.push({productId:'',qty:1,rate:''});renderSaleRows();}
 let _salePaidTouched=false;
 function saleCalc(){
   const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
@@ -1214,19 +1228,28 @@ function saveSale(id,print){
   const paidRaw=$('#s_paid').value;
   if(paidRaw==='')return toast('Enter the amount received (0 for a full-credit sale)',1);
   let paid=Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
-  const data={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
+  const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
     payment:method,discount:+($('#s_disc').value||0),
     subtotal:t.sub,vat:t.vat,vatPercent:S().applyVat?S().vatPercent:0,total:t.total};
-  let saleId=id;
-  if(id){const rec=DB.sales.find(x=>x.id===id);Object.assign(rec,data);rec.paid=paid;
-    rec.payments=paid>0?[{id:uid(),date:data.date,amount:paid,method,ref:'Updated'}]:[];}
-  else{DB.counters.sale++;const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0');const nid=uid();
-    DB.sales.push({id:nid,invoiceNo:inv,...data,paid,payments:paid>0?[{id:uid(),date:data.date,amount:paid,method,ref:'Initial'}]:[]});saleId=nid;}
+  if(id){ // EDIT — confirm; workers route to admin approval
+    const rec=DB.sales.find(x=>x.id===id); const inv=rec?rec.invoiceNo:'';
+    const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Updated'}]:[]};
+    if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('sale','edit',id,inv,data),'Send');
+    return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.`,()=>{
+      commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>printSale(id),120); },'Save');
+  }
+  // NEW sale
+  DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
+  DB.sales.push({id:nid,invoiceNo:inv,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Initial'}]:[]});
   save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
-  if(print)setTimeout(()=>printSale(saleId),120);
+  if(print)setTimeout(()=>printSale(nid),120);
 }
-function delSale(id){confirmBox('Delete sale?','Stock, profit & payments will recalculate.',()=>{DB.sales=DB.sales.filter(s=>s.id!==id);save();renderSales();toast('Sale deleted');});}
+function delSale(id){
+  const rec=DB.sales.find(s=>s.id===id); const inv=rec?rec.invoiceNo:'';
+  if(!isOwner()) return confirmBox('Send for approval?',`Deleting invoice <b>${esc(inv)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('sale','delete',id,inv,null),'Send');
+  confirmBox('Delete sale?',`Delete invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. This cannot be undone.`,()=>{commitSaleDelete(id);save();renderSales();toast('Sale deleted');},'Delete');
+}
 
 /* ---------- INVOICE (print) ---------- */
 function printSale(id){
@@ -1410,6 +1433,62 @@ function chargeCard(c,amount,date,note,srcPurchaseId){
     if(disc>0) c.txns.push({id:uid(),date,type:'discount',amount:disc,note:'Redeem '+pct+'%',srcPurchaseId}); }
 }
 function unlinkPurchaseFromCards(pid){ (DB.cards||[]).forEach(c=>{ if(c.txns) c.txns=c.txns.filter(t=>t.srcPurchaseId!==pid); }); }
+
+/* ========== EDIT/DELETE APPROVAL WORKFLOW ==========
+   Workers' edits & deletes go to the admin/owner for approval.
+   Applying an edit/delete also revokes/re-syncs the linked cash & card entries. */
+function pendingApprovals(){ return (DB.approvals||[]).filter(r=>r.status==='pending'); }
+function queueApproval(kind,action,targetId,ref,payload){
+  if(!DB.approvals)DB.approvals=[];
+  DB.approvals.push({id:uid(),ts:todayStr(),byId:session.id,byName:session.name,kind,action,targetId,ref,payload:payload||null,status:'pending'});
+  save(); closeModal(); toast('Sent to admin for approval'); renderApprovalsBadge();
+}
+/* apply an edited purchase's data to the record + re-sync card ledger */
+function commitPurchase(id,data){
+  const rec=DB.purchases.find(x=>x.id===id); if(!rec)return;
+  ['productId','qty','rate','cardId','cardRef'].forEach(k=>delete rec[k]);
+  Object.assign(rec,data);
+  unlinkPurchaseFromCards(id);
+  (data.payments||[]).forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c)chargeCard(c,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); } });
+}
+function commitSale(id,data){ const rec=DB.sales.find(x=>x.id===id); if(rec)Object.assign(rec,data); }
+function commitPurchaseDelete(id){ unlinkPurchaseFromCards(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
+function commitSaleDelete(id){ DB.sales=DB.sales.filter(s=>s.id!==id); }
+function approveReq(id){
+  const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
+  const apply=()=>{
+    if(r.action==='delete'){ r.kind==='purchase'?commitPurchaseDelete(r.targetId):commitSaleDelete(r.targetId); }
+    else { r.kind==='purchase'?commitPurchase(r.targetId,r.payload):commitSale(r.targetId,r.payload); }
+    r.status='approved'; r.decidedTs=todayStr(); r.decidedBy=session.name;
+    save(); renderApprovals(); renderApprovalsBadge(); renderBell(); toast('Approved & applied');
+  };
+  confirmBox('Approve request?', `${r.action==='delete'?'Delete':'Apply the edit to'} ${r.kind} <b>${esc(r.ref)}</b> requested by ${esc(r.byName)}? Linked cash & card entries will be recalculated.`, apply, 'Approve');
+}
+function rejectReq(id){ const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
+  confirmBox('Reject request?', `Reject ${r.byName}'s request to ${r.action} ${r.kind} ${esc(r.ref)}? Nothing will change.`,()=>{ r.status='rejected'; r.decidedTs=todayStr(); r.decidedBy=session.name; save(); renderApprovals(); renderApprovalsBadge(); toast('Request rejected'); },'Reject'); }
+function renderApprovalsBadge(){ const b=$('#apprBadge'); if(!b)return; const n=isOwner()?pendingApprovals().length:0;
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+views.approvals=function(){
+  return `<div class="page-head"><div><h2>Approvals</h2><p>Edit & delete requests from workers. Approve to apply (and re-sync cash/card), or reject to discard.</p></div></div><div id="apprList"></div>`;
+};
+views._after_approvals=renderApprovals;
+function renderApprovals(){
+  const host=$('#apprList'); if(!host)return;
+  const all=[...(DB.approvals||[])].sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1) || (a.ts<b.ts?1:-1));
+  if(!all.length){ host.innerHTML=`<div class="panel">${emptyBox('📝','No requests','Worker edit/delete requests will appear here for your approval.')}</div>`; return; }
+  const row=r=>{ let details;
+    if(r.action==='delete') details=`Delete this ${r.kind}`;
+    else if(r.kind==='purchase'){ const tot=r.payload?(r.payload.items||[]).reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0):0; details=`Edit → ${(r.payload&&r.payload.items||[]).length} item(s), total ${money(tot)}`; }
+    else { details=`Edit → total ${money(r.payload?r.payload.total:0)}`; }
+    return `<tr>
+      <td>${fmtDate(r.ts)}</td><td>${esc(r.byName)}</td>
+      <td><span class="tag ${r.action==='delete'?'due':'partial'}">${r.action.toUpperCase()}</span> ${r.kind}</td>
+      <td><b>${esc(r.ref||'')}</b></td><td style="white-space:normal">${details}</td>
+      <td class="num" style="white-space:nowrap">${r.status==='pending'
+        ? `<button class="mini-btn" style="color:var(--green);border-color:#1f5136" onclick="approveReq('${r.id}')">Approve</button> <button class="mini-btn red" onclick="rejectReq('${r.id}')">Reject</button>`
+        : `<span class="tag ${r.status==='approved'?'ok':'due'}">${r.status.toUpperCase()}</span>`}</td></tr>`; };
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>By</th><th>Request</th><th>Ref</th><th>Details</th><th></th></tr></thead><tbody>${all.map(row).join('')}</tbody></table></div>`;
+}
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
 const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'REDEEM',adjust:'EDITED'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
