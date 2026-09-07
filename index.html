@@ -125,6 +125,8 @@ body.light ::-webkit-scrollbar-thumb{background:#c9d3e8}
 .icon-btn{background:var(--panel2);border:1px solid var(--line2);color:var(--text);width:38px;height:38px;border-radius:11px;
   cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
 .hamburger{display:none}
+/* wallet: show the amount chip on desktop; the compact 👛 icon only on mobile (where the chip is hidden) */
+.wallet-btn{display:none}
 
 .layout{display:flex;min-height:calc(100vh - 63px)}
 .sidebar{width:230px;flex:0 0 auto;padding:16px 12px;border-right:1px solid var(--line);
@@ -363,6 +365,7 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
   .topbar .t-name{max-width:100%;font-size:13.5px}
   .topbar .spacer{display:none}
   #who,#walletChip{display:none !important}
+  .wallet-btn{display:flex}
   .icon-btn{width:34px;height:34px;font-size:15px;flex:0 0 auto}
 }
 </style>
@@ -396,7 +399,7 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
     <span class="chip"><span class="dot"></span><span id="who">Owner</span></span>
     <span class="chip" id="walletChip" style="display:none;cursor:pointer" onclick="toggleWalletPop(event)">👛 <b id="walletChipAmt" style="color:var(--text)">—</b></span>
     <div class="bellwrap" id="walletWrap" style="display:none">
-      <button class="icon-btn" title="My cash wallet" onclick="toggleWalletPop(event)">👛</button>
+      <button class="icon-btn wallet-btn" title="My cash wallet" onclick="toggleWalletPop(event)">👛</button>
       <div class="bell-pop hidden" id="walletPop"></div>
     </div>
     <div class="bellwrap" id="bellWrap" data-owner>
