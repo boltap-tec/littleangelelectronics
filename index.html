@@ -115,6 +115,7 @@ body.light ::-webkit-scrollbar-thumb{background:#c9d3e8}
 .topbar .logo{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;
   background:radial-gradient(circle at 50% 40%,#1a2744,#0c1424);border:1px solid var(--line2);flex:0 0 auto;overflow:hidden}
 .topbar .logo img{width:100%;height:100%;object-fit:contain}
+.topbar .t-brand{min-width:0}
 .topbar .t-name{font-weight:700;font-size:15px;line-height:1.15;max-width:min(50vw,420px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topbar .t-sub{font-size:11.5px;color:var(--muted)}
 .topbar .spacer{flex:1}
@@ -177,6 +178,17 @@ thead th{background:var(--panel2);text-align:left;padding:12px 14px;font-size:11
 tbody td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}
 tbody tr:hover{background:rgba(255,255,255,.02)}
 td.num,th.num{text-align:right}
+/* clickable ref / invoice / product cells that open a detail view */
+.rowlink{cursor:pointer;color:var(--brand2);border-bottom:1px dashed rgba(129,140,248,.5);text-decoration:none}
+.rowlink:hover{border-bottom-style:solid;filter:brightness(1.15)}
+/* Inventory: freeze the header row (vertical scroll) + Product column (horizontal scroll) */
+#invList .table-wrap{max-height:70vh;overflow:auto;background:var(--bg2)}
+#invList table{min-width:720px}
+#invList thead th{z-index:2}
+#invList thead th:first-child{left:0;z-index:3}
+#invList tbody td:first-child{position:sticky;left:0;background:var(--bg2);z-index:1;box-shadow:inset -1px 0 0 var(--line)}
+#invList thead th:first-child{box-shadow:inset -1px 0 0 var(--line)}
+#invList tbody tr:hover td:first-child{background:var(--panel)}
 .tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700}
 .tag.cash{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.card{background:var(--brandsoft);color:#c7c9ff;border:1px solid #4338ca}
@@ -259,6 +271,7 @@ body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 .ccard .cc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ccard .cc-name{font-weight:800;font-size:16px;letter-spacing:.3px}
 .ccard .cc-bank{font-size:11.5px;opacity:.85;margin-top:1px}
+.ccard .cc-holder{font-size:12.5px;font-weight:800;opacity:1;margin-top:3px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .ccard .cc-chip{width:40px;height:29px;border-radius:6px;background:linear-gradient(135deg,#f7e08a,#c9a43b);opacity:.95;flex:0 0 auto;
   box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
 .ccard .cc-num{font-size:16.5px;letter-spacing:2.5px;opacity:.96;margin-bottom:2px}
@@ -296,6 +309,7 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 .li-hint{padding:1px 12px 9px;color:var(--muted2);font-size:11px}
 .cat-head{display:flex;align-items:center;gap:9px;margin:18px 0 9px;font-size:13px;font-weight:800;letter-spacing:.3px;color:var(--muted)}
 .cat-head .cc{background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:2px 10px;font-size:11.5px;color:var(--text)}
+.cat-head .own-name{color:var(--text);font-weight:800;font-size:14.5px;letter-spacing:.2px}
 .split-row{display:grid;grid-template-columns:1.1fr 1.4fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px;border-top:1px solid var(--line)}
 .split-row select,.split-row input{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
 @media(max-width:860px){ .split-row{grid-template-columns:1fr 1fr} .split-row .li-x{grid-column:span 2} }
@@ -336,10 +350,13 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
   .li-head{display:none}
   .li-row{grid-template-columns:1fr 1fr;gap:8px}
   .li-row .li-x{grid-column:span 2}
-  /* keep every top-bar action reachable (logout was getting cut off) */
+  /* keep every top-bar action reachable (logout was getting cut off in portrait) */
   .topbar{gap:6px;padding:10px 10px}
   .topbar .t-sub{display:none}
-  .topbar .t-name{max-width:34vw;font-size:13.5px}
+  /* the brand block shrinks/absorbs width; the action buttons stay pinned & never overflow */
+  .topbar .t-brand{flex:1 1 0}
+  .topbar .t-name{max-width:100%;font-size:13.5px}
+  .topbar .spacer{display:none}
   #who,#walletChip{display:none !important}
   .icon-btn{width:34px;height:34px;font-size:15px;flex:0 0 auto}
 }
@@ -366,7 +383,7 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
   <div class="topbar">
     <button class="icon-btn hamburger" onclick="toggleNav()">☰</button>
     <div class="logo" id="topLogo"></div>
-    <div>
+    <div class="t-brand">
       <div class="t-name" id="brandName">Little Angel Electronics</div>
       <div class="t-sub" id="brandCity">Abu Dhabi, UAE</div>
     </div>
@@ -425,6 +442,9 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
 <!-- Supabase JS SDK (loads global `supabase`; app still works offline if this fails) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- PDF bill generation (html2canvas -> jsPDF); needs internet the first time -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script>
 /* =========================================================
    Little Angel Electronics — offline single-file app
@@ -673,7 +693,7 @@ function colorChip(p){ const hex=colorHexOf(p); return p&&p.color?`<div class="c
    ========================================================= */
 function computeEngine(){
   const tx=[];
-  DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>tx.push({t:'buy',date:p.date,seq:p.id,productId:it.productId,qty:+it.qty,rate:+it.rate})));
+  DB.purchases.forEach(p=>{const f=purchaseCostFactor(p);purchaseItems(p).forEach(it=>tx.push({t:'buy',date:p.date,seq:p.id,productId:it.productId,qty:+it.qty,rate:(+it.rate||0)*f}));});
   DB.sales.forEach(s=>s.items.forEach(it=>tx.push({t:'sell',date:s.date,seq:s.id,productId:it.productId,qty:+it.qty,rate:+it.rate,saleId:s.id})));
   tx.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : (a.t==='buy'&&b.t==='sell'?-1 : a.t==='sell'&&b.t==='buy'?1 : (a.seq<b.seq?-1:1)));
   const stock={}, saleCost={};
@@ -701,7 +721,7 @@ function avgBuyPrice(pid,eng){
   const cutoff=new Date(); cutoff.setHours(0,0,0,0); cutoff.setDate(cutoff.getDate()-days);
   const cutISO=isoDate(cutoff);
   let q=0,c=0;
-  DB.purchases.forEach(p=>{ if((p.date||'')>=cutISO) purchaseItems(p).forEach(it=>{ if(it.productId===pid){ q+=+it.qty||0; c+=(+it.qty||0)*(+it.rate||0); } }); });
+  DB.purchases.forEach(p=>{ if((p.date||'')>=cutISO){ const f=purchaseCostFactor(p); purchaseItems(p).forEach(it=>{ if(it.productId===pid){ q+=+it.qty||0; c+=(+it.qty||0)*(+it.rate||0)*f; } }); } });
   return q>0? c/q : avgCostOf(pid,eng);
 }
 function avgWindowLabel(){ const st=S(); if((st.avgWindowUnit||'all')==='all'||!(+st.avgWindowN>0))return 'all-time'; return 'last '+(+st.avgWindowN)+' '+st.avgWindowUnit; }
@@ -709,7 +729,11 @@ function netOf(s){ return (s.net!==undefined) ? s.net : ((s.subtotal||0) - (s.di
 
 /* ---- purchase helpers (support legacy single-item + new multi-item) ---- */
 function purchaseItems(p){ return (p.items&&p.items.length)? p.items : (p.productId!==undefined?[{productId:p.productId,qty:+p.qty||0,rate:+p.rate||0}]:[]); }
-function purchaseTotal(p){ return purchaseItems(p).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function purchaseGross(p){ return purchaseItems(p).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function purchaseDiscount(p){ const g=purchaseGross(p); return Math.min(g,Math.max(0,+p.discount||0)); }
+function purchaseTotal(p){ return Math.max(0, purchaseGross(p)-purchaseDiscount(p)); }
+/* discount lowers the real cost of goods — spread it proportionally across items */
+function purchaseCostFactor(p){ const g=purchaseGross(p); return g>0? (g-purchaseDiscount(p))/g : 1; }
 function purchaseQty(p){ return purchaseItems(p).reduce((a,it)=>a+(+it.qty||0),0); }
 function purchaseFirstName(p){ const its=purchaseItems(p); const f=productById(its[0]?.productId); return f?f.name:'—'; }
 /* ---- history for autocomplete ---- */
@@ -1005,7 +1029,7 @@ function renderPurchases(){
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Ref</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(p=>{const tot=purchaseTotal(p),its=purchaseItems(p),more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';return `<tr>
-      <td><b>${esc(p.ref)}</b></td><td>${fmtDate(p.date)}</td>
+      <td><b class="rowlink" onclick="purchaseDetail('${p.id}')" title="View purchase details">${esc(p.ref)}</b></td><td>${fmtDate(p.date)}</td>
       <td>${esc(purchaseFirstName(p))}${more}</td>
       <td class="num">${num(purchaseQty(p))}</td><td class="num"><b>${money(tot)}</b></td>
       <td>${esc(p.supplier||'—')}</td><td>${payMethodTag(p.payment||'cash')}</td>
@@ -1046,6 +1070,10 @@ function renderPurchaseModal(){
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination *</label>
     <div class="line-items"><div id="b_splits"></div></div>
     <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="addBuySplit()">＋ Add payment</button><button class="mini-btn gold" onclick="buyFillRemaining()">Fill balance</button></div>
+    <div class="grid2" style="margin-top:2px">
+      <div class="field"><label>Discount (${S().currency})</label><input id="b_disc" type="number" min="0" step="any" value="${p?(+p.discount||0):0}" placeholder="0" oninput="buyCalcTotal()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Supplier discount — lowers the payable amount & the average cost.</div></div>
+      <div></div>
+    </div>
     <div class="totbox" id="b_tot"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="savePurchase('${id||''}')">Save Purchase</button>`);
@@ -1076,6 +1104,8 @@ function buyAddNewProduct(){
   buyNewProdToggle(); renderBuyRows(); toast('Product "'+name+'" added');
 }
 function buyItemsTotal(){ return buyItems.reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function buyDiscount(){ return Math.min(buyItemsTotal(), Math.max(0, +($('#b_disc')?.value||0))); }
+function buyNetTotal(){ return Math.max(0, buyItemsTotal()-buyDiscount()); }
 /* available on a card for THIS purchase (adds back this purchase's existing charges when editing) */
 function cardAvailForSplit(card){ let adj=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId) adj += (t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return cardAvailable(card)+adj; }
 function splitHintText(s){ const c=s.cardId?cardById(s.cardId):null; if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
@@ -1132,12 +1162,14 @@ function quickSaveCard(i){
   toast('Card "'+name+'" added to Card Master');
   renderPurchaseModal();
 }
-function buyFillRemaining(){ const rem=buyItemsTotal()-buySplits.reduce((a,s)=>a+(+s.amount||0),0);
+function buyFillRemaining(){ const rem=buyNetTotal()-buySplits.reduce((a,s)=>a+(+s.amount||0),0);
   if(rem>0.001){ if(buySplits.length)buySplits[buySplits.length-1].amount=(+buySplits[buySplits.length-1].amount||0)+rem; else buySplits.push({method:'cash',cardId:'',amount:rem}); renderBuySplits(); } }
 function buyCalcTotal(){
-  const tot=buyItemsTotal(), paid=buySplits.reduce((a,s)=>a+(+s.amount||0),0), rem=tot-paid;
+  const gross=buyItemsTotal(), disc=buyDiscount(), tot=Math.max(0,gross-disc);
+  const paid=buySplits.reduce((a,s)=>a+(+s.amount||0),0), rem=tot-paid;
   const box=$('#b_tot'); if(box)box.innerHTML=`
-    <div class="totrow"><span>Items total</span><span>${money(tot)}</span></div>
+    <div class="totrow"><span>Items total</span><span>${money(gross)}</span></div>
+    ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div><div class="totrow grand"><span>Net payable</span><span>${money(tot)}</span></div>`:''}
     <div class="totrow"><span>Paid now</span><span>${money(paid)}</span></div>
     <div class="totrow grand"><span>${Math.abs(rem)<0.01?'Fully paid':(rem>0?'Balance (supplier credit)':'Overpaid')}</span>
       <span style="color:${Math.abs(rem)<0.01?'var(--green)':(rem>0?'var(--amber)':'var(--red)')}">${money(Math.abs(rem))}</span></div>`;
@@ -1147,7 +1179,9 @@ function buyCalcTotal(){
 function savePurchase(id){
   const items=buyItems.filter(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}));
   if(!items.length)return toast('Add at least one product with qty & cost',1);
-  const tot=items.reduce((a,it)=>a+it.qty*it.rate,0);
+  const gross=items.reduce((a,it)=>a+it.qty*it.rate,0);
+  const discount=Math.min(gross,Math.max(0,+($('#b_disc')?.value||0)));
+  const tot=Math.max(0,gross-discount);
   const rawSplits=buySplits.filter(s=>+s.amount>0);
   if(rawSplits.some(s=>s.method==='card' && (DB.cards&&DB.cards.length) && !s.cardId))return toast('Pick a card for each card payment',1);
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
@@ -1158,7 +1192,7 @@ function savePurchase(id){
   let paid=splits.reduce((a,s)=>a+s.amount,0); if(paid>tot+0.01)paid=tot;
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
   const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',ref:'Initial'}));
-  const data={date,supplier,items,payment:methodTag,paid,payments};
+  const data={date,supplier,items,discount,payment:methodTag,paid,payments};
   if(id){ // EDIT existing — confirm; workers route to admin approval
     const rec=DB.purchases.find(x=>x.id===id); const ref=rec?rec.ref:'';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
@@ -1200,14 +1234,15 @@ function renderSales(){
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th class="num">Items</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(s=>{const prof=isOwner()?netOf(s)-(eng.saleCost[s.id]||0):0;return `<tr>
-      <td><b>${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td>
+      <td><b class="rowlink" onclick="saleDetail('${s.id}')" title="View bill details">${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td>
       <td>${esc(s.customer||'Walk-in')}${s.custPhone?` <a href="tel:${esc((s.custPhone||'').replace(/\s+/g,''))}" onclick="event.stopPropagation()" title="Call ${esc(s.custPhone)}" style="text-decoration:none;margin-left:4px">📞</a>`:''}</td>
       <td class="num">${s.items.length}</td><td class="num"><b>${money(s.total)}</b></td>
       ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}
       <td><span class="tag ${s.payment}">${s.payment.toUpperCase()}</span></td>
       <td>${statusTag(s.total,s.paid)}</td>
       <td class="num">${payStatus(s.total,s.paid)!=='paid'?`<button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button>`:''}
-      <button class="mini-btn" onclick="shareSale('${s.id}')">📤 Share</button>
+      <button class="mini-btn" onclick="pdfSale('${s.id}')" title="Save bill as PDF">📄 PDF</button>
+      <button class="mini-btn" onclick="shareSale('${s.id}')" title="Share PDF to WhatsApp">📤 Share</button>
       <button class="mini-btn" onclick="printSale('${s.id}')">🖨️ Bill</button>
       <button class="mini-btn" onclick="newSale('${s.id}')">Edit</button>
       <button class="mini-btn red" onclick="delSale('${s.id}')">Del</button></td></tr>`}).join('')}
@@ -1358,26 +1393,16 @@ function delSale(id){
   confirmBox('Delete sale?',`Delete invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. This cannot be undone.`,()=>{commitSaleDelete(id);save();renderSales();toast('Sale deleted');},'Delete');
 }
 
-/* ---------- SHARE bill (native share / WhatsApp) ---------- */
-function shareSale(id){
-  const s=DB.sales.find(x=>x.id===id); if(!s)return; const st=S(), cur=st.currency;
+/* ---------- short text summary of a bill (WhatsApp caption / fallback) ---------- */
+function saleSummaryText(s){
+  const st=S(), cur=st.currency, bal=s.total-(s.paid||0);
   const hasVat=(s.vatMode? s.vatMode!=='none':((s.vat||0)>0));
-  const lines=s.items.map(it=>{const p=productById(it.productId);return `• ${p?p.name:'Item'} x ${num(it.qty)} = ${cur} ${num(it.qty*it.rate)}`;}).join('\n');
-  const bal=s.total-(s.paid||0);
-  const txt=`${st.company}\n${hasVat?'TAX INVOICE':'INVOICE'} ${s.invoiceNo} · ${fmtDate(s.date)}\nCustomer: ${s.customer||'Walk-in'}\n\n${lines}\n\nSubtotal: ${cur} ${num(s.subtotal)}`
-    +(s.discount>0?`\nDiscount: ${cur} ${num(s.discount)}`:'')
-    +(hasVat&&s.vat>0?`\nVAT ${s.vatPercent}%${s.vatMode==='inclusive'?' (incl.)':''}: ${cur} ${num(s.vat)}`:'')
-    +`\nTOTAL: ${cur} ${num(s.total)}\nPaid: ${cur} ${num(s.paid||0)}`
-    +(bal>0.01?`\nBalance Due: ${cur} ${num(bal)}`:'')
-    +(st.footer?`\n\n${st.footer}`:'')+(st.phone?`\n${st.company?'':''}${st.phone}`:'');
-  if(navigator.share){ navigator.share({title:'Invoice '+s.invoiceNo, text:txt}).catch(()=>{}); return; }
-  let phone=(s.custPhone||'').replace(/[^\d]/g,''); if(phone.startsWith('0'))phone='971'+phone.slice(1);
-  const w=window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(txt),'_blank');
-  if(!w)toast('Allow pop-ups to share the bill',1);
+  return `${st.company}\n${hasVat?'TAX INVOICE':'INVOICE'} ${s.invoiceNo} · ${fmtDate(s.date)}\nCustomer: ${s.customer||'Walk-in'}`
+    +`\nTotal: ${cur} ${num(s.total)}`+(bal>0.01?`\nBalance Due: ${cur} ${num(bal)}`:' — Paid in full')
+    +(st.phone?`\n${st.phone}`:'');
 }
-/* ---------- INVOICE (print) ---------- */
-function printSale(id){
-  const s=DB.sales.find(x=>x.id===id); if(!s)return;
+/* ---------- build the printable invoice HTML (shared by print + PDF) ---------- */
+function invoiceHtml(s){
   const st=S();
   const rows=s.items.map((it,i)=>{const p=productById(it.productId);return `<tr>
     <td style="padding:10px;border-bottom:1px solid #eee">${i+1}</td>
@@ -1388,7 +1413,7 @@ function printSale(id){
   const bal=s.total-(s.paid||0);
   const hasVat=(s.vatMode? s.vatMode!=='none' : ((s.vat||0)>0));
   const logo=st.showLogo?(st.logoUrl?`<img src="${esc(st.logoUrl)}" style="height:60px;object-fit:contain">`:logoMark(60)):'';
-  const html=`
+  return `
   <div id="invoiceArea" style="max-width:760px;margin:0 auto;padding:34px;font-family:Segoe UI,Arial,sans-serif;">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #c9962f;padding-bottom:16px">
       <div style="display:flex;gap:14px;align-items:flex-start">
@@ -1405,7 +1430,7 @@ function printSale(id){
         <div style="font-size:24px;font-weight:800;color:#c9962f;letter-spacing:1px">${hasVat?'TAX INVOICE':'INVOICE'}</div>
         <div style="margin-top:6px;font-size:13px"><b>${esc(s.invoiceNo)}</b></div>
         <div style="color:#666;font-size:12.5px">Date: ${fmtDate(s.date)}</div>
-        <div style="color:#666;font-size:12.5px">Payment: ${s.payment==='card'?'Card':s.payment==='bank'?'Bank':'Cash'}</div>
+        <div style="color:#666;font-size:12.5px">Payment: ${s.payment==='card'?'Card':s.payment==='bank'?'Bank':s.payment==='cheque'?'Cheque':'Cash'}</div>
       </div>
     </div>
     <div style="margin:18px 0 6px"><div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px">Bill To</div>
@@ -1441,7 +1466,62 @@ function printSale(id){
       </div>
     </div>
   </div>`;
-  const pr=$('#printRoot'); pr.innerHTML=html; pr.classList.remove('hidden');
+}
+/* ---------- build a real A4 PDF blob of the bill ---------- */
+async function buildSalePdf(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s)return null;
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=invoiceHtml(s);
+  document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#invoiceArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95);
+    const {jsPDF}=window.jspdf;
+    const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight();
+    const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); }
+    else { let left=imgH, pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    const filename=String(s.invoiceNo||'invoice').replace(/[^\w.-]+/g,'_')+'.pdf';
+    return {blob:pdf.output('blob'), filename, sale:s};
+  }catch(e){
+    toast('Could not build the PDF'+(String(e).includes('Tainted')||String(e).includes('SecurityError')?' — a logo/seal image blocks it; use a local upload':''),1);
+    return null;
+  }finally{ document.body.removeChild(holder); }
+}
+/* ---------- SHARE BILL: save the bill as a PDF file ---------- */
+async function pdfSale(id){
+  toast('Preparing PDF…',0);
+  const r=await buildSalePdf(id); if(!r)return;
+  const url=URL.createObjectURL(r.blob);
+  const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+  toast('PDF ready — '+r.filename);
+}
+/* ---------- SHARE icon: send the PDF to WhatsApp (native share sheet) ---------- */
+async function shareSale(id){
+  toast('Preparing PDF…',0);
+  const r=await buildSalePdf(id); if(!r)return;
+  const s=r.sale, cap=saleSummaryText(s);
+  const file=new File([r.blob], r.filename, {type:'application/pdf'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:'Invoice '+s.invoiceNo, text:cap}); return; }
+    catch(e){ if(e && e.name==='AbortError') return; }   // user cancelled the share sheet
+  }
+  // fallback (desktop / no file-share): save the PDF then open the WhatsApp chat so it can be attached
+  const url=URL.createObjectURL(r.blob);
+  const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+  let phone=(s.custPhone||'').replace(/[^\d]/g,''); if(phone.startsWith('0'))phone='971'+phone.slice(1);
+  window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(cap+'\n\n(Bill saved as PDF — please attach it here.)'),'_blank');
+  toast('PDF saved — attach it in the WhatsApp chat',0);
+}
+/* ---------- INVOICE (print) ---------- */
+function printSale(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s)return;
+  const pr=$('#printRoot'); pr.innerHTML=invoiceHtml(s); pr.classList.remove('hidden');
   window.print(); setTimeout(()=>{pr.classList.add('hidden');pr.innerHTML='';},400);
 }
 
@@ -1702,16 +1782,21 @@ function cardActive(c){ return c && c.status!=='inactive'; }
 function activeCards(){ return (DB.cards||[]).filter(cardActive); }
 /* label: owner · ••last4 · card name */
 function cardLabel(c){ if(!c)return ''; const l4=(c.number||'').replace(/\D/g,'').slice(-4); const p=[]; if(c.owner&&c.owner.trim())p.push(c.owner.trim()); if(l4)p.push('••'+l4); p.push(c.name); return p.join(' · '); }
+/* short label (no owner): ••last4 · card name — for lists already grouped by owner */
+function cardShort(c){ if(!c)return ''; const l4=(c.number||'').replace(/\D/g,'').slice(-4); return (l4?'••'+l4+' · ':'')+(c.name||''); }
 /* ---- card visual ---- */
 function cardVisual(c){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
   const usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
   const due=nextDue(c.paymentDay), dleft=daysUntil(due), warn=dleft<=3;
   const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
+  const l4=(c.number||'').replace(/\D/g,'').slice(-4);
+  const holder=(c.owner&&c.owner.trim())?c.owner.trim():'';
   return `<div class="ccard" style="background:${cardGrad(c)};${cardActive(c)?'':'opacity:.6'}" onclick="cardDetail('${c.id}')">
     ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% redeem</div>`:''}
     ${!cardActive(c)?`<div class="cc-pct" style="left:16px;right:auto;background:rgba(0,0,0,.35)">INACTIVE</div>`:''}
-    <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}${c.owner&&c.owner.trim()?` · 👤 ${esc(c.owner.trim())}`:''}</div></div><div class="cc-chip"></div></div>
+    <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}</div>
+      ${(holder||l4)?`<div class="cc-holder">${holder?`👤 ${esc(holder)}`:''}${holder&&l4?' · ':''}${l4?`••${l4}`:''}</div>`:''}</div><div class="cc-chip"></div></div>
     <div>
       <div class="cc-num">${maskCard(c.number)}</div>
       <div class="ccbar"><i style="width:${usedPct}%"></i></div>
@@ -1769,7 +1854,7 @@ function renderCards(){
       <div class="table-wrap"><table style="min-width:640px">
       <thead><tr><th>Card</th><th class="num">Available</th><th class="num">Used / Limit</th><th class="num">Outstanding</th><th>Due date</th><th></th></tr></thead>
       <tbody>${rows.map(r=>{ const warn=r.out>0.005&&r.dl<=3; return `<tr>
-        <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.owner?` · 👤 ${esc(r.c.owner)}`:''}</div></td>
+        <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.owner?` · <b style="color:var(--text)">👤 ${esc(r.c.owner)}</b>`:''}</div></td>
         <td class="num" style="color:${r.av<0?'var(--red)':'var(--green)'};font-weight:700">${money(r.av)}</td>
         <td class="num"><div>${money(r.out)} / ${money(r.lim)}</div><div class="bar" style="margin-top:4px"><i style="width:${r.use}%"></i></div></td>
         <td class="num">${money(r.out)}</td>
@@ -1790,7 +1875,7 @@ function renderCards(){
   const owners=Object.keys(groups).sort((a,b)=>a==='My own'?-1:b==='My own'?1:a.localeCompare(b));
   host.innerHTML=owners.map(o=>{ const g=[...groups[o]].sort((a,b)=>cardAvailable(b)-cardAvailable(a)); const gOut=g.reduce((a,c)=>a+cardOutstanding(c),0);
     const safe=o.replace(/'/g,"\\'");
-    return `<div class="cat-head">👤 ${esc(o)} <span class="cc">${g.length} card${g.length===1?'':'s'}</span> <span class="cc" style="color:${gOut>0?'var(--amber)':'var(--text)'}">owe ${money(gOut)}</span>
+    return `<div class="cat-head">👤 <span class="own-name">${esc(o)}</span> <span class="cc">${g.length} card${g.length===1?'':'s'}</span> <span class="cc" style="color:${gOut>0?'var(--amber)':'var(--text)'}">owe ${money(gOut)}</span>
       <button class="mini-btn gold" style="margin-left:auto" onclick="ownerStatement('${safe}')">📄 Statement</button></div>
     <div class="ccgrid">${g.map(c=>cardCell(c)).join('')}</div>`; }).join('');
   renderBell();
@@ -1815,7 +1900,7 @@ function ownerStatement(owner){
       <div class="stat blue"><div class="label">Total Limit</div><div class="val">${money(tL)}</div></div>
       <div class="stat gold"><div class="label">Redeem · this month</div><div class="val">${money(tD)}</div></div>
     </div>
-    <div class="row-actions" style="margin-bottom:14px">${cards.map(c=>`<button class="mini-btn" onclick="cardDetail('${c.id}')">${esc(c.name)} · owe ${money(cardOutstanding(c))}</button>`).join('')}</div>
+    <div class="row-actions" style="margin-bottom:14px">${cards.map(c=>`<button class="mini-btn" onclick="cardDetail('${c.id}')">${esc(cardShort(c))} · owe ${money(cardOutstanding(c))}</button>`).join('')}</div>
     <div style="font-weight:700;font-size:13px;margin-bottom:8px">Combined ledger</div>
     <div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Date</th><th>Card</th><th>Type</th><th>Note</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm" onclick="closeModal()">Close</button>`);
@@ -1944,7 +2029,7 @@ function setInvSort(v){ _invSort=v; renderInventory(); }
 function invRow(x){
   const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
   return `<tr>
-    <td><div class="prodcell">${productThumb(x.p)}<b>${esc(x.p.name)}</b></div></td>
+    <td><div class="prodcell">${productThumb(x.p)}<b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history">${esc(x.p.name)}</b></div></td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
     <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
@@ -1952,6 +2037,100 @@ function invRow(x){
     <td class="num" style="white-space:nowrap">${acts}</td></tr>`;
 }
 const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
+
+/* =========================================================
+   DETAIL VIEWS — click a product / invoice / purchase ref
+   ========================================================= */
+function miniStat(label,val,color){ return `<div style="flex:1;min-width:118px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px 12px"><div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">${label}</div><div style="font-size:15.5px;font-weight:800;margin-top:3px;color:${color||'var(--text)'}">${val}</div></div>`; }
+/* per-product purchase + sales history */
+function productHistory(pid){
+  const pr=productById(pid); if(!pr)return; const eng=computeEngine();
+  const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
+  const sells=[]; DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===pid) sells.push({date:s.date,inv:s.invoiceNo,id:s.id,cust:s.customer||'Walk-in',qty:+it.qty||0,rate:+it.rate||0}); }));
+  buys.sort((a,b)=>a.date<b.date?1:-1); sells.sort((a,b)=>a.date<b.date?1:-1);
+  const bal=stockOf(pid,eng), avg=avgCostOf(pid,eng);
+  const buyAmt=buys.reduce((a,x)=>a+x.qty*x.rate,0), sellAmt=sells.reduce((a,x)=>a+x.qty*x.rate,0);
+  const buyQ=buys.reduce((a,x)=>a+x.qty,0), sellQ=sells.reduce((a,x)=>a+x.qty,0);
+  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:440px"><thead><tr><th>Date</th><th>Ref</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead>
+    <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><span class="rowlink" onclick="closeModal();purchaseDetail('${b.id}')">${esc(b.ref)}</span></td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.qty*b.rate)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📥','No purchases','Not bought yet.');
+  const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:470px"><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+    <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><span class="rowlink" onclick="closeModal();saleDetail('${s.id}')">${esc(s.inv)}</span></td><td>${esc(s.cust)}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.qty*s.rate)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('🧾','No sales','Not sold yet.');
+  openModal('📦 '+esc(pr.name),`
+    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px">
+      ${miniStat('Balance',num(bal)+' '+esc(pr.unit||''),bal<=0?'var(--red)':'var(--green)')}
+      ${miniStat('Purchased',num(totalBought(pid)))}
+      ${miniStat('Sold',num(totalSold(pid)))}
+      ${miniStat('Avg Cost',money(avg))}
+      ${miniStat('Stock Value',money((bal>0?bal:0)*avg))}
+    </div>
+    <h4 style="margin:4px 0 8px;font-size:13px;color:var(--muted)">📥 Purchases — ${num(buyQ)} pcs · ${money(buyAmt)}</h4>${buyTbl}
+    <h4 style="margin:18px 0 8px;font-size:13px;color:var(--muted)">🧾 Sales — ${num(sellQ)} pcs · ${money(sellAmt)}</h4>${sellTbl}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     ${canView('purchases')?`<button class="btn-sm btn-gold" onclick="closeModal();newPurchase('','${pid}')">＋ Buy</button>`:''}
+     ${canView('sales')?`<button class="btn-sm" onclick="closeModal();newSale('','${pid}')">Sell</button>`:''}`);
+}
+/* full detail of one sales bill */
+function saleDetail(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s)return; const eng=isOwner()?computeEngine():null;
+  const hasVat=(s.vatMode? s.vatMode!=='none':((s.vat||0)>0)), bal=s.total-(s.paid||0);
+  const rows=s.items.map(it=>{const p=productById(it.productId);return `<tr><td>${esc(p?p.name:'Item')}</td><td class="num">${num(it.qty)}</td><td class="num">${money(it.rate)}</td><td class="num">${money(it.qty*it.rate)}</td></tr>`;}).join('');
+  const pays=(s.payments||[]);
+  const payTbl=pays.length?`<div class="table-wrap"><table style="min-width:360px"><thead><tr><th>Date</th><th>Method</th><th>Ref</th><th class="num">Amount</th></tr></thead>
+    <tbody>${pays.map(pm=>`<tr><td>${fmtDate(pm.date)}</td><td>${(pm.method||'cash').toUpperCase()}</td><td>${esc(pm.ref||'')}</td><td class="num">${money(pm.amount)}</td></tr>`).join('')}</tbody></table></div>`:'<div style="color:var(--muted2);font-size:12.5px">No payments recorded yet.</div>';
+  const prof=eng?netOf(s)-(eng.saleCost[s.id]||0):null;
+  openModal(`${hasVat?'Tax Invoice':'Invoice'} ${esc(s.invoiceNo)}`,`
+    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
+      ${miniStat('Date',fmtDate(s.date))}
+      ${miniStat('Customer',esc(s.customer||'Walk-in'))}
+      ${miniStat('Total',money(s.total))}
+      ${miniStat(bal>0.01?'Balance Due':'Status',bal>0.01?money(bal):'Paid',bal>0.01?'var(--red)':'var(--green)')}
+      ${prof!=null?miniStat('Profit',money(prof),prof>=0?'var(--green)':'var(--red)'):''}
+    </div>
+    <div class="table-wrap"><table style="min-width:420px"><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="totbox" style="margin-top:12px">
+      <div class="totrow"><span>Subtotal</span><span>${money(s.subtotal)}</span></div>
+      ${s.discount>0?`<div class="totrow"><span>Discount</span><span>− ${money(s.discount)}</span></div>`:''}
+      ${hasVat&&s.vat>0?`<div class="totrow"><span>VAT ${s.vatPercent}%${s.vatMode==='inclusive'?' (incl.)':''}</span><span>${money(s.vat)}</span></div>`:''}
+      <div class="totrow grand"><span>Total</span><span>${money(s.total)}</span></div>
+      <div class="totrow"><span>Paid</span><span>${money(s.paid||0)}</span></div>
+      ${bal>0.01?`<div class="totrow" style="color:var(--red);font-weight:700"><span>Balance Due</span><span>${money(bal)}</span></div>`:''}
+    </div>
+    <h4 style="margin:16px 0 8px;font-size:13px;color:var(--muted)">💳 Payments</h4>${payTbl}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     <button class="btn-sm" onclick="pdfSale('${s.id}')">📄 PDF</button>
+     <button class="btn-sm" onclick="shareSale('${s.id}')">📤 Share</button>
+     <button class="btn-sm" onclick="printSale('${s.id}')">🖨️ Bill</button>
+     ${bal>0.01&&canView('payments')?`<button class="btn-sm btn-green" onclick="closeModal();recordPay('sale','${s.id}')">Collect</button>`:''}
+     ${canView('sales')?`<button class="btn-sm btn-gold" onclick="closeModal();newSale('${s.id}')">Edit</button>`:''}`);
+}
+/* full detail of one purchase */
+function purchaseDetail(id){
+  const p=DB.purchases.find(x=>x.id===id); if(!p)return;
+  const gross=purchaseGross(p), disc=purchaseDiscount(p), tot=purchaseTotal(p), bal=tot-(p.paid||0);
+  const rows=purchaseItems(p).map(it=>{const pr=productById(it.productId);return `<tr><td>${esc(pr?pr.name:'Item')}</td><td class="num">${num(it.qty)}</td><td class="num">${money(it.rate)}</td><td class="num">${money((+it.qty||0)*(+it.rate||0))}</td></tr>`;}).join('');
+  const pays=(p.payments||[]);
+  const payTbl=pays.length?`<div class="table-wrap"><table style="min-width:360px"><thead><tr><th>Date</th><th>Method</th><th>Card</th><th class="num">Amount</th></tr></thead>
+    <tbody>${pays.map(pm=>{const c=pm.cardId?cardById(pm.cardId):null;return `<tr><td>${fmtDate(pm.date)}</td><td>${(pm.method||'cash').toUpperCase()}</td><td>${c?esc(cardLabel(c)):'—'}</td><td class="num">${money(pm.amount)}</td></tr>`;}).join('')}</tbody></table></div>`:'<div style="color:var(--muted2);font-size:12.5px">No payments recorded yet.</div>';
+  openModal('Purchase '+esc(p.ref),`
+    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
+      ${miniStat('Date',fmtDate(p.date))}
+      ${miniStat('Supplier',esc(p.supplier||'—'))}
+      ${miniStat('Total',money(tot))}
+      ${miniStat(bal>0.01?'Balance Due':'Status',bal>0.01?money(bal):'Paid',bal>0.01?'var(--red)':'var(--green)')}
+    </div>
+    <div class="table-wrap"><table style="min-width:420px"><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="totbox" style="margin-top:12px">
+      <div class="totrow"><span>Items total</span><span>${money(gross)}</span></div>
+      ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div>`:''}
+      <div class="totrow grand"><span>Net payable</span><span>${money(tot)}</span></div>
+      <div class="totrow"><span>Paid</span><span>${money(p.paid||0)}</span></div>
+      ${bal>0.01?`<div class="totrow" style="color:var(--red);font-weight:700"><span>Balance Due</span><span>${money(bal)}</span></div>`:''}
+    </div>
+    <h4 style="margin:16px 0 8px;font-size:13px;color:var(--muted)">💳 Payments</h4>${payTbl}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     ${bal>0.01&&canView('payments')?`<button class="btn-sm btn-green" onclick="closeModal();recordPay('purchase','${p.id}')">Pay</button>`:''}
+     ${canView('purchases')?`<button class="btn-sm btn-gold" onclick="closeModal();newPurchase('${p.id}')">Edit</button>`:''}`);
+}
 views.inventory=function(){
   return `
   <div class="page-head"><div><h2>Inventory</h2><p>Total purchased, sold & balance stock — with weighted-average cost. Buy or sell any item in one click.</p></div>
