@@ -450,6 +450,8 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 <!-- PDF bill generation (html2canvas -> jsPDF); needs internet the first time -->
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<!-- Excel export (SheetJS) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 /* =========================================================
    Little Angel Electronics — offline single-file app
@@ -1020,7 +1022,8 @@ function delProduct(id){
 views.purchases=function(){
   return `
   <div class="page-head"><div><h2>Purchases</h2><p>Stock bought from Carrefour & other suppliers — rate can differ each date. Track cash/card & credit.</p></div>
-    <button class="btn-sm" onclick="newPurchase()">＋ New Purchase</button></div>
+    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
+    <button class="btn-sm" onclick="newPurchase()">＋ New Purchase</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search supplier / product..." oninput="renderPurchases()"></div></div>
   <div id="buyList"></div>`;
 };
@@ -1221,7 +1224,8 @@ let saleDraft=[];
 views.sales=function(){
   return `
   <div class="page-head"><div><h2>Sales &amp; Billing</h2><p>Create a sales bill. VAT, layout & logo are controlled in Settings.</p></div>
-    <button class="btn-sm btn-gold" onclick="newSale()">＋ New Sale Bill</button></div>
+    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="exportSalesExcel()">⬇ Excel</button>
+    <button class="btn-sm btn-gold" onclick="newSale()">＋ New Sale Bill</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="saleSearch" placeholder="Search invoice / customer..." oninput="renderSales()"></div></div>
   <div id="saleList"></div>`;
 };
@@ -2076,13 +2080,14 @@ function productHistory(pid){
   const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
   const sells=[]; DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===pid) sells.push({date:s.date,inv:s.invoiceNo,id:s.id,cust:s.customer||'Walk-in',qty:+it.qty||0,rate:+it.rate||0}); }));
   buys.sort((a,b)=>a.date<b.date?1:-1); sells.sort((a,b)=>a.date<b.date?1:-1);
-  const bal=stockOf(pid,eng), avg=avgCostOf(pid,eng);
+  const bal=stockOf(pid,eng), avg=avgCostOf(pid,eng), owner=isOwner();
   const buyAmt=buys.reduce((a,x)=>a+x.qty*x.rate,0), sellAmt=sells.reduce((a,x)=>a+x.qty*x.rate,0);
   const buyQ=buys.reduce((a,x)=>a+x.qty,0), sellQ=sells.reduce((a,x)=>a+x.qty,0);
+  const prof=owner? sells.reduce((a,x)=>a+x.qty*(x.rate-avg),0) : null;   // profit/loss = revenue − sold×avg cost
   const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:440px"><thead><tr><th>Date</th><th>Ref</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead>
     <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><span class="rowlink" onclick="closeModal();purchaseDetail('${b.id}')">${esc(b.ref)}</span></td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.qty*b.rate)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📥','No purchases','Not bought yet.');
-  const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:470px"><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
-    <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><span class="rowlink" onclick="closeModal();saleDetail('${s.id}')">${esc(s.inv)}</span></td><td>${esc(s.cust)}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.qty*s.rate)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('🧾','No sales','Not sold yet.');
+  const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:${owner?560:470}px"><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>${owner?'<th class="num">Profit</th>':''}</tr></thead>
+    <tbody>${sells.map(s=>{const pl=s.qty*(s.rate-avg);return `<tr><td>${fmtDate(s.date)}</td><td><span class="rowlink" onclick="closeModal();saleDetail('${s.id}')">${esc(s.inv)}</span></td><td>${esc(s.cust)}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.qty*s.rate)}</td>${owner?`<td class="num" style="color:${pl>=0?'var(--green)':'var(--red)'};font-weight:700">${money(pl)}</td>`:''}</tr>`;}).join('')}</tbody></table></div>`:emptyBox('🧾','No sales','Not sold yet.');
   openModal('📦 '+esc(pr.name),`
     <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px">
       ${miniStat('Balance',num(bal)+' '+esc(pr.unit||''),bal<=0?'var(--red)':'var(--green)')}
@@ -2090,6 +2095,7 @@ function productHistory(pid){
       ${miniStat('Sold',num(totalSold(pid)))}
       ${miniStat('Avg Cost',money(avg))}
       ${miniStat('Stock Value',money((bal>0?bal:0)*avg))}
+      ${owner?miniStat('Profit / Loss',money(prof),prof>=0?'var(--green)':'var(--red)'):''}
     </div>
     <h4 style="margin:4px 0 8px;font-size:13px;color:var(--muted)">📥 Purchases — ${num(buyQ)} pcs · ${money(buyAmt)}</h4>${buyTbl}
     <h4 style="margin:18px 0 8px;font-size:13px;color:var(--muted)">🧾 Sales — ${num(sellQ)} pcs · ${money(sellAmt)}</h4>${sellTbl}`,
@@ -2162,6 +2168,7 @@ function purchaseDetail(id){
 views.inventory=function(){
   return `
   <div class="page-head"><div><h2>Inventory</h2><p>Total purchased, sold & balance stock — with weighted-average cost. Buy or sell any item in one click.</p></div>
+    <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="exportInventoryExcel()">⬇ Excel</button>
     <div class="field" style="margin:0;min-width:210px"><label>Sort by</label>
       <select id="invSort" onchange="setInvSort(this.value)">
         <option value="recent" ${_invSort==='recent'?'selected':''}>Recent purchase (newest top)</option>
@@ -2228,7 +2235,7 @@ function cashEntries(){
 }
 function walletBalance(pid){ return cashEntries().filter(x=>x.who===pid).reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
 function cashBalance(){ return cashEntries().reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
-const CASH_TAG={sale:'ok',purchase:'card',card:'partial',expense:'due',opening:'bank',cashin:'ok',cashout:'due',transfer:'split',manual:'bank'};
+const CASH_TAG={sale:'ok',purchase:'card',card:'partial',expense:'due',opening:'bank',adjust:'adjust',cashin:'ok',cashout:'due',transfer:'split',manual:'bank'};
 let _walletSel='';
 function setWallet(v){ _walletSel=v; renderCash(); }
 views.cashbook=function(){
@@ -2244,7 +2251,7 @@ views.cashbook=function(){
   ${owner?`<div class="toolbar"><div class="field" style="margin:0;min-width:230px"><label>View wallet</label>
     <select id="wsel" onchange="setWallet(this.value)"><option value="">All wallets</option>${DB.users.map(u=>`<option value="${u.id}" ${_walletSel===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
     <div class="search"><span class="si">🔎</span><input id="cashSearch" placeholder="Search description..." oninput="renderCash()"></div>
-    <button class="mini-btn" onclick="cashModal('opening')">Set opening</button></div>`
+    <button class="mini-btn gold" onclick="cashModal('adjust')">⚖ Adjustment</button></div>`
    :`<div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cashSearch" placeholder="Search description..." oninput="renderCash()"></div></div>`}
   <div id="cashStats" class="cards"></div>
   <div id="cashWallets"></div>
@@ -2291,33 +2298,42 @@ function whoSelectField(sel,label){ label=label||'Whose wallet';
   if(isOwner()) return `<div class="field"><label>${label} *</label><select id="cb_who">${DB.users.map(u=>`<option value="${u.id}" ${u.id===sel?'selected':''}>${esc(u.name)}${u.id===session.id?' (you)':''}</option>`).join('')}</select></div>`;
   return `<div class="field"><label>${label}</label><input value="${esc(session.name)} (you)" disabled><input type="hidden" id="cb_who" value="${session.id}"></div>`; }
 function cashModal(kind){
-  const titles={in:'Add Cash In',out:'Cash Out',expense:'Add Expense',opening:'Set Opening Balance'};
-  const isExp=kind==='expense';
-  const defWho = session.id;   // default to the logged-in person
+  if(kind==='adjust' && !isOwner())return toast('Only the owner can adjust a wallet balance',1);
+  const titles={in:'Add Cash In',out:'Cash Out',expense:'Add Expense',opening:'Set Opening Balance',adjust:'Balance Adjustment (Owner)'};
+  const isExp=kind==='expense', isAdj=kind==='adjust';
+  const defWho = (isAdj && _walletSel) ? _walletSel : session.id;
+  const intro = isExp?'Money spent from a wallet (e.g. food, transport, misc).'
+    : isAdj?'Correct a wallet\'s cash-in-hand. This posts a dated entry in the cash book and moves the balance up or down.'
+    : kind==='opening'?'Opening cash placed in a wallet.'
+    : kind==='in'?'Cash added to a wallet (not from a sale).':'Cash taken out of a wallet.';
   openModal(titles[kind]||'Cash entry',`
-    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${isExp?'Money spent from a wallet (e.g. food, transport, misc).':kind==='opening'?'Opening cash placed in a wallet.':kind==='in'?'Cash added to a wallet (not from a sale).':'Cash taken out of a wallet.'}</p>
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${intro}</p>
     <div class="grid2">
       <div class="field"><label>Amount (${S().currency}) *</label><input id="cb_amt" type="number" min="0" step="any" placeholder="0.00"></div>
-      <div class="field"><label>Date</label><input id="cb_date" type="date" value="${todayStr()}"></div>
+      ${isAdj?`<div class="field"><label>Direction *</label><select id="cb_dir"><option value="in">Increase balance (+)</option><option value="out">Decrease balance (−)</option></select></div>`
+        :`<div class="field"><label>Date</label><input id="cb_date" type="date" value="${todayStr()}"></div>`}
     </div>
-    ${whoSelectField(defWho, isExp?'Paid by (owner / staff)':'Whose wallet')}
-    <div class="field"><label>${isExp?'Purpose *':'Description'}</label><input id="cb_desc" placeholder="${isExp?'e.g. lunch, fuel, tea':'note'}"></div>`,
+    ${isAdj?`<div class="field"><label>Date</label><input id="cb_date" type="date" value="${todayStr()}"></div>`:''}
+    ${whoSelectField(defWho, isExp?'Paid by (owner / staff)':isAdj?'Adjust which wallet':'Whose wallet')}
+    <div class="field"><label>${isExp?'Purpose *':isAdj?'Reason *':'Description'}</label><input id="cb_desc" placeholder="${isExp?'e.g. lunch, fuel, tea':isAdj?'e.g. cash count correction, bank deposit':'note'}"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveCashEntry('${kind}')">Save</button>`);
   setTimeout(()=>$('#cb_amt')?.focus(),30);
 }
 function saveCashEntry(kind){
+  if(kind==='adjust' && !isOwner())return toast('Only the owner can adjust a wallet balance',1);
   const amt=+$('#cb_amt').value||0;
   if(kind==='opening'){ if(amt<0)return toast('Amount cannot be negative',1); }
   else if(!(amt>0))return toast('Enter a valid amount',1);
   const desc=$('#cb_desc').value.trim();
   if(kind==='expense'&&!desc)return toast('Enter the purpose of the expense',1);
+  if(kind==='adjust'&&!desc)return toast('Enter a reason for the adjustment',1);
   const who = $('#cb_who')?.value||session.id;
-  const dir = (kind==='in'||kind==='opening')?'in':'out';
+  const dir = kind==='adjust' ? ($('#cb_dir')?.value||'in') : ((kind==='in'||kind==='opening')?'in':'out');
   const cat = kind==='in'?'cashin':kind==='out'?'cashout':kind;
   if(!DB.cash)DB.cash=[];
   DB.cash.push({id:uid(),date:$('#cb_date').value||todayStr(),dir,amount:amt,cat,desc:desc||(kind==='opening'?'Opening balance':''),who,byId:session.id});
-  save(); closeModal(); toast('Saved'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
+  save(); closeModal(); toast(kind==='adjust'?'Balance adjusted':'Saved'); if($('.nav-item.active')?.dataset.view==='cashbook')renderCash();
 }
 function transferModal(){
   const owner=isOwner(); const from=owner?(_walletSel||session.id):session.id;
@@ -2467,6 +2483,7 @@ views.profit=function(){
       <input id="rpFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderProfit()">
       <input id="rpTo" type="date" class="mini-btn" style="padding:9px" oninput="renderProfit()">
       <button class="btn-sm btn-ghost" onclick="clearRange()">Clear</button>
+      <button class="btn-sm btn-green" onclick="exportProfitExcel()">⬇ Excel</button>
     </div></div>
   <div id="profitBody"></div>`;
 };
@@ -2722,6 +2739,72 @@ function exportData(){
   const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='little-angel-backup-'+todayStr()+'.json';a.click();
   toast('Backup exported');
+}
+/* =========================================================
+   EXCEL (.xlsx) EXPORTS  — SheetJS
+   ========================================================= */
+function num2(n){ return Math.round((+n||0)*100)/100; }   // plain number cell for Excel
+function exportExcel(filename, sheets){
+  if(!window.XLSX){ toast('Excel engine not loaded — connect to the internet once to cache it',1); return; }
+  const wb=XLSX.utils.book_new();
+  (sheets||[]).forEach(sh=>{ if(!sh||!sh.rows||!sh.rows.length)return; const ws=XLSX.utils.aoa_to_sheet(sh.rows); XLSX.utils.book_append_sheet(wb, ws, (sh.name||'Sheet').replace(/[\\/?*\[\]:]/g,' ').slice(0,31)); });
+  if(!wb.SheetNames.length){ toast('Nothing to export',1); return; }
+  XLSX.writeFile(wb, filename);
+  toast('Excel downloaded · '+filename);
+}
+function exportSalesExcel(){
+  const eng=isOwner()?computeEngine():null;
+  const head=['Invoice','Date','Customer','Phone','Items','Subtotal','Discount','VAT %','VAT','Total','Paid','Balance','Payment','Status'];
+  if(isOwner())head.push('Profit');
+  const rows=[head];
+  [...DB.sales].sort((a,b)=>a.date<b.date?1:-1).forEach(s=>{ const bal=s.total-(s.paid||0);
+    const r=[s.invoiceNo,s.date,s.customer||'Walk-in',s.custPhone||'',s.items.length,num2(s.subtotal),num2(s.discount),s.vatPercent||0,num2(s.vat),num2(s.total),num2(s.paid),num2(bal),(s.payment||'').toUpperCase(),payStatus(s.total,s.paid).toUpperCase()];
+    if(isOwner())r.push(num2(netOf(s)-(eng.saleCost[s.id]||0)));
+    rows.push(r); });
+  exportExcel('sales_report_'+todayStr()+'.xlsx',[{name:'Sales',rows}]);
+}
+function exportPurchasesExcel(){
+  const head=['Ref','Date','Supplier','Products','Qty','Items Total','Discount','Net Total','Paid','Balance','Method','Status'];
+  const rows=[head];
+  [...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).forEach(p=>{ const gross=purchaseGross(p),disc=purchaseDiscount(p),tot=purchaseTotal(p),bal=tot-(p.paid||0);
+    const names=purchaseItems(p).map(it=>{const pr=productById(it.productId);return pr?pr.name:'Item';}).join(', ');
+    rows.push([p.ref,p.date,p.supplier||'',names,num2(purchaseQty(p)),num2(gross),num2(disc),num2(tot),num2(p.paid),num2(bal),(p.payment||'cash').toUpperCase(),payStatus(tot,p.paid).toUpperCase()]); });
+  exportExcel('purchases_report_'+todayStr()+'.xlsx',[{name:'Purchases',rows}]);
+}
+function exportInventoryExcel(){
+  const eng=computeEngine(), owner=isOwner();
+  const head=['Product','Category','Balance','Unit','Purchased','Sold','Avg Cost','Stock Value','Status'];
+  if(owner)head.push('Sold Revenue','Profit / Loss');
+  const rows=[head];
+  [...DB.products].sort((a,b)=>a.name.localeCompare(b.name)).forEach(p=>{ const qty=stockOf(p.id,eng),avg=avgCostOf(p.id,eng),val=(qty>0?qty:0)*avg;
+    const status=qty<=0?'OUT':qty<=S().lowStockLevel?'LOW':'OK';
+    const r=[p.name,p.category||'',num2(qty),p.unit||'',num2(totalBought(p.id)),num2(totalSold(p.id)),num2(avg),num2(val>0?val:0),status];
+    if(owner){ let sold=0,rev=0,prof=0; DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===p.id){ sold+=it.qty; rev+=it.qty*it.rate; prof+=it.qty*(it.rate-avg); } })); r.push(num2(rev),num2(prof)); }
+    rows.push(r); });
+  exportExcel('inventory_report_'+todayStr()+'.xlsx',[{name:'Inventory',rows}]);
+}
+function exportProfitExcel(){
+  const eng=computeEngine();
+  const from=$('#rpFrom')?.value, to=$('#rpTo')?.value, inRange=d=>(!from||d>=from)&&(!to||d<=to);
+  const sales=DB.sales.filter(s=>inRange(s.date)), purch=DB.purchases.filter(p=>inRange(p.date));
+  let rev=0,netRev=0,cogs=0,vat=0,disc=0,cashS=0,cardS=0;
+  sales.forEach(s=>{rev+=s.total;netRev+=netOf(s);cogs+=eng.saleCost[s.id]||0;vat+=s.vat||0;disc+=s.discount||0;s.payment==='card'?cardS+=s.total:cashS+=s.total;});
+  const buyTot=purch.reduce((a,p)=>a+purchaseTotal(p),0); let cashB=0,cardB=0; purch.forEach(p=>(p.payments||[]).forEach(pm=>pm.method==='card'?cardB+=pm.amount:cashB+=pm.amount));
+  const profit=netRev-cogs, margin=netRev>0?(profit/netRev*100):0;
+  const period=(from||'start')+' to '+(to||'today');
+  const summary=[['Little Angel Electronics — Profit & Report'],['Period',period],[],['Metric','Amount'],
+    ['Gross Sales',num2(rev)],['Net Sales (excl VAT)',num2(netRev)],['Cost of Goods Sold',num2(cogs)],['Gross Profit',num2(profit)],['Margin %',num2(margin)],
+    ['VAT Collected',num2(vat)],['Discounts Given',num2(disc)],['Total Purchases',num2(buyTot)],[],
+    ['Channel','Sales','Purchases'],['Cash',num2(cashS),num2(cashB)],['Card',num2(cardS),num2(cardB)],['Total',num2(rev),num2(buyTot)]];
+  const byProd={}; sales.forEach(s=>s.items.forEach(it=>{const p=productById(it.productId); if(!p)return; const avg=avgCostOf(it.productId,eng);
+    const pr=byProd[it.productId]||(byProd[it.productId]={name:p.name,qty:0,rev:0,profit:0}); pr.qty+=it.qty; pr.rev+=it.qty*it.rate; pr.profit+=it.qty*(it.rate-avg);}));
+  const prodRows=[['Product','Qty Sold','Revenue','Profit / Loss'],...Object.values(byProd).sort((a,b)=>b.profit-a.profit).map(t=>[t.name,num2(t.qty),num2(t.rev),num2(t.profit)])];
+  const daily={}; const D=d=>daily[d]||(daily[d]={sales:0,purch:0,cashS:0,cardS:0,cashP:0,cardP:0});
+  sales.forEach(s=>{ D(s.date).sales+=s.total; }); purch.forEach(p=>{ D(p.date).purch+=purchaseTotal(p); });
+  DB.sales.forEach(s=>(s.payments||[]).forEach(pm=>{ if(!inRange(pm.date))return; const r=D(pm.date); if(pm.method==='card')r.cardS+=pm.amount; else if(pm.method==='cash')r.cashS+=pm.amount; }));
+  DB.purchases.forEach(p=>(p.payments||[]).forEach(pm=>{ if(!inRange(pm.date))return; const r=D(pm.date); if(pm.method==='card')r.cardP+=pm.amount; else if(pm.method==='cash')r.cashP+=pm.amount; }));
+  const dRows=[['Date','Sales','Cash Sales','Card Sales','Purchases','Cash Purch.','Card Purch.'],...Object.keys(daily).sort((a,b)=>a<b?1:-1).map(d=>{const r=daily[d];return [d,num2(r.sales),num2(r.cashS),num2(r.cardS),num2(r.purch),num2(r.cashP),num2(r.cardP)];})];
+  exportExcel('profit_report_'+todayStr()+'.xlsx',[{name:'Summary',rows:summary},{name:'By Product',rows:prodRows},{name:'Daily',rows:dRows}]);
 }
 function importData(input){
   const f=input.files[0]; if(!f)return;
