@@ -315,6 +315,8 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 .cat-head .own-name{color:var(--text);font-weight:800;font-size:14.5px;letter-spacing:.2px}
 .split-row{display:grid;grid-template-columns:1.1fr 1.4fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px;border-top:1px solid var(--line)}
 .split-row select,.split-row input{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
+.cardpick-wrap{min-width:0}
+input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
 @media(max-width:860px){ .split-row{grid-template-columns:1fr 1fr} .split-row .li-x{grid-column:span 2} }
 .qty-over{border-color:var(--red)!important;color:var(--red)!important;animation:qtyblink .7s steps(1,end) infinite}
 @keyframes qtyblink{50%{box-shadow:0 0 0 3px rgba(239,68,68,.55);background:rgba(239,68,68,.14)}}
@@ -1122,11 +1124,7 @@ function renderBuySplits(){
       <option value="cash" ${s.method==='cash'?'selected':''}>Cash</option>
       <option value="bank" ${s.method==='bank'?'selected':''}>Bank</option>
       <option value="card" ${s.method==='card'?'selected':''}>Card</option></select>
-    ${s.method==='card' ? `<select onchange="buySplitCardPick(${i},this.value)">
-        <option value="">— select card —</option>
-        ${cards.map(c=>`<option value="${c.id}" ${c.id===s.cardId?'selected':''}>${esc(cardLabel(c))} · avail ${money(cardAvailForSplit(c))}</option>`).join('')}
-        <option value="__new">＋ Add new card…</option>
-      </select>`
+    ${s.method==='card' ? `<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`
       : `<div style="color:var(--muted2);font-size:12px;align-self:center">${s.method==='bank'?'Bank transfer':'Cash'}</div>`}
     <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal()">
     <button class="li-x" onclick="buySplits.splice(${i},1);renderBuySplits()">✕</button>
@@ -1787,6 +1785,33 @@ function activeCards(){ return (DB.cards||[]).filter(cardActive); }
 function cardLabel(c){ if(!c)return ''; const l4=(c.number||'').replace(/\D/g,'').slice(-4); const p=[]; if(c.owner&&c.owner.trim())p.push(c.owner.trim()); if(l4)p.push('••'+l4); p.push(c.name); return p.join(' · '); }
 /* short label (no owner): ••last4 · card name — for lists already grouped by owner */
 function cardShort(c){ if(!c)return ''; const l4=(c.number||'').replace(/\D/g,'').slice(-4); return (l4?'••'+l4+' · ':'')+(c.name||''); }
+/* ---- reusable searchable card picker ----
+   A text box + datalist so the user can type the OWNER name, the card's LAST 4
+   digits, or the card name to find a card. `idBase` names a hidden <input> that
+   holds the resolved card id; onpick(id) fires whenever the selection changes.
+   `extraFn(c)` appends info (e.g. "due 1,200") to each option. `extraOpts` are
+   non-card sentinel options (e.g. "＋ Add new card…") the caller handles itself. */
+window._cardPick = window._cardPick || {};
+function cardPickerHtml(idBase, cards, selectedId, extraFn, placeholder, onpick, extraOpts){
+  const opts=(cards||[]).map(c=>({ id:c.id, v:cardLabel(c)+(extraFn?(' · '+extraFn(c)):'') }));
+  window._cardPick[idBase]={ opts, extras:(extraOpts||[]), onpick:onpick||null };
+  const sel=selectedId?opts.find(o=>o.id===selectedId):null;
+  const dl=opts.map(o=>`<option value="${esc(o.v)}"></option>`).join('')+(extraOpts||[]).map(x=>`<option value="${esc(x)}"></option>`).join('');
+  return `<input class="cardpick" id="${idBase}_q" list="${idBase}_dl" autocomplete="off" spellcheck="false"
+      placeholder="${esc(placeholder||'Type owner name or last 4 digits…')}"
+      value="${sel?esc(sel.v):''}" oninput="cardPickResolve('${idBase}')" onchange="cardPickResolve('${idBase}')">
+    <datalist id="${idBase}_dl">${dl}</datalist>
+    <input type="hidden" id="${idBase}" value="${selectedId||''}">`;
+}
+function cardPickResolve(idBase){
+  const st=window._cardPick[idBase]; if(!st)return;
+  const raw=($('#'+idBase+'_q')?.value||'').trim(), q=raw.toLowerCase();
+  if(raw && st.extras.some(x=>x.toLowerCase()===q)){ const hidden=$('#'+idBase); if(hidden)hidden.value=''; if(st.onpick)st.onpick('',raw); return; }
+  let hit=st.opts.find(o=>o.v.toLowerCase()===q);                                   // exact (picked from list)
+  if(!hit && q){ const m=st.opts.filter(o=>o.v.toLowerCase().includes(q)); if(m.length===1)hit=m[0]; } // unique partial
+  const id=hit?hit.id:''; const hidden=$('#'+idBase); if(hidden)hidden.value=id;
+  if(st.onpick)st.onpick(id,raw);
+}
 /* ---- card visual ---- */
 function cardVisual(c){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
@@ -2328,7 +2353,7 @@ function cardCashModal(){
   openModal('Card Recharge / Payment (from cash)',`
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Deposit cash to a card or pay its due from a wallet. Recorded in the card ledger AND deducted from the wallet.</p>
     <div class="grid2">
-      <div class="field"><label>Card *</label><select id="cc_card" onchange="cardCashDue()"><option value="">— select card —</option>${activeCards().map(c=>`<option value="${c.id}">${esc(cardLabel(c))} · due ${money(Math.max(0,cardOutstanding(c)))}</option>`).join('')}</select></div>
+      <div class="field"><label>Card *</label>${cardPickerHtml('cc_card', activeCards(), '', c=>'due '+money(Math.max(0,cardOutstanding(c))), 'Type owner name or last 4 digits…', ()=>cardCashDue())}</div>
       <div class="field"><label>Type *</label><select id="cc_type"><option value="payment">Payment (reduce card due)</option><option value="recharge">Recharge (add funds)</option></select></div>
     </div>
     <div class="grid2">
