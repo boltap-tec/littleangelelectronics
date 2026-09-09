@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <meta name="theme-color" content="#0f172a" />
 <title>Little Angel Electronics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#0b1220; --bg2:#0f172a; --panel:#111c33; --panel2:#152344;
@@ -68,6 +71,38 @@ body.light .tag.low,body.light .tag.due{background:#fde7e7;color:#c62b2b;border-
 body.light .tag.partial{background:#fdf1d8;color:#9a6b0f;border-color:#f0dca6}
 body.light ::-webkit-scrollbar-thumb{background:#c9d3e8}
 
+/* ================= MINT (FRESH) THEME =================
+   Built on top of the light component rules (body gets "light mint"),
+   then overrides the palette + font. Inspired by soft-mint / emerald look. */
+body.mint{
+  --bg:#d2f0df; --bg2:#ffffff; --panel:#ffffff; --panel2:#e6f8ef;
+  --line:#c1e6d2; --line2:#a6ddbf;
+  --text:#13224c; --muted:#48695a; --muted2:#789a89;
+  --brand:#1aae57; --brand2:#34d17a; --brandsoft:#d1f3df;
+  --gold:#eaa800; --gold2:#a97b12;
+  --green:#16a34a; --greensoft:#d7f5e4;
+  --red:#dc2626; --redsoft:#fde7e7;
+  --amber:#f5cf7a; --ambersoft:#fbf0d6;
+  --blue:#2563eb;
+  --shadow:0 14px 34px rgba(16,74,50,.16);
+  --font:'Poppins','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(26,174,87,.20), transparent 60%),
+    radial-gradient(900px 520px at -10% 110%, rgba(37,99,235,.10), transparent 55%),
+    var(--bg);
+}
+body.mint h1,body.mint h2,body.mint h3,body.mint .stat .val,body.mint .login-card h1{
+  font-weight:800;letter-spacing:-.4px;color:var(--text)}
+body.mint .topbar{background:rgba(210,240,223,.88)}
+body.mint .brand-badge,body.mint .topbar .logo{background:radial-gradient(circle at 50% 40%,#e6f7ee,#c4ecd6)}
+body.mint .sidebar{background:#ffffff}
+body.mint .nav-item.active{background:var(--brandsoft);color:var(--brand)}
+body.mint .chip .dot{background:var(--green)}
+body.mint .tag.card{background:#e2ecff;color:#2141b8;border-color:#c2d2f7}
+body.mint .tag.bank{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
+body.mint .btn-primary,body.mint .btn{--brand:#17a24d;--brand2:#2bc46a}
+body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
+
 /* theme picker in Settings */
 .theme-choose{display:flex;gap:14px;flex-wrap:wrap}
 .theme-opt{background:var(--bg);border:2px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;color:var(--text);
@@ -79,6 +114,7 @@ body.light ::-webkit-scrollbar-thumb{background:#c9d3e8}
 .tp span:nth-child(1){width:60%}.tp span:nth-child(2){width:85%}.tp span:nth-child(3){width:45%}
 .tp-light{background:#eef1f8}.tp-light span{background:#c3ccdf}.tp-light span:nth-child(2){background:#6366f1}
 .tp-dark{background:#0b1220}.tp-dark span{background:#2c3e63}.tp-dark span:nth-child(2){background:#818cf8}
+.tp-mint{background:#d2f0df}.tp-mint span{background:#a6ddbf}.tp-mint span:nth-child(1){background:#13224c}.tp-mint span:nth-child(2){background:#1aae57}
 
 /* ================= BOTTOM NAV (mobile) ================= */
 .bottomnav{display:none}
@@ -805,8 +841,10 @@ function renderWalletPop(){ const pop=$('#walletPop'); if(!pop)return; const bal
 function logout(){ session=null; $('#app').style.display='none'; $('#login').style.display='flex'; $('#loginPass').value=''; closeModal(); }
 function applyBrand(){ $('#brandName').textContent=S().company; $('#brandCity').textContent=S().city; document.title='Little Angel Electronics';
   $('#topLogo').innerHTML=brandMark(30); applyTheme(); }
-function applyTheme(){ const light=S().theme!=='dark'; document.body.classList.toggle('light',light);
-  const b=$('#themeBtn'); if(b)b.textContent=light?'🌙':'☀️'; }
+function applyTheme(){ const t=S().theme, dark=t==='dark';
+  document.body.classList.toggle('light', t==='light'||t==='mint');
+  document.body.classList.toggle('mint', t==='mint');
+  const b=$('#themeBtn'); if(b)b.textContent=dark?'☀️':'🌙'; }
 function toggleTheme(){ S().theme = S().theme==='dark'?'light':'dark'; save(); applyTheme(); toast(S().theme==='dark'?'Dark theme on':'Bright theme on'); }
 function setTheme(t){ S().theme=t; save(); applyTheme(); if($('.nav-item.active')?.dataset.view==='settings')go('settings'); }
 
@@ -2555,10 +2593,12 @@ views.settings=function(){
   <div class="panel">
     <h3>🎨 Appearance</h3><p class="psub">Choose your theme. Dark is the default.</p>
     <div class="theme-choose">
-      <button class="theme-opt ${st.theme!=='dark'?'on':''}" onclick="setTheme('light')">
-        <div class="tp tp-light"><span></span><span></span><span></span></div>Bright</button>
       <button class="theme-opt ${st.theme==='dark'?'on':''}" onclick="setTheme('dark')">
         <div class="tp tp-dark"><span></span><span></span><span></span></div>Dark</button>
+      <button class="theme-opt ${st.theme==='light'?'on':''}" onclick="setTheme('light')">
+        <div class="tp tp-light"><span></span><span></span><span></span></div>Bright</button>
+      <button class="theme-opt ${st.theme==='mint'?'on':''}" onclick="setTheme('mint')">
+        <div class="tp tp-mint"><span></span><span></span><span></span></div>Mint</button>
     </div>
   </div>
   <div class="panel">
