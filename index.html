@@ -372,12 +372,16 @@ body.light .pstack>*{border-color:#fff!important}
   transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
 .shop-card:hover{transform:translateY(-4px);box-shadow:0 16px 34px rgba(0,0,0,.32);border-color:var(--brand)}
 .shop-card.oos{opacity:.72}
-.shop-img{position:relative;aspect-ratio:1/1;background:#fff;display:flex;align-items:center;justify-content:center;padding:12px;cursor:pointer}
+.shop-img{position:relative;height:172px;flex:0 0 auto;background:#fff;display:flex;align-items:center;justify-content:center;padding:14px;cursor:pointer}
 .shop-img img{max-width:100%;max-height:100%;object-fit:contain}
-.shop-icon{width:58%;height:58%;color:#8a97b4;display:flex;align-items:center;justify-content:center}
+.shop-icon{width:52%;height:52%;color:#8a97b4;display:flex;align-items:center;justify-content:center}
 .shop-icon svg{width:100%;height:100%}
-.shop-stock{position:absolute;top:8px;left:8px;background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136;font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:999px}
-.shop-stock.oos{background:var(--redsoft);color:#fca5a5;border-color:#7a2b2b}
+.shop-stock{position:absolute;top:9px;left:9px;display:inline-flex;align-items:center;gap:6px;background:rgba(17,23,40,.74);color:#fff;
+  border:1px solid rgba(255,255,255,.16);font-size:10.5px;font-weight:700;letter-spacing:.2px;padding:4px 10px 4px 9px;border-radius:999px;
+  -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);box-shadow:0 2px 9px rgba(0,0,0,.28)}
+.shop-stock::before{content:"";width:7px;height:7px;border-radius:50%;background:#2fd873;box-shadow:0 0 7px #2fd873}
+.shop-stock.oos{color:#ffdada}
+.shop-stock.oos::before{background:#ff5a5a;box-shadow:0 0 7px #ff5a5a}
 .shop-cam{position:absolute;right:8px;bottom:8px;width:22px;height:22px;border-radius:50%;background:var(--brand);color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);opacity:0;transition:opacity .15s}
 .shop-img:hover .shop-cam{opacity:1}
 .shop-body{padding:11px 12px 13px;display:flex;flex-direction:column;gap:4px;flex:1}
