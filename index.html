@@ -883,7 +883,7 @@ function doLogin(){
 function enterApp(){
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  renderSidebar(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
+  renderSidebar(); initScrollxObserver(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
 }
 /* show/hide nav + bell + bottom-nav by this user's permissions */
 function applyAccess(){
@@ -1677,14 +1677,23 @@ function printSale(id){
 /* =========================================================
    PAYMENTS (records / ledger)
    ========================================================= */
-/* toggle the scroll affordance on .scrollx wrappers when their table overflows */
+/* Auto-add a horizontal-scroll affordance (nudging arrow + edge fade) to EVERY wide
+   table so the right-hand columns (Edit/Delete, balances, actions) are never silently
+   cut off. Any .table-wrap not already inside a .scrollx gets wrapped once. */
 function enhanceScrollx(){
+  $$('.table-wrap').forEach(w=>{ const p=w.parentElement;
+    if(p && !p.classList.contains('scrollx')){ const sx=document.createElement('div'); sx.className='scrollx';
+      p.insertBefore(sx, w); sx.appendChild(w); } });
   $$('.scrollx').forEach(sx=>{ const w=sx.querySelector('.table-wrap'); if(!w)return;
     const upd=()=>{ sx.classList.toggle('scrollable', w.scrollWidth>w.clientWidth+2);
       sx.classList.toggle('at-end', w.scrollLeft+w.clientWidth>=w.scrollWidth-2); };
     upd(); if(!w._sxBound){ w._sxBound=1; w.addEventListener('scroll',upd,{passive:true}); } });
 }
 if(!window._sxResize){ window._sxResize=1; window.addEventListener('resize',()=>{ try{enhanceScrollx();}catch(e){} }); }
+/* re-run whenever #main content changes (view switch, search filter, etc.) */
+function initScrollxObserver(){ const main=document.getElementById('main'); if(!main||window._sxObs)return; window._sxObs=1;
+  let raf=0; new MutationObserver(()=>{ cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ try{enhanceScrollx();}catch(e){} }); })
+    .observe(main,{childList:true,subtree:true}); }
 views.payments=function(){
   return `
   <div class="page-head"><div><h2>Payments</h2><p>Money in from sales, money out for purchases, and outstanding credit — cash, card & bank.</p></div></div>
