@@ -262,6 +262,14 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .imgfind-grid img:hover{transform:translateY(-2px);border-color:var(--brand)}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--line2);border-top-color:var(--brand);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* hover a product photo → brighten + lift, and pop a big preview */
+.thumb{transition:transform .13s ease,filter .13s ease,box-shadow .13s ease}
+.thumb-edit:hover .thumb{transform:scale(1.08);filter:brightness(1.1);box-shadow:0 6px 18px rgba(0,0,0,.35);z-index:2}
+#imgZoom{position:fixed;z-index:300;width:250px;height:250px;padding:9px;background:#fff;border:1px solid var(--line2);
+  border-radius:16px;box-shadow:0 20px 55px rgba(0,0,0,.55);opacity:0;transform:scale(.9);transform-origin:center;
+  transition:opacity .13s ease,transform .13s ease;pointer-events:none;display:flex;align-items:center;justify-content:center}
+#imgZoom.on{opacity:1;transform:scale(1)}
+#imgZoom img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
 thead th{background:var(--panel2);text-align:left;padding:12px 14px;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;white-space:nowrap;position:sticky;top:0}
 tbody td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}
@@ -893,7 +901,7 @@ function doLogin(){
 function enterApp(){
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  renderSidebar(); initScrollxObserver(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
+  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
 }
 /* show/hide nav + bell + bottom-nav by this user's permissions */
 function applyAccess(){
@@ -2260,6 +2268,23 @@ const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><
 /* ========= AUTO PRODUCT IMAGE (click a thumbnail → find & set) =========
    Free by default via Wikipedia (no API key). If a Google Programmable
    Search key + engine id are set in Settings, those results are added too. */
+/* hover-to-zoom: pop a large floating preview when the mouse is over any product photo
+   (only real photos have an <img>; icon tiles are SVG, so they never trigger it) */
+function initImgZoom(){
+  if(window._imgZoomInit)return; window._imgZoomInit=1;
+  if(!window.matchMedia||!window.matchMedia('(hover:hover)').matches)return; // skip on touch devices
+  const z=document.createElement('div'); z.id='imgZoom'; z.innerHTML='<img alt="">'; document.body.appendChild(z);
+  const zi=z.querySelector('img');
+  const show=img=>{ const src=img.currentSrc||img.src; if(!src)return; zi.src=src;
+    const r=img.getBoundingClientRect(), W=250,H=250,gap=14;
+    let left=r.right+gap; if(left+W>innerWidth-8)left=r.left-gap-W; left=Math.max(8,Math.min(left,innerWidth-W-8));
+    let top=r.top+r.height/2-H/2; top=Math.max(8,Math.min(top,innerHeight-H-8));
+    z.style.left=left+'px'; z.style.top=top+'px'; z.classList.add('on'); };
+  const hide=()=>z.classList.remove('on');
+  document.addEventListener('mouseover',e=>{ const img=e.target.closest&&e.target.closest('.thumb img'); if(img)show(img); });
+  document.addEventListener('mouseout',e=>{ if(e.target.closest&&e.target.closest('.thumb img'))hide(); });
+  addEventListener('scroll',hide,true);
+}
 let _imgCands=[];
 async function fetchImageCandidates(name){
   const out=[], q=(name||'').trim(); if(!q)return out; const st=S();
