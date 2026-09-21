@@ -820,12 +820,12 @@ function canView(v){ if(!session)return false; if(session.role==='owner')return 
    mandatory reference (card number / holder name / mobile) and don't touch the wallet. */
 const PAY_METHODS=[
   {k:'card',        label:'Credit Card',          tag:'card',   ref:null},
-  {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  refLabel:'Card number (optional)',      refKind:'numeric'},
-  {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  refLabel:'Card number (optional)',      refKind:'numeric'},
+  {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
+  {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'share_points',label:'Share Points',         tag:'points', ref:'optional',  refLabel:'Shareholder name (optional)', refKind:'text'},
   {k:'gift',        label:'Gift Cards',           tag:'gift',   ref:'optional',  refLabel:'Gift card ref (optional)',    refKind:'text'},
-  {k:'platinum',    label:'Platinum Points',      tag:'points', ref:'mandatory', refLabel:'Card number (required)',      refKind:'numeric'},
-  {k:'diners',      label:'Diners Points',        tag:'points', ref:'mandatory', refLabel:'Card number (required)',      refKind:'numeric'},
+  {k:'platinum',    label:'Platinum Points',      tag:'points', ref:'mandatory', savedCard:true, refLabel:'Pick a saved card (required)'},
+  {k:'diners',      label:'Diners Points',        tag:'points', ref:'mandatory', savedCard:true, refLabel:'Pick a saved card (required)'},
   {k:'happiness',   label:'Happiness Points',     tag:'points', ref:'optional',  refLabel:'Mobile number (optional)',    refKind:'tel'},
   {k:'cash',        label:'Cash Payment',         tag:'cash',   ref:null},
 ];
@@ -1206,7 +1206,9 @@ function buyDiscount(){ return Math.min(buyItemsTotal(), Math.max(0, +($('#b_dis
 function buyNetTotal(){ return Math.max(0, buyItemsTotal()-buyDiscount()); }
 /* available on a card for THIS purchase (adds back this purchase's existing charges when editing) */
 function cardAvailForSplit(card){ let adj=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId) adj += (t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return cardAvailable(card)+adj; }
-function splitHintText(s){ const c=s.cardId?cardById(s.cardId):null; if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
+function splitHintText(s){ const info=payMethodInfo(s.method); const c=s.cardId?cardById(s.cardId):null;
+  if(info.savedCard){ return c ? `Points card <b style="color:var(--text)">${esc(cardLabel(c))}</b>` : '<span style="color:var(--muted2)">Select a saved card</span>'; }
+  if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
   const av=cardAvailForSplit(c), amt=+s.amount||0, over=amt-av;
   return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${over>1e-6?` · <span style="color:var(--red)">⚠ goes negative — pay ${money(over)} before midnight 🌙</span>`:''}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
@@ -1218,18 +1220,23 @@ function renderBuySplits(){
     let mid;
     if(s.method==='card'){
       mid=`<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`;
+    } else if(info.savedCard){
+      const req=info.ref==='mandatory', hasCards=cards.length>0;
+      mid = hasCards
+        ? `<div class="cardpick-wrap">${cardPickerHtml('bref_'+i, cards, s.cardId, null, info.refLabel, (id)=>{ buySplits[i].cardId=id; updateSplitHints(); })}</div>`
+        : `<div style="color:var(--amber);font-size:11.5px;align-self:center">No saved cards — add one in Credit Cards${req?' *':''}</div>`;
     } else if(info.ref){
       const req=info.ref==='mandatory';
-      mid=`<input type="text" ${info.refKind==='numeric'?'inputmode="numeric"':info.refKind==='tel'?'inputmode="tel"':''} value="${esc(s.ref||'')}" placeholder="${esc(info.refLabel)}${req?' *':''}" oninput="buySplits[${i}].ref=this.value" style="${req&&!(s.ref||'').trim()?'border-color:var(--amber)':''}">`;
+      mid=`<input type="text" ${info.refKind==='tel'?'inputmode="tel"':''} value="${esc(s.ref||'')}" placeholder="${esc(info.refLabel)}${req?' *':''}" oninput="buySplits[${i}].ref=this.value" style="${req&&!(s.ref||'').trim()?'border-color:var(--amber)':''}">`;
     } else {
       mid=`<div style="color:var(--muted2);font-size:12px;align-self:center">Cash out of wallet</div>`;
     }
     return `<div class="split-row">
-    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';renderBuySplits()">${opts}</select>
+    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';buySplits[${i}].cardId='';renderBuySplits()">${opts}</select>
     ${mid}
     <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal()">
     <button class="li-x" onclick="buySplits.splice(${i},1);renderBuySplits()">✕</button>
-  </div>${s.method==='card'?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}`;
+  </div>${(s.method==='card'||info.savedCard)?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}`;
   }).join('');
   buyCalcTotal();
 }
@@ -1287,11 +1294,12 @@ function savePurchase(id){
   const tot=Math.max(0,gross-discount);
   const rawSplits=buySplits.filter(s=>+s.amount>0);
   if(rawSplits.some(s=>s.method==='card' && (DB.cards&&DB.cards.length) && !s.cardId))return toast('Pick a card for each card payment',1);
-  // methods that require a reference (e.g. Platinum / Diners card number) must have one
-  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); return info.ref==='mandatory' && !(s.ref||'').trim(); });
-  if(missingRef){ const info=payMethodInfo(missingRef.method); return toast(`${info.label}: ${info.refLabel.replace(' (required)','')} is required`,1); }
+  // methods that require a reference must have one (saved-card pick, or free-text ref)
+  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); if(info.ref!=='mandatory')return false; return info.savedCard ? !s.cardId : !(s.ref||'').trim(); });
+  if(missingRef){ const info=payMethodInfo(missingRef.method); return toast(`${info.label}: ${info.refLabel.replace(/ \((required|optional)\)/,'')} is required`,1); }
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
-  const splits=rawSplits.map(s=>({method:s.method,cardId:s.method==='card'?(s.cardId||''):'',ref:s.method==='card'?'':(s.ref||'').trim(),amount:+s.amount}));
+  const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard;
+    return {method:s.method,cardId:linksCard?(s.cardId||''):'',ref:linksCard?'':(s.ref||'').trim(),amount:+s.amount}; });
   // Cards MAY go negative — we don't block. Track which cards overshoot so we can warn
   // that the negative amount has to be cleared before midnight.
   const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+s.amount; });
