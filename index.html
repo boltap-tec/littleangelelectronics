@@ -2833,7 +2833,14 @@ views.settings=function(){
       ${owner?`<button class="btn-sm btn-gold" onclick="loadDemo()">🧪 Load Demo (10 + 10)</button>`:''}
       ${owner?`<button class="btn-sm btn-red" onclick="resetAll()">Reset All Data</button>`:''}
     </div>
-  </div>`;
+  </div>
+  <!-- ===== DEV-ONLY: remove this whole panel before going live ===== -->
+  ${owner?`<div class="panel" style="border-color:var(--red)">
+    <h3>🧨 Developer — Clear All Data</h3><p class="psub">Temporary development tool. Wipes every product, purchase, sale, card, cash entry, user &amp; setting and resets the app to a fresh empty state.</p>
+    <div class="note" style="margin-bottom:14px;background:var(--redsoft);border-color:#7a2b2b;color:#ffb3b3">⚠ For development only — password protected. Remove this option before going live.</div>
+    <button class="btn-sm btn-red" onclick="devClearAll()">🧨 Clear ALL Data…</button>
+  </div>`:''}
+  <!-- ===== END DEV-ONLY ===== -->`;
 };
 views._after_settings=()=>{ if(isOwner())renderUsers(); const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
 function toggle(id,label,on){return `<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:12px 14px;border-radius:11px;cursor:pointer;margin-bottom:0">
@@ -2994,6 +3001,25 @@ function importData(input){
   r.readAsText(f); input.value='';
 }
 function resetAll(){confirmBox('Reset ALL data?','Deletes every product, purchase, sale & user. Cannot be undone.',()=>{localStorage.removeItem(KEY);DB=seed();save();toast('All data reset');logout();},'Reset');}
+
+/* ===== DEV-ONLY: password-gated "clear everything" — remove before going live ===== */
+function devClearAll(){
+  if(!isOwner())return;
+  openModal('🧨 Clear ALL Data',`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.6">This permanently deletes <b style="color:var(--text)">everything</b> — products, purchases, sales, cards, cash, users &amp; settings — and resets the app to an empty state. <b style="color:var(--red)">This cannot be undone.</b></p>
+    <div class="field"><label>Developer password</label><input id="dev_pw" type="password" inputmode="numeric" placeholder="Enter password" autocomplete="off" onkeydown="if(event.key==='Enter')devClearConfirm()"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-red" onclick="devClearConfirm()">Clear everything</button>`);
+  setTimeout(()=>$('#dev_pw')?.focus(),30);
+}
+function devClearConfirm(){
+  if(($('#dev_pw')?.value||'').trim()!=='1234'){ toast('Wrong developer password',1); return; }
+  try{ localStorage.removeItem(KEY); }catch(e){}
+  DB=seed();
+  try{ save(); }catch(e){}
+  closeModal(); toast('All data cleared — reset to empty app'); logout();
+}
+/* ===== END DEV-ONLY ===== */
 
 /* ---------- demo data (10 purchases + 10 sales) ---------- */
 function loadDemo(){
