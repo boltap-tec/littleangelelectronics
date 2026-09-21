@@ -2284,11 +2284,19 @@ function openImageFinder(pid){
   openModal('📷 Product Image',`
     <p style="margin:0 0 12px;color:var(--muted);font-size:13.5px">Auto-searching the web for <b style="color:var(--text)">${esc(p.name)}</b>. Click an image to use it.</p>
     <div id="imgfind_grid" style="min-height:96px;display:flex;align-items:center;justify-content:center;color:var(--muted);gap:9px"><span class="spin"></span> Searching…</div>
-    <div class="field" style="margin-top:14px"><label>Or paste an image URL</label><input id="imgfind_url" placeholder="https://… (right-click an image → Copy image address)" value="${esc(p.imageUrl||'')}"></div>
-    <div style="font-size:12px;color:var(--muted2);margin-top:2px">Nothing good? <a href="${gimg}" target="_blank" rel="noopener">Open Google Images ↗</a>, copy an image address and paste it above.</div>`,
+    <div style="margin:16px 0 6px;padding:13px;background:var(--panel2);border:1px solid var(--line);border-radius:12px">
+      <div style="font-weight:700;font-size:13px;margin-bottom:9px">🔎 Pick from Google Images</div>
+      <a class="btn-sm btn-gold" href="${gimg}" target="_blank" rel="noopener" style="text-decoration:none">Open Google Images for "${esc(p.name.length>26?p.name.slice(0,26)+'…':p.name)}" ↗</a>
+      <ol style="margin:11px 0 0;padding-left:20px;color:var(--muted);font-size:12.5px;line-height:1.9">
+        <li>Click the button — it opens Google Images already searched for this product.</li>
+        <li>Right-click the image you want → <b style="color:var(--text)">"Copy image address"</b>.</li>
+        <li>Paste it below and press <b style="color:var(--text)">Use this image</b>.</li>
+      </ol>
+    </div>
+    <div class="field"><label>Image URL</label><input id="imgfind_url" placeholder="Paste the copied image address here (https://…)" value="${esc(p.imageUrl||'')}" onkeydown="if(event.key==='Enter')useTypedImage('${pid}')"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      ${p.imageUrl?`<button class="btn-sm btn-red" onclick="setProductImage('${pid}','')">Remove image</button>`:''}
-     <button class="btn-sm" onclick="setProductImage('${pid}',($('#imgfind_url').value||'').trim())">Use this URL</button>`);
+     <button class="btn-sm" onclick="useTypedImage('${pid}')">Use this image</button>`);
   fetchImageCandidates(p.name).then(cands=>{ _imgCands=cands; const grid=$('#imgfind_grid'); if(!grid)return;
     if(!cands.length){ grid.style.display='block'; grid.innerHTML=`<div style="color:var(--muted);font-size:13px">No image found automatically — paste a URL below, or open Google Images.</div>`; return; }
     grid.style.display='block'; grid.className='imgfind-grid';
@@ -2311,6 +2319,14 @@ async function urlToThumb(url,max){ max=max||400;
 async function pickImgCand(pid,i){ const c=_imgCands[i]; if(!c)return;
   const grid=$('#imgfind_grid'); if(grid){ grid.className=''; grid.style.display='flex'; grid.innerHTML='<span class="spin"></span> &nbsp;Saving image…'; }
   let val=c.full; try{ val=await urlToThumb(c.full); }catch(e){ /* blocked → keep the remote URL as-is */ }
+  setProductImage(pid,val);
+}
+/* store a pasted image URL — try to self-contain it (download+shrink), else keep the URL */
+async function useTypedImage(pid){
+  const url=($('#imgfind_url').value||'').trim();
+  if(!url){ setProductImage(pid,''); return; }
+  const btns=$$('.modal-foot .btn-sm'); btns.forEach(b=>b.disabled=true);
+  let val=url; try{ val=await urlToThumb(url); }catch(e){ /* CORS-blocked host → store the URL directly */ }
   setProductImage(pid,val);
 }
 function setProductImage(pid,url){
