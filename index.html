@@ -372,9 +372,11 @@ body.light .pstack>*{border-color:#fff!important}
 .shop-stock.oos{background:var(--redsoft);color:#fca5a5;border-color:#7a2b2b}
 .shop-cam{position:absolute;right:8px;bottom:8px;width:22px;height:22px;border-radius:50%;background:var(--brand);color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);opacity:0;transition:opacity .15s}
 .shop-img:hover .shop-cam{opacity:1}
-.shop-body{padding:11px 12px 13px;display:flex;flex-direction:column;gap:5px}
-.shop-name{font-weight:700;font-size:13.5px;line-height:1.3;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:35px}
-.shop-cost{font-size:12px;color:var(--muted)}
+.shop-body{padding:11px 12px 13px;display:flex;flex-direction:column;gap:4px;flex:1}
+.shop-name{font-weight:700;font-size:13.5px;line-height:1.3;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;height:35px}
+.shop-cat{font-size:11px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px}
+.shop-cost{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shop-ctrl{margin-top:auto;padding-top:8px}
 .shop-step{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--line2);border-radius:11px;padding:5px 8px}
 .shop-step button{width:30px;height:30px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-size:17px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .shop-step button:active{transform:scale(.93)}
@@ -1542,8 +1544,9 @@ function shopCard(x){
     <div class="shop-img" onclick="openImageFinder('${p.id}')" title="Click to set / change image">${img}${badge}<span class="shop-cam">📷</span></div>
     <div class="shop-body">
       <div class="shop-name" title="${esc(p.name)}">${esc(p.name)}</div>
-      <div class="shop-cost">Buy <b style="color:var(--gold2)">${money(x.cost)}</b>${p.category?` · ${esc(p.category)}`:''}</div>
-      <div style="margin-top:3px">${ctrl}</div>
+      <div class="shop-cat">${p.category?esc(p.category):'&nbsp;'}</div>
+      <div class="shop-cost">Bought price <b style="color:var(--gold2)">${money(x.cost)}</b></div>
+      <div class="shop-ctrl">${ctrl}</div>
     </div></div>`;
 }
 function shopAdd(pid,delta){
