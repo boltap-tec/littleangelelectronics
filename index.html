@@ -270,6 +270,36 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
   transition:opacity .13s ease,transform .13s ease;pointer-events:none;display:flex;align-items:center;justify-content:center}
 #imgZoom.on{opacity:1;transform:scale(1)}
 #imgZoom img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
+/* ===== modern polish: view transitions + micro-interactions ===== */
+@keyframes viewIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.main.anim{animation:viewIn .30s cubic-bezier(.22,.61,.36,1)}
+@media(prefers-reduced-motion:reduce){ .main.anim{animation:none} }
+.stat{transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+.stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--brand2);opacity:.95}
+.stat.green::before{background:var(--green)}.stat.gold::before{background:var(--gold2)}.stat.blue::before{background:var(--blue)}.stat.red::before{background:#ef4444}.stat.amber::before{background:var(--amber)}
+.stat:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(0,0,0,.30);border-color:var(--line2)}
+.stat .ic{transition:transform .22s ease}
+.stat:hover .ic{transform:scale(1.14) rotate(-5deg);opacity:1}
+.tile{transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+.tile .tic{transition:transform .18s ease}
+.tile:hover .tic{transform:scale(1.1)}
+.btn-sm{transition:transform .12s ease,filter .12s ease,box-shadow .12s ease}
+.btn-sm:hover{transform:translateY(-1px);filter:brightness(1.07)}
+.panel{transition:border-color .18s ease,box-shadow .18s ease}
+.table-wrap tbody tr{transition:background .12s ease}
+.table-wrap tbody tr:hover{background:rgba(255,255,255,.035)}
+body.light .table-wrap tbody tr:hover{background:rgba(20,30,60,.04)}
+/* dashboard sales sparkline */
+.spark{display:flex;align-items:stretch;gap:10px;height:130px;margin-top:16px}
+.spark-col{flex:1;display:flex;flex-direction:column;min-width:0;cursor:default}
+.spark-barwrap{flex:1;display:flex;align-items:flex-end;justify-content:center;min-height:0}
+.spark-bar{width:70%;max-width:36px;min-height:4px;border-radius:8px 8px 3px 3px;background:linear-gradient(180deg,var(--brand2),var(--brand));
+  transform-origin:bottom;animation:growBar .6s cubic-bezier(.22,.61,.36,1) both;transition:filter .15s ease}
+.spark-col:hover .spark-bar{filter:brightness(1.2)}
+.spark-bar.today{background:linear-gradient(180deg,var(--gold2),var(--gold));box-shadow:0 0 14px rgba(245,179,1,.35)}
+.spark-lab{font-size:11px;color:var(--muted2);font-weight:600;text-align:center;margin-top:8px}
+.spark-col:hover .spark-lab{color:var(--text)}
+@keyframes growBar{from{transform:scaleY(0)}to{transform:scaleY(1)}}
 table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
 thead th{background:var(--panel2);text-align:left;padding:12px 14px;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;white-space:nowrap;position:sticky;top:0}
 tbody td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}
@@ -963,10 +993,27 @@ function go(v){
   $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
   $$('#bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   expandActiveGroup(v);
-  $('#main').innerHTML = (views[v]||views.dashboard)();
+  const main=$('#main');
+  main.innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
+  main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); // replay enter animation
+  animateCounts(main);
   if(window.innerWidth<=860) closeNav();
   window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); if(session)applyAccess();
+}
+/* count-up animation for headline figures (parses the formatted value, keeps prefix/suffix) */
+function animateCounts(root){
+  if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  (root||document).querySelectorAll('.stat .val').forEach(el=>{
+    if(el.dataset.cu)return; const txt=el.textContent.trim();
+    const m=txt.match(/^(.*?)(-?\d[\d,]*(?:\.\d+)?)(.*)$/s); if(!m)return;
+    const pre=m[1], numStr=m[2], suf=m[3], target=parseFloat(numStr.replace(/,/g,'')); if(!isFinite(target))return;
+    const dec=(numStr.split('.')[1]||'').length; el.dataset.cu='1';
+    const fmt=v=>pre+v.toLocaleString('en-AE',{minimumFractionDigits:dec,maximumFractionDigits:dec})+suf;
+    const dur=750, t0=performance.now();
+    (function step(now){ const p=Math.min(1,(now-t0)/dur), e=1-Math.pow(1-p,3);
+      el.textContent=fmt(target*e); if(p<1)requestAnimationFrame(step); else el.textContent=fmt(target); })(t0);
+  });
 }
 function toggleNav(){ $('#sidebar').classList.toggle('open'); $('#backdrop').classList.toggle('show'); }
 function closeNav(){ $('#sidebar').classList.remove('open'); $('#backdrop').classList.remove('show'); }
@@ -1031,6 +1078,7 @@ views.dashboard=function(){
     <div class="stat amber"><span class="ic">📈</span><div class="label">To Collect</div><div class="val">${money(recv)}</div><div class="foot">Customer credit (receivable)</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">To Pay</div><div class="val">${money(pay)}</div><div class="foot">Supplier credit (payable)</div></div>
   </div>
+  ${dashSparkline()}
   <div class="grid2">
     <div class="panel"><h3>Recent Sales</h3><p class="psub">Latest billing activity</p>
       ${recent.length? `<div class="table-wrap"><table>
@@ -1042,6 +1090,27 @@ views.dashboard=function(){
     <div class="panel"><h3>Low Stock Alerts</h3><p class="psub">At or below ${S().lowStockLevel} units</p>${lowStockList(eng)}</div>
   </div>`;
 };
+/* compact animated bar chart of the last 7 days of sales */
+function dashSparkline(){
+  if(!canView('sales'))return '';
+  const today=new Date(); today.setHours(0,0,0,0);
+  const days=[]; for(let i=6;i>=0;i--){ const d=new Date(today); d.setDate(d.getDate()-i);
+    days.push({key:isoDate(d), lab:d.toLocaleDateString('en-AE',{weekday:'short'}), total:0, isToday:i===0}); }
+  const map={}; days.forEach(x=>map[x.key]=x);
+  DB.sales.forEach(s=>{ if(map[s.date])map[s.date].total+=(+s.total||0); });
+  const week=days.reduce((a,d)=>a+d.total,0);
+  if(week<=0)return '';
+  const max=Math.max(1,...days.map(d=>d.total));
+  return `<div class="panel" style="margin-top:14px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div><h3 style="margin-bottom:2px">📊 Sales · last 7 days</h3><p class="psub" style="margin:0">Daily billed total</p></div>
+      <div style="text-align:right"><div class="val" style="font-size:20px;font-weight:800;color:var(--gold2)">${money(week)}</div><div class="psub" style="margin:0">this week</div></div>
+    </div>
+    <div class="spark">${days.map((d,i)=>`<div class="spark-col" title="${d.lab} · ${money(d.total)}">
+      <div class="spark-barwrap"><div class="spark-bar ${d.isToday?'today':''}" style="height:${d.total>0?Math.max(6,Math.round(d.total/max*100)):2}%;animation-delay:${i*55}ms"></div></div>
+      <div class="spark-lab">${d.lab}${d.isToday?' •':''}</div></div>`).join('')}</div>
+  </div>`;
+}
 function lowStockList(eng){
   const items=DB.products.map(p=>({p,q:stockOf(p.id,eng)})).filter(x=>x.q<=S().lowStockLevel).sort((a,b)=>a.q-b.q);
   if(!items.length) return emptyBox('✅','All good','No products are low on stock.');
