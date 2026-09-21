@@ -380,7 +380,9 @@ body.light .pstack>*{border-color:#fff!important}
 .shop-step{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--line2);border-radius:11px;padding:5px 8px}
 .shop-step button{width:30px;height:30px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-size:17px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .shop-step button:active{transform:scale(.93)}
-.shop-step b{font-size:15px}
+.shop-step input{flex:1;min-width:0;width:100%;text-align:center;font-size:15px;font-weight:800;background:transparent;border:none;color:var(--text);font-family:inherit;-moz-appearance:textfield;padding:0}
+.shop-step input::-webkit-outer-spin-button,.shop-step input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.shop-step input:focus{outline:none}
 .shop-cartbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:80;display:flex;align-items:center;gap:16px;
   background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:10px 14px;box-shadow:0 16px 40px rgba(0,0,0,.5);max-width:calc(100% - 24px)}
 .shop-cartbar .scb-left{font-size:13.5px;color:var(--text);white-space:nowrap}
@@ -1538,7 +1540,7 @@ function shopCard(x){
   const img=p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="" onerror="this.remove()">`:`<div class="shop-icon">${iconSVGtile(p)}</div>`;
   const badge=out?`<span class="shop-stock oos">Out of stock</span>`:`<span class="shop-stock">${num(x.qty)} in stock</span>`;
   const ctrl=out?`<button class="mini-btn" disabled style="opacity:.55;width:100%">Out of stock</button>`
-    :(inCart>0?`<div class="shop-step"><button onclick="shopAdd('${p.id}',-1)">−</button><b>${num(inCart)}</b><button onclick="shopAdd('${p.id}',1)">＋</button></div>`
+    :(inCart>0?`<div class="shop-step"><button onclick="shopAdd('${p.id}',-1)">−</button><input type="number" inputmode="numeric" min="0" max="${x.qty}" value="${inCart}" onchange="shopSet('${p.id}',this.value)" onfocus="this.select()" title="Type quantity"><button onclick="shopAdd('${p.id}',1)">＋</button></div>`
       :`<button class="btn-sm" style="width:100%;justify-content:center" onclick="shopAdd('${p.id}',1)">🛒 Add to cart</button>`);
   return `<div class="shop-card ${out?'oos':''}">
     <div class="shop-img" onclick="openImageFinder('${p.id}')" title="Click to set / change image">${img}${badge}<span class="shop-cam">📷</span></div>
@@ -1551,6 +1553,12 @@ function shopCard(x){
 }
 function shopAdd(pid,delta){
   const max=stockOf(pid,computeEngine()); let q=(_shopCart[pid]||0)+delta;
+  if(q<=0)delete _shopCart[pid]; else { if(q>max){ q=max; toast('Only '+num(max)+' in stock',1); } _shopCart[pid]=q; }
+  renderShop();
+}
+/* set an exact cart quantity typed into the card (capped at available stock) */
+function shopSet(pid,val){
+  const max=stockOf(pid,computeEngine()); let q=Math.floor(+val||0);
   if(q<=0)delete _shopCart[pid]; else { if(q>max){ q=max; toast('Only '+num(max)+' in stock',1); } _shopCart[pid]=q; }
   renderShop();
 }
