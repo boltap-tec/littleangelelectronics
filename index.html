@@ -175,6 +175,17 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .nav-sep{height:1px;background:var(--line);margin:12px 6px}
 .nav-tag{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--muted2);padding:6px 13px;font-weight:700}
 .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;min-width:19px;height:19px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
+.nav-group{margin-bottom:2px}
+.nav-grouphead{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;cursor:pointer;
+  padding:9px 13px 7px;color:var(--muted2);font-size:10.5px;text-transform:uppercase;letter-spacing:1px;font-weight:700;transition:color .15s}
+.nav-grouphead:hover{color:var(--muted)}
+.nav-grouphead .ng-ic{font-size:13px;opacity:.85;filter:grayscale(.2)}
+.nav-grouphead .ng-lab{flex:1;text-align:left}
+.nav-grouphead .ng-caret{font-size:10px;opacity:.65;transition:transform .18s}
+.nav-group.collapsed .ng-caret{transform:rotate(-90deg)}
+.nav-group.collapsed .nav-groupbody{display:none}
+.nav-groupbody .nav-item{padding-left:16px}
+.nav-groupbody .nav-item .ico{font-size:16px}
 
 .main{flex:1;padding:22px;max-width:1200px;margin:0 auto;width:100%}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap}
@@ -336,11 +347,17 @@ body.light .tag.payment,body.light .tag.recharge{background:#e3f7ea;color:#1f8a4
 body.light .tag.discount{background:#fdf1d8;color:#9a6b0f;border-color:#f0dca6}
 .tag.split{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
 body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
+.tag.points{background:#241a3a;color:#d6c2ff;border:1px solid #5b4a9e}
+body.light .tag.points{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
+.tag.gift{background:#3a2030;color:#ffb9d2;border:1px solid #8e2f57}
+body.light .tag.gift{background:#fde7f0;color:#b0295f;border-color:#f4c4d8}
 .tag.adjust{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
 body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
 /* ===== dashboard quick-tiles (screenshot style) ===== */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px;margin-bottom:8px}
+.tilegroup{margin-bottom:16px}
+.tilegroup-head{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted2);font-weight:700;margin:2px 2px 10px;display:flex;align-items:center;gap:7px}
 .tile{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:15px;padding:16px 10px;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;cursor:pointer;text-align:center;transition:.14s;min-height:96px}
 .tile:hover{border-color:var(--brand);transform:translateY(-2px);box-shadow:0 10px 24px rgba(99,102,241,.18)}
@@ -449,22 +466,7 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
   <div class="layout">
     <div class="backdrop" id="backdrop" onclick="toggleNav()"></div>
     <aside class="sidebar" id="sidebar">
-      <div class="nav-tag">Overview</div>
-      <div class="nav-item active" data-view="dashboard" onclick="go('dashboard')"><span class="ico">📊</span> Dashboard</div>
-      <div class="nav-tag">Operations</div>
-      <div class="nav-item" data-view="inventory" onclick="go('inventory')"><span class="ico">📦</span> Inventory</div>
-      <div class="nav-item" data-view="purchases" onclick="go('purchases')"><span class="ico">📥</span> Purchases</div>
-      <div class="nav-item" data-view="sales" onclick="go('sales')"><span class="ico">🧾</span> Sales &amp; Billing</div>
-      <div class="nav-item" data-view="payments" onclick="go('payments')"><span class="ico">💵</span> Payments</div>
-      <div class="nav-item" data-view="cards" data-owner onclick="go('cards')"><span class="ico">💳</span> Credit Cards</div>
-      <div class="nav-item" data-view="cashbook" onclick="go('cashbook')"><span class="ico">🧰</span> Cash Book</div>
-      <div class="nav-item" data-view="products" onclick="go('products')"><span class="ico">🏷️</span> Products</div>
-      <div class="nav-item" data-view="compare" onclick="go('compare')"><span class="ico">🔎</span> Price Compare</div>
-      <div class="nav-sep"></div>
-      <div class="nav-tag" data-owner>Owner</div>
-      <div class="nav-item" data-view="approvals" data-owner onclick="go('approvals')"><span class="ico">📝</span> Approvals <span class="nav-badge hidden" id="apprBadge"></span></div>
-      <div class="nav-item" data-view="profit" data-owner onclick="go('profit')"><span class="ico">💰</span> Profit &amp; Reports</div>
-      <div class="nav-item" data-view="settings" onclick="go('settings')"><span class="ico">⚙️</span> Settings</div>
+      <div id="navList"></div>
       <div class="nav-sep"></div>
       <div class="nav-item" onclick="logout()"><span class="ico">⎋</span> Logout</div>
     </aside>
@@ -506,6 +508,27 @@ const KEY='lae_db_v1';
 const ALL_VIEWS=['dashboard','purchases','sales','payments','cards','cashbook','inventory','products','compare','profit','settings'];
 const WORKER_DEFAULT=['purchases','sales','cashbook'];
 const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
+/* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
+const NAV_GROUPS=[
+  {tag:'Overview', ic:'📊', items:[
+    {v:'dashboard', ic:'📊', lab:'Dashboard'} ]},
+  {tag:'Buy & Stock', ic:'📦', items:[
+    {v:'purchases', ic:'📥', lab:'Purchases'},
+    {v:'inventory', ic:'📦', lab:'Inventory'},
+    {v:'products',  ic:'🏷️', lab:'Products'},
+    {v:'compare',   ic:'🔎', lab:'Price Compare'} ]},
+  {tag:'Sell & Bill', ic:'🧾', items:[
+    {v:'sales',    ic:'🧾', lab:'Sales & Billing'},
+    {v:'payments', ic:'💵', lab:'Payments'} ]},
+  {tag:'Cash & Cards', ic:'💳', items:[
+    {v:'cashbook', ic:'🧰', lab:'Cash Book'},
+    {v:'cards',    ic:'💳', lab:'Credit Cards', owner:true} ]},
+  {tag:'Management', ic:'🛠️', owner:true, items:[
+    {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
+    {v:'profit',    ic:'💰', lab:'Profit & Reports', owner:true},
+    {v:'settings',  ic:'⚙️', lab:'Settings'} ]},
+];
+function navGroupOf(v){ return NAV_GROUPS.findIndex(g=>g.items.some(it=>it.v===v)); }
 
 /* =========================================================
    SUPABASE CLOUD SYNC  (single shared JSON row)
@@ -792,7 +815,24 @@ function dataList(id,arr){ return `<datalist id="${id}">${arr.map(v=>`<option va
 /* ---- roles & permissions (ALL_VIEWS/WORKER_DEFAULT/VIEW_LABELS declared near top, before load()) ---- */
 function userPerms(u){ if(!u)return[]; if(u.role==='owner')return ALL_VIEWS.slice(); return (u.perms&&u.perms.length)?u.perms.slice():WORKER_DEFAULT.slice(); }
 function canView(v){ if(!session)return false; if(session.role==='owner')return true; return userPerms(session).includes(v); }
-function payMethodTag(m){ return `<span class="tag ${m==='split'?'split':m}">${(m||'').toUpperCase()}</span>`; }
+/* Purchase payment methods. 'card' is the tracked credit-card charge (value kept as
+   'card' so cashbook/reports/charging keep working). The rest capture an optional or
+   mandatory reference (card number / holder name / mobile) and don't touch the wallet. */
+const PAY_METHODS=[
+  {k:'card',        label:'Credit Card',          tag:'card',   ref:null},
+  {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  refLabel:'Card number (optional)',      refKind:'numeric'},
+  {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  refLabel:'Card number (optional)',      refKind:'numeric'},
+  {k:'share_points',label:'Share Points',         tag:'points', ref:'optional',  refLabel:'Shareholder name (optional)', refKind:'text'},
+  {k:'gift',        label:'Gift Cards',           tag:'gift',   ref:'optional',  refLabel:'Gift card ref (optional)',    refKind:'text'},
+  {k:'platinum',    label:'Platinum Points',      tag:'points', ref:'mandatory', refLabel:'Card number (required)',      refKind:'numeric'},
+  {k:'diners',      label:'Diners Points',        tag:'points', ref:'mandatory', refLabel:'Card number (required)',      refKind:'numeric'},
+  {k:'happiness',   label:'Happiness Points',     tag:'points', ref:'optional',  refLabel:'Mobile number (optional)',    refKind:'tel'},
+  {k:'cash',        label:'Cash Payment',         tag:'cash',   ref:null},
+];
+const PAY_BY_KEY=Object.fromEntries(PAY_METHODS.map(m=>[m.k,m]));
+function payMethodInfo(k){ return PAY_BY_KEY[k] || {k,label:(k==='bank'?'Bank':k==='cheque'?'Cheque':k==='split'?'Split':(k||'').toUpperCase()),tag:(k==='bank'||k==='cheque')?'bank':(k==='split'?'split':(k||''))}; }
+function normBuyMethod(m){ if(m==='credit')return 'card'; return PAY_BY_KEY[m]?m:'cash'; }
+function payMethodTag(m){ const i=payMethodInfo(m==='split'?'split':m); return `<span class="tag ${i.tag}">${(m==='split'?'SPLIT':i.label).toUpperCase()}</span>`; }
 
 /* =========================================================
    AUTH
@@ -811,7 +851,7 @@ function doLogin(){
 function enterApp(){
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
+  renderSidebar(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
 }
 /* show/hide nav + bell + bottom-nav by this user's permissions */
 function applyAccess(){
@@ -819,6 +859,8 @@ function applyAccess(){
   $$('[data-owner]').forEach(el=>el.style.display=owner?'':'none');
   $$('.nav-item[data-view]').forEach(el=>{ const v=el.dataset.view; if(v)el.style.display=canView(v)?'':'none'; });
   $$('#bottomnav button[data-view]').forEach(el=>{ const v=el.dataset.view; if(v)el.style.display=canView(v)?'':'none'; });
+  // hide any category header whose items are all hidden for this user
+  $$('.nav-group').forEach(g=>{ const anyVisible=[...g.querySelectorAll('.nav-item[data-view]')].some(el=>el.style.display!=='none'); g.style.display=anyVisible?'':'none'; });
   renderWalletBar();
 }
 function renderWalletBar(){
@@ -852,10 +894,25 @@ function setTheme(t){ S().theme=t; save(); applyTheme(); if($('.nav-item.active'
    ROUTER
    ========================================================= */
 const views={};
+/* build the grouped, collapsible sidebar from NAV_GROUPS (menu → sub-menu) */
+function renderSidebar(){
+  const host=$('#navList'); if(!host)return;
+  host.innerHTML=NAV_GROUPS.map((g,gi)=>{
+    const items=g.items.map(it=>`<div class="nav-item" data-view="${it.v}" ${it.owner?'data-owner':''} onclick="go('${it.v}')">
+        <span class="ico">${it.ic}</span> ${it.lab}${it.badge?` <span class="nav-badge hidden" id="${it.badge}"></span>`:''}</div>`).join('');
+    return `<div class="nav-group" data-grp="${gi}" ${g.owner?'data-owner':''}>
+      <button type="button" class="nav-grouphead" onclick="toggleNavGroup(${gi})">
+        <span class="ng-ic">${g.ic}</span><span class="ng-lab">${g.tag}</span><span class="ng-caret">▾</span></button>
+      <div class="nav-groupbody">${items}</div></div>`;
+  }).join('');
+}
+function toggleNavGroup(gi){ const el=$(`.nav-group[data-grp="${gi}"]`); if(el)el.classList.toggle('collapsed'); }
+function expandActiveGroup(v){ const gi=navGroupOf(v); if(gi<0)return; const el=$(`.nav-group[data-grp="${gi}"]`); if(el)el.classList.remove('collapsed'); }
 function go(v){
   if(!canView(v)) v = canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales');
   $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
   $$('#bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
+  expandActiveGroup(v);
   $('#main').innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
   if(window.innerWidth<=860) closeNav();
@@ -869,21 +926,13 @@ function emptyBox(ic,t,s){ return `<div class="empty"><div class="big">${ic}</di
    DASHBOARD
    ========================================================= */
 function dashTiles(){
-  const owner=isOwner();
-  const defs=[
-    {v:'purchases',ic:'📥',lab:'Purchases'},
-    {v:'sales',ic:'🧾',lab:'Sales & Billing'},
-    {v:'inventory',ic:'📦',lab:'Inventory'},
-    {v:'cards',ic:'💳',lab:'Credit Cards'},
-    {v:'payments',ic:'💵',lab:'Payments'},
-    {v:'cashbook',ic:'🧰',lab:'Cash Book'},
-    {v:'products',ic:'🏷️',lab:'Products'},
-    {v:'compare',ic:'🔎',lab:'Price Compare'},
-    {v:'approvals',ic:'📝',lab:'Approvals'},
-    {v:'profit',ic:'💰',lab:'Profit & Reports'},
-    {v:'settings',ic:'⚙️',lab:'Settings'}
-  ].filter(t=>canView(t.v));
-  return `<div class="tiles">${defs.map(t=>`<div class="tile" onclick="go('${t.v}')"><div class="tic">${t.ic}</div><div class="tlab">${t.lab}</div></div>`).join('')}</div>`;
+  // one categorized block per menu group (skip Overview — we're already on the dashboard)
+  return NAV_GROUPS.filter(g=>g.tag!=='Overview').map(g=>{
+    const items=g.items.filter(t=>canView(t.v));
+    if(!items.length) return '';
+    return `<div class="tilegroup"><div class="tilegroup-head"><span>${g.ic}</span> ${g.tag}</div>
+      <div class="tiles">${items.map(t=>`<div class="tile" onclick="go('${t.v}')"><div class="tic">${t.ic}</div><div class="tlab">${t.lab}</div></div>`).join('')}</div></div>`;
+  }).join('');
 }
 function dashInvProfit(eng){
   const rows=DB.products.map(p=>{ const qty=stockOf(p.id,eng), avg=avgCostOf(p.id,eng), val=(qty>0?qty:0)*avg;
@@ -1094,8 +1143,8 @@ function newPurchase(id,prefillPid){
   _buyEditId=id||'';
   buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||'',qty:1,rate:''}];
   if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
-  buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:pm.method||'cash',cardId:pm.cardId||'',cardRef:pm.cardId?'':'',amount:pm.amount}))
-    : [{method:'cash',cardId:'',amount:''}];
+  buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:normBuyMethod(pm.method),cardId:pm.cardId||'',ref:pm.payRef||'',amount:pm.amount}))
+    : [{method:'card',cardId:'',ref:'',amount:''}];
   renderPurchaseModal();
 }
 function renderPurchaseModal(){
@@ -1158,24 +1207,33 @@ function buyNetTotal(){ return Math.max(0, buyItemsTotal()-buyDiscount()); }
 /* available on a card for THIS purchase (adds back this purchase's existing charges when editing) */
 function cardAvailForSplit(card){ let adj=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId) adj += (t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return cardAvailable(card)+adj; }
 function splitHintText(s){ const c=s.cardId?cardById(s.cardId):null; if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
-  const av=cardAvailForSplit(c), amt=+s.amount||0;
-  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${amt>av+1e-6?` · <span style="color:var(--red)">⚠ exceeds available balance</span>`:''}`; }
+  const av=cardAvailForSplit(c), amt=+s.amount||0, over=amt-av;
+  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${over>1e-6?` · <span style="color:var(--red)">⚠ goes negative — pay ${money(over)} before midnight 🌙</span>`:''}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
 function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=activeCards();
-  host.innerHTML=buySplits.map((s,i)=>`<div class="split-row">
-    <select onchange="buySplits[${i}].method=this.value;renderBuySplits()">
-      <option value="cash" ${s.method==='cash'?'selected':''}>Cash</option>
-      <option value="bank" ${s.method==='bank'?'selected':''}>Bank</option>
-      <option value="card" ${s.method==='card'?'selected':''}>Card</option></select>
-    ${s.method==='card' ? `<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`
-      : `<div style="color:var(--muted2);font-size:12px;align-self:center">${s.method==='bank'?'Bank transfer':'Cash'}</div>`}
+  host.innerHTML=buySplits.map((s,i)=>{
+    const info=payMethodInfo(s.method);
+    const opts=PAY_METHODS.map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
+    let mid;
+    if(s.method==='card'){
+      mid=`<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`;
+    } else if(info.ref){
+      const req=info.ref==='mandatory';
+      mid=`<input type="text" ${info.refKind==='numeric'?'inputmode="numeric"':info.refKind==='tel'?'inputmode="tel"':''} value="${esc(s.ref||'')}" placeholder="${esc(info.refLabel)}${req?' *':''}" oninput="buySplits[${i}].ref=this.value" style="${req&&!(s.ref||'').trim()?'border-color:var(--amber)':''}">`;
+    } else {
+      mid=`<div style="color:var(--muted2);font-size:12px;align-self:center">Cash out of wallet</div>`;
+    }
+    return `<div class="split-row">
+    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';renderBuySplits()">${opts}</select>
+    ${mid}
     <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal()">
     <button class="li-x" onclick="buySplits.splice(${i},1);renderBuySplits()">✕</button>
-  </div>${s.method==='card'?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}`).join('');
+  </div>${s.method==='card'?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}`;
+  }).join('');
   buyCalcTotal();
 }
-function addBuySplit(){ buySplits.push({method:'cash',cardId:'',amount:''}); renderBuySplits(); }
+function addBuySplit(){ buySplits.push({method:'card',cardId:'',ref:'',amount:''}); renderBuySplits(); }
 function buySplitCardPick(i,val){ if(val==='__new'){ quickAddCardFromPurchase(i); return; } buySplits[i].cardId=val; buyCalcTotal(); }
 function quickAddCardFromPurchase(i){
   openModal('Add Card',`
@@ -1229,15 +1287,20 @@ function savePurchase(id){
   const tot=Math.max(0,gross-discount);
   const rawSplits=buySplits.filter(s=>+s.amount>0);
   if(rawSplits.some(s=>s.method==='card' && (DB.cards&&DB.cards.length) && !s.cardId))return toast('Pick a card for each card payment',1);
+  // methods that require a reference (e.g. Platinum / Diners card number) must have one
+  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); return info.ref==='mandatory' && !(s.ref||'').trim(); });
+  if(missingRef){ const info=payMethodInfo(missingRef.method); return toast(`${info.label}: ${info.refLabel.replace(' (required)','')} is required`,1); }
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
-  const splits=rawSplits.map(s=>({method:s.method,cardId:s.method==='card'?(s.cardId||''):'',amount:+s.amount}));
-  // a card cannot be charged beyond its available balance
+  const splits=rawSplits.map(s=>({method:s.method,cardId:s.method==='card'?(s.cardId||''):'',ref:s.method==='card'?'':(s.ref||'').trim(),amount:+s.amount}));
+  // Cards MAY go negative — we don't block. Track which cards overshoot so we can warn
+  // that the negative amount has to be cleared before midnight.
   const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+s.amount; });
-  for(const cid in cardReq){ const c=cardById(cid); if(c){ const av=cardAvailForSplit(c); if(cardReq[cid]>av+1e-6)return toast(`${c.name}: ${money(cardReq[cid])} exceeds available balance ${money(av)}`,1); } }
+  const negWarn=[]; for(const cid in cardReq){ const c=cardById(cid); if(c){ const av=cardAvailForSplit(c); if(cardReq[cid]>av+1e-6) negWarn.push({name:c.name, over:cardReq[cid]-av}); } }
   let paid=splits.reduce((a,s)=>a+s.amount,0); if(paid>tot+0.01)paid=tot;
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
-  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',ref:'Initial'}));
+  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',payRef:s.ref||'',ref:'Initial'}));
   const data={date,supplier,items,discount,payment:methodTag,paid,payments};
+  const negMsg=negWarn.length?(' · 🌙 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay before midnight'):'';
   if(id){ // EDIT existing — confirm; workers route to admin approval
     const rec=DB.purchases.find(x=>x.id===id); const ref=rec?rec.ref:'';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
@@ -1250,7 +1313,7 @@ function savePurchase(id){
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
   save();closeModal();renderPurchases();renderBell();
-  toast(charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved');
+  toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
 }
 function delPurchase(id){
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
@@ -1684,6 +1747,8 @@ function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.roun
 function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
   .filter(r=>r.out>0.005 && r.dleft<=10).sort((a,b)=>a.dleft-b.dleft); }
 function lowBalanceCards(){ return (DB.cards||[]).filter(c=>{ const al=+c.balanceLimitAlert||0; return al>0 && cardAvailable(c)<=al; }); }
+/* cards charged past their limit — the negative amount must be cleared before midnight */
+function negativeCards(){ return (DB.cards||[]).map(c=>({c,av:cardAvailable(c)})).filter(x=>x.av<-0.005).sort((a,b)=>a.av-b.av); }
 function recentActivity(n){ const a=[];
   DB.sales.forEach(s=>a.push({t:'sale',date:s.date,ref:s.invoiceNo,name:s.customer||'Walk-in',amt:s.total}));
   DB.purchases.forEach(p=>a.push({t:'purchase',date:p.date,ref:p.ref,name:p.supplier||'—',amt:purchaseTotal(p)}));
@@ -1793,15 +1858,21 @@ function saveAdjust(id){
 }
 
 /* ---- bell reminders ---- */
-function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length;
+function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length+negativeCards().length;
   if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
 function toggleBell(e){ if(e)e.stopPropagation(); const pop=$('#bellPop'); if(!pop)return;
   if(pop.classList.contains('hidden')){ renderBellPop(); pop.classList.remove('hidden'); } else pop.classList.add('hidden'); }
 function closeBell(){ $('#bellPop')?.classList.add('hidden'); }
 function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return;
-  const due=cardReminders(), low=lowBalanceCards(), act=recentActivity(5);
+  const due=cardReminders(), low=lowBalanceCards(), neg=negativeCards(), act=recentActivity(5);
   const sec=(t)=>`<div class="bh" style="background:var(--panel2)"><span>${t}</span></div>`;
   let html='';
+  /* 0) Cards gone negative — URGENT, must be cleared before midnight */
+  if(neg.length){ html+=sec('🌙 Pay before midnight');
+    html+=neg.map(x=>`<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${x.c.id}'),40)">
+      <span class="d blink" style="background:var(--red)"></span>
+      <div style="flex:1"><b>${esc(cardLabel(x.c))}</b><div style="color:var(--muted);font-size:12px">Over limit — clear before midnight tonight</div></div>
+      <div style="text-align:right;font-weight:800;color:var(--red)">− ${money(Math.abs(x.av))}</div></div>`).join(''); }
   /* 1) Bill due reminders — TOP, soonest first, paid cards excluded */
   html+=sec('🔔 Bill due reminders');
   html+= due.length? due.map(r=>{ const warn=r.dleft<=1; return `<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${r.c.id}'),40)">
@@ -2069,11 +2140,18 @@ function editCard(id){
       <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}"></div>
     </div>
     <div class="field"><label>Status</label><select id="c_status"><option value="active" ${c.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${c.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
-    ${id?'':`<div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="amount already owed on this card, if any"></div>`}`,
+    ${id?'':`<div class="grid2">
+      <div class="field"><label>Available Balance (${S().currency})</label><input id="c_avail" type="number" step="any" value="" placeholder="usable balance right now — blank = full limit" oninput="cAvailSync('avail')"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">How much you can currently spend on this card.</div></div>
+      <div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="or enter amount already owed" oninput="cAvailSync('open')"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Auto-filled from available &amp; limit.</div></div>
+    </div>`}`,
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme);
 }
+/* keep Available Balance and Opening Outstanding mirrored via the monthly limit */
+function cAvailSync(src){ const limEl=$('#c_limit'),avEl=$('#c_avail'),opEl=$('#c_open'); if(!limEl||!avEl||!opEl)return; const lim=+limEl.value||0;
+  if(src==='avail'){ opEl.value = avEl.value==='' ? '' : (Math.round((lim-(+avEl.value||0))*100)/100); }
+  else{ avEl.value = opEl.value==='' ? '' : (Math.round((lim-(+opEl.value||0))*100)/100); } }
 function saveCard(id){
   const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
@@ -2081,7 +2159,7 @@ function saveCard(id){
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
   if(id){ Object.assign(cardById(id),data); }
-  else{ data.openingOutstanding=+$('#c_open').value||0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
+  else{ const availRaw=$('#c_avail').value; data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : (+$('#c_open').value||0); data.txns=[]; DB.cards.push({id:uid(),...data}); }
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
 }
 function delCard(id){
