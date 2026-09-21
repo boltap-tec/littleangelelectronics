@@ -175,17 +175,32 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .nav-sep{height:1px;background:var(--line);margin:12px 6px}
 .nav-tag{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--muted2);padding:6px 13px;font-weight:700}
 .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;min-width:19px;height:19px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
-.nav-group{margin-bottom:2px;--grp:var(--muted2)}
-.nav-grouphead{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;cursor:pointer;
-  padding:9px 13px 7px;color:var(--grp);font-size:11.5px;text-transform:uppercase;letter-spacing:1.1px;font-weight:800;transition:filter .15s;font-family:inherit}
-.nav-grouphead:hover{filter:brightness(1.15)}
-.nav-grouphead .ng-ic{font-size:14px;opacity:1}
+/* grouped sidebar: each category = a coloured icon-chip header + items hanging off a
+   coloured left rail, so sub-items clearly belong to their category */
+.nav-group{--grp:var(--muted2);margin:0 3px;padding:7px 0 9px;border-bottom:1px solid var(--line)}
+.nav-group:last-of-type{border-bottom:0}
+.nav-grouphead{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;cursor:pointer;font-family:inherit;
+  padding:6px 8px 8px;color:var(--grp);font-size:11.5px;text-transform:uppercase;letter-spacing:.9px;font-weight:800;transition:filter .15s}
+.nav-grouphead:hover{filter:brightness(1.18)}
+.nav-grouphead .ng-ic{width:28px;height:28px;flex:0 0 auto;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;
+  background:rgba(255,255,255,.06);
+  background:color-mix(in srgb,var(--grp) 22%,transparent);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--grp) 34%,transparent)}
 .nav-grouphead .ng-lab{flex:1;text-align:left}
-.nav-grouphead .ng-caret{font-size:10px;opacity:.7;transition:transform .18s;color:var(--grp)}
+.nav-grouphead .ng-caret{font-size:10px;opacity:.75;transition:transform .18s;color:var(--grp)}
 .nav-group.collapsed .ng-caret{transform:rotate(-90deg)}
 .nav-group.collapsed .nav-groupbody{display:none}
-.nav-groupbody .nav-item{padding-left:16px}
+.nav-groupbody{margin:2px 0 0 15px;padding-left:12px;display:flex;flex-direction:column;gap:2px;
+  border-left:2px solid rgba(255,255,255,.1);
+  border-left:2px solid color-mix(in srgb,var(--grp) 34%,transparent)}
+.nav-groupbody .nav-item{padding:9px 12px;border-radius:0 10px 10px 0;color:var(--muted)}
 .nav-groupbody .nav-item .ico{font-size:16px}
+.nav-groupbody .nav-item:hover{background:var(--panel);color:var(--text)}
+.nav-groupbody .nav-item.active{color:var(--text);border-color:transparent;
+  background:rgba(255,255,255,.07);
+  background:color-mix(in srgb,var(--grp) 18%,transparent);
+  box-shadow:inset 3px 0 0 var(--grp)}
 
 .main{flex:1;padding:22px;max-width:1200px;margin:0 auto;width:100%}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap}
