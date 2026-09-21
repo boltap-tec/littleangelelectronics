@@ -338,11 +338,16 @@ body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 .empty .big{font-size:34px;margin-bottom:8px;opacity:.7}
 
 .prodcell{display:flex;align-items:center;gap:11px}
-.thumb{position:relative;width:42px;height:42px;border-radius:10px;flex:0 0 auto;overflow:hidden;display:flex;align-items:center;justify-content:center;
+.thumb{position:relative;width:56px;height:56px;border-radius:13px;flex:0 0 auto;overflow:hidden;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#233457,#16233f);border:1px solid var(--line2);color:#aab8d8}
 .thumb img{width:100%;height:100%;object-fit:cover}
 .thumb svg{width:56%;height:56%}
+/* real product photos → bright white card, whole product shown (not cropped) */
+.thumb.photo{background:#fff;border-color:#e2e8f4;padding:3px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.04)}
+.thumb.photo img{object-fit:contain;border-radius:9px}
+body.light .thumb.photo{border-color:#dbe3f0}
 .thumb.lg{width:120px;height:120px;border-radius:14px}
+.thumb.lg.photo{padding:6px}
 .thumb .cdot{position:absolute;right:2px;bottom:2px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .thumb.lg .cdot{width:22px;height:22px;right:6px;bottom:6px}
 .cswatch{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);margin-top:2px}
@@ -830,11 +835,13 @@ function iconSVGtile(p){ return iconSVG(catKey(((p&&p.category)||'')+' '+((p&&p.
 function productThumb(p,cls){
   const hex=colorHexOf(p);
   const dot=hex?`<span class="cdot" style="background:${hex}"></span>`:'';
-  if(p&&p.imageUrl) return `<div class="thumb ${cls||''}"><img src="${esc(p.imageUrl)}" alt="" onerror="this.parentNode.innerHTML='${iconSVGtile(p).replace(/'/g,"\\'")}'">${dot}</div>`;
+  if(p&&p.imageUrl) return `<div class="thumb photo ${cls||''}"><img src="${esc(p.imageUrl)}" alt="" onerror="this.parentNode.classList.remove('photo');this.parentNode.innerHTML='${iconSVGtile(p).replace(/'/g,"\\'")}'">${dot}</div>`;
   if(hex){ const gl=lum(hex)>0.62?'#222c3d':'#ffffff';
     return `<div class="thumb ${cls||''}" style="background:linear-gradient(135deg,${hex},${darken(hex,.42)});border-color:${darken(hex,.5)};color:${gl}">${iconSVGtile(p)}</div>`; }
   return `<div class="thumb ${cls||''}">${iconSVGtile(p)}</div>`;
 }
+/* clickable product thumbnail (camera badge) — opens the image finder to set/change the photo */
+function productThumbEdit(p,cls){ return `<span class="thumb-edit" onclick="openImageFinder('${p.id}')" title="Click to set / change the product image">${productThumb(p,cls)}<span class="thumb-cam">📷</span></span>`; }
 function colorChip(p){ const hex=colorHexOf(p); return p&&p.color?`<div class="cswatch"><i style="background:${hex}"></i>${esc(p.color)}</div>`:''; }
 
 /* =========================================================
@@ -1041,7 +1048,7 @@ function dashInvProfit(eng){
   if(!rows.length) return emptyBox('📦','No inventory yet','Add products & purchases to see stock, cost & profit.');
   return `<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th class="num">Sold</th><th class="num">Profit / Loss</th></tr></thead>
     <tbody>${rows.map(r=>`<tr>
-      <td><div class="prodcell">${productThumb(r.p)}<span>${esc(r.p.name)}</span></div></td>
+      <td><div class="prodcell">${productThumbEdit(r.p)}<span>${esc(r.p.name)}</span></div></td>
       <td class="num">${num(r.qty)}</td><td class="num">${money(r.avg)}</td><td class="num">${money(r.val>0?r.val:0)}</td>
       <td class="num">${num(r.sold)}</td>
       <td class="num" style="color:${r.prof>=0?'var(--green)':'var(--red)'};font-weight:700">${r.prof<0?'−':''}${money(Math.abs(r.prof))}</td></tr>`).join('')}
@@ -1115,7 +1122,7 @@ function lowStockList(eng){
   const items=DB.products.map(p=>({p,q:stockOf(p.id,eng)})).filter(x=>x.q<=S().lowStockLevel).sort((a,b)=>a.q-b.q);
   if(!items.length) return emptyBox('✅','All good','No products are low on stock.');
   return `<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">In Stock</th><th>Status</th></tr></thead><tbody>
-    ${items.map(x=>`<tr><td><div class="prodcell">${productThumb(x.p)}<span>${esc(x.p.name)}</span></div></td><td class="num">${num(x.q)}</td>
+    ${items.map(x=>`<tr><td><div class="prodcell">${productThumbEdit(x.p)}<span>${esc(x.p.name)}</span></div></td><td class="num">${num(x.q)}</td>
       <td>${x.q<=0?'<span class="tag low">OUT</span>':'<span class="tag low">LOW</span>'}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -1140,7 +1147,7 @@ function renderProducts(){
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Product</th><th>Category</th><th>Unit</th><th class="num">In Stock</th><th class="num">Avg Cost</th><th></th></tr></thead>
     <tbody>${list.map(p=>{const s=stockOf(p.id,eng);return `<tr>
-      <td><div class="prodcell">${productThumb(p)}<div><b>${esc(p.name)}</b>${colorChip(p)}${p.sku?`<div style="color:var(--muted2);font-size:11.5px">${esc(p.sku)}</div>`:''}</div></div></td>
+      <td><div class="prodcell">${productThumbEdit(p)}<div><b>${esc(p.name)}</b>${colorChip(p)}${p.sku?`<div style="color:var(--muted2);font-size:11.5px">${esc(p.sku)}</div>`:''}</div></div></td>
       <td>${esc(p.category||'—')}</td><td>${esc(p.unit||'pcs')}</td>
       <td class="num">${s<=S().lowStockLevel?`<span class="tag low">${num(s)}</span>`:num(s)}</td>
       <td class="num">${money(avgCostOf(p.id,eng))}</td>
@@ -2325,7 +2332,7 @@ function setInvSort(v){ _invSort=v; renderInventory(); }
 function invRow(x){
   const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
   return `<tr>
-    <td><div class="prodcell"><span class="thumb-edit" onclick="openImageFinder('${x.p.id}')" title="Click to auto-find / change the product image">${productThumb(x.p)}<span class="thumb-cam">📷</span></span><b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history">${esc(x.p.name)}</b></div></td>
+    <td><div class="prodcell">${productThumbEdit(x.p)}<b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history">${esc(x.p.name)}</b></div></td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
     <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
@@ -2780,7 +2787,7 @@ function renderCompare(){
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Product</th><th class="num">Your Avg Cost</th><th class="num">Best Competitor</th><th>Where</th><th class="num">Logged</th><th></th></tr></thead>
     <tbody>${list.map(p=>{const avg=avgCostOf(p.id,eng),best=bestComp(p);return `<tr>
-      <td><div class="prodcell">${productThumb(p)}<span>${esc(p.name)}</span></div></td>
+      <td><div class="prodcell">${productThumbEdit(p)}<span>${esc(p.name)}</span></div></td>
       <td class="num">${money(avg)}</td>
       <td class="num">${best?`<b style="color:${+best.price<avg?'var(--green)':'var(--text)'}">${money(best.price)}</b>`:'—'}</td>
       <td>${best?esc((best.store||'—')+(best.emirate?' · '+best.emirate:'')):'—'}</td>
