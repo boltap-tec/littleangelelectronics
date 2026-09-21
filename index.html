@@ -1046,12 +1046,15 @@ function dashInvProfit(eng){
     .filter(r=>r.qty>0||r.sold>0)
     .sort((a,b)=>b.prof-a.prof);
   if(!rows.length) return emptyBox('📦','No inventory yet','Add products & purchases to see stock, cost & profit.');
-  return `<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th class="num">Sold</th><th class="num">Profit / Loss</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr>
+  return `<div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Stock</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th class="num">Sold</th><th class="num">Profit / Loss</th><th></th></tr></thead>
+    <tbody>${rows.map(r=>{
+      const acts=`${(canView('sales')&&r.qty>0)?`<button class="mini-btn gold" onclick="event.stopPropagation();newSale('','${r.p.id}')">🧾 Sell</button>`:''}${canView('purchases')?`<button class="mini-btn" onclick="event.stopPropagation();newPurchase('','${r.p.id}')">＋ Buy</button>`:''}`;
+      return `<tr>
       <td><div class="prodcell">${productThumbEdit(r.p)}<span>${esc(r.p.name)}</span></div></td>
       <td class="num">${num(r.qty)}</td><td class="num">${money(r.avg)}</td><td class="num">${money(r.val>0?r.val:0)}</td>
       <td class="num">${num(r.sold)}</td>
-      <td class="num" style="color:${r.prof>=0?'var(--green)':'var(--red)'};font-weight:700">${r.prof<0?'−':''}${money(Math.abs(r.prof))}</td></tr>`).join('')}
+      <td class="num" style="color:${r.prof>=0?'var(--green)':'var(--red)'};font-weight:700">${r.prof<0?'−':''}${money(Math.abs(r.prof))}</td>
+      <td class="num" style="white-space:nowrap">${acts}</td></tr>`;}).join('')}
     </tbody></table></div>`;
 }
 views.dashboard=function(){
