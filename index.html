@@ -138,6 +138,14 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .field input,.field select,.field textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--text);
   padding:13px 14px;border-radius:12px;font-size:15px;outline:none;transition:.15s}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--brand2);box-shadow:0 0 0 3px rgba(99,102,241,.18)}
+/* mandatory-field highlighting (bright, so required fields are easy to spot) */
+.req-star{color:#ff6b8a;font-weight:800;margin-left:3px;font-size:1.05em}
+body.light .req-star{color:#e11d48}
+.field.req>label{color:var(--gold2)}
+.field.req>input,.field.req>select,.field.req>textarea,.li-row .rq{border-color:var(--gold)!important;box-shadow:0 0 0 1px rgba(245,179,1,.22)}
+.field.req>input:focus,.field.req>select:focus,.field.req>textarea:focus,.li-row .rq:focus{box-shadow:0 0 0 3px rgba(245,179,1,.30)!important}
+.li-head .rqh{color:var(--gold2)}
+.li-head .rqh:after{content:" *";color:#ff6b8a;font-weight:800}
 .btn{width:100%;border:none;border-radius:12px;padding:14px;font-size:15.5px;font-weight:700;cursor:pointer;color:#fff;
   background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 8px 20px rgba(99,102,241,.35);transition:.12s}
 .btn:active{transform:translateY(1px)}
@@ -1334,7 +1342,7 @@ function renderPurchaseModal(){
       <div class="field"><label>Supplier (purchaser name)</label><input id="b_sup" list="dl_sup" value="${esc(p?p.supplier||'':'')}" placeholder="e.g. Carrefour Deira">${dataList('dl_sup',allSuppliers())}</div>
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
-    <div class="line-items"><div class="li-head"><div>Product</div><div>Qty</div><div>Cost/unit</div><div>Amount</div><div></div></div><div id="b_rows"></div></div>
+    <div class="line-items"><div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Cost/unit</div><div>Amount</div><div></div></div><div id="b_rows"></div></div>
     <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addBuyRow()">＋ Add product</button><button class="mini-btn" onclick="buyNewProdToggle()">✨ New product</button></div>
     <div id="b_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
       <div class="grid3">
@@ -1362,9 +1370,9 @@ function renderBuyRows(){
   const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, bp=it.productId?avgBuyPrice(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
     return `<div class="li-row">
-      <select onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId,eng)}</select>
-      <input type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="buyItems[${i}].qty=+this.value;buyCalcTotal()">
-      <input type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
+      <select class="rq" onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId,eng)}</select>
+      <input class="rq" type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="buyItems[${i}].qty=+this.value;buyCalcTotal()">
+      <input class="rq" type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
       <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
       <button class="li-x" onclick="buyItems.splice(${i},1);renderBuyRows()">✕</button>
     </div><div class="li-hint">${it.productId?`In stock <b style="color:var(--green)">${num(st)}</b> · avg buy <b style="color:var(--gold2)">${money(bp)}</b>${last?` · last cost ${money(last)}`:''}`:'Search & pick a product (most recently stocked shown first)'}</div>`; }).join('');
@@ -1648,7 +1656,7 @@ function newSale(id,prefillPid){
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Items *</label>
     <div class="line-items" id="s_items">
-      <div class="li-head"><div>Product</div><div>Qty</div><div>Rate</div><div>Amount</div><div></div></div>
+      <div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Rate</div><div>Amount</div><div></div></div>
       <div id="s_rows"></div>
     </div>
     <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button>
@@ -1689,9 +1697,9 @@ function renderSaleRows(){
   const host=$('#s_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=saleDraft.map((it,i)=>{ const over=it.productId&&(+it.qty||0)>saleLineAvail(i,eng)+1e-9;
     return `<div class="li-row">
-    <select onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId,eng)}</select>
-    <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" class="${over?'qty-over':''}">
-    <input type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
+    <select class="rq" onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId,eng)}</select>
+    <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" class="rq ${over?'qty-over':''}">
+    <input class="rq" type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
     <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
     <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows()">✕</button>
   </div><div class="li-hint">${saleHintHtml(i,eng)}</div>`; }).join('');
@@ -3410,6 +3418,18 @@ function openModal(title,body,foot){
   $('#modalRoot').innerHTML=`<div class="modal-back" onclick="if(event.target===this)closeModal()">
     <div class="modal"><div class="modal-head"><h3>${title}</h3><button class="close-x" onclick="closeModal()">×</button></div>
     <div class="modal-body">${body}</div><div class="modal-foot">${foot||''}</div></div></div>`;
+  markRequired($('#modalRoot'));
+}
+/* highlight every field whose label ends with "*": bright star + brightened label + accented input */
+function markRequired(scope){ if(!scope)return;
+  scope.querySelectorAll('label').forEach(lab=>{
+    if(lab.dataset.rq)return;
+    if(/\*\s*$/.test(lab.textContent) && !lab.querySelector('.req-star')){
+      lab.dataset.rq='1';
+      lab.innerHTML=lab.innerHTML.replace(/\*(\s*)$/,'<span class="req-star">*</span>$1');
+      const f=lab.closest('.field'); if(f)f.classList.add('req');
+    }
+  });
 }
 function closeModal(){$('#modalRoot').innerHTML='';}
 function confirmBox(title,msg,onYes,yesLabel){
