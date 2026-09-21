@@ -348,6 +348,15 @@ body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 body.light .thumb.photo{border-color:#dbe3f0}
 .thumb.lg{width:120px;height:120px;border-radius:14px}
 .thumb.lg.photo{padding:6px}
+/* small overlapping thumbnails for multi-product rows (purchases / sales) */
+.thumb.st{width:40px;height:40px;border-radius:10px}
+.pstack{display:inline-flex;align-items:center;flex:0 0 auto}
+.pstack>*{margin-left:-13px;border:2px solid var(--panel)!important;box-shadow:0 2px 7px rgba(0,0,0,.35);transition:transform .12s ease}
+.pstack>*:first-child{margin-left:0}
+.pstack:hover>*{transform:none}
+.pstack>*:hover{transform:translateY(-2px);z-index:5}
+.pstack .more{width:40px;height:40px;border-radius:10px;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800;color:var(--muted)}
+body.light .pstack>*{border-color:#fff!important}
 .thumb .cdot{position:absolute;right:2px;bottom:2px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .thumb.lg .cdot{width:22px;height:22px;right:6px;bottom:6px}
 .cswatch{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);margin-top:2px}
@@ -842,6 +851,15 @@ function productThumb(p,cls){
 }
 /* clickable product thumbnail (camera badge) — opens the image finder to set/change the photo */
 function productThumbEdit(p,cls){ return `<span class="thumb-edit" onclick="openImageFinder('${p.id}')" title="Click to set / change the product image">${productThumb(p,cls)}<span class="thumb-cam">📷</span></span>`; }
+/* overlapping thumbnails for a line-item list: one image for a single product,
+   an overlapping cluster (first 3 + "+N") for multiple products */
+function productStack(items){
+  const prods=(items||[]).filter(it=>it&&it.productId).map(it=>productById(it.productId)).filter(Boolean);
+  if(!prods.length) return `<span class="pstack">${productThumb(null,'st')}</span>`;
+  const show=prods.slice(0,3), extra=prods.length-show.length;
+  return `<span class="pstack" title="${esc(prods.map(p=>p.name).join(', '))}">${show.map(p=>productThumb(p,'st')).join('')}${extra>0?`<span class="more">+${extra}</span>`:''}</span>`;
+}
+function itemsFirstName(items){ const f=productById(items&&items[0]&&items[0].productId); return f?f.name:'—'; }
 function colorChip(p){ const hex=colorHexOf(p); return p&&p.color?`<div class="cswatch"><i style="background:${hex}"></i>${esc(p.color)}</div>`:''; }
 
 /* =========================================================
@@ -1257,7 +1275,7 @@ function renderPurchases(){
     <thead><tr><th>Ref</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(p=>{const tot=purchaseTotal(p),its=purchaseItems(p),more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';return `<tr>
       <td><b class="rowlink" onclick="purchaseDetail('${p.id}')" title="View purchase details">${esc(p.ref)}</b></td><td>${fmtDate(p.date)}</td>
-      <td>${esc(purchaseFirstName(p))}${more}</td>
+      <td><div class="prodcell">${productStack(its)}<div><b>${esc(purchaseFirstName(p))}</b>${more}</div></div></td>
       <td class="num">${num(purchaseQty(p))}</td><td class="num"><b>${money(tot)}</b></td>
       <td>${esc(p.supplier||'—')}</td><td>${payMethodTag(p.payment||'cash')}</td>
       <td>${statusTag(tot,p.paid)}</td>
@@ -1478,11 +1496,11 @@ function renderSales(){
   const rows=[...DB.sales].sort((a,b)=>a.date<b.date?1:-1).filter(s=>s.invoiceNo.toLowerCase().includes(q)||(s.customer||'').toLowerCase().includes(q));
   if(!DB.sales.length){host.innerHTML=`<div class="panel">${emptyBox('🧾','No sales yet','Create your first sales bill.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th class="num">Items</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
+    <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Product</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(s=>{const prof=isOwner()?netOf(s)-(eng.saleCost[s.id]||0):0;return `<tr>
       <td><b class="rowlink" onclick="saleDetail('${s.id}')" title="View bill details">${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td>
       <td>${esc(s.customer||'Walk-in')}${s.custPhone?` <a href="tel:${esc((s.custPhone||'').replace(/\s+/g,''))}" onclick="event.stopPropagation()" title="Call ${esc(s.custPhone)}" style="text-decoration:none;margin-left:4px">📞</a>`:''}</td>
-      <td class="num">${s.items.length}</td><td class="num"><b>${money(s.total)}</b></td>
+      <td><div class="prodcell">${productStack(s.items)}<div><b>${esc(itemsFirstName(s.items))}</b>${s.items.length>1?` <span style="color:var(--muted2)">+${s.items.length-1} more</span>`:''}</div></div></td><td class="num"><b>${money(s.total)}</b></td>
       ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}
       <td><span class="tag ${s.payment}">${s.payment.toUpperCase()}</span></td>
       <td>${statusTag(s.total,s.paid)}</td>
