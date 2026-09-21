@@ -175,13 +175,13 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .nav-sep{height:1px;background:var(--line);margin:12px 6px}
 .nav-tag{font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--muted2);padding:6px 13px;font-weight:700}
 .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;min-width:19px;height:19px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
-.nav-group{margin-bottom:2px}
+.nav-group{margin-bottom:2px;--grp:var(--muted2)}
 .nav-grouphead{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;cursor:pointer;
-  padding:9px 13px 7px;color:var(--muted2);font-size:10.5px;text-transform:uppercase;letter-spacing:1px;font-weight:700;transition:color .15s}
-.nav-grouphead:hover{color:var(--muted)}
-.nav-grouphead .ng-ic{font-size:13px;opacity:.85;filter:grayscale(.2)}
+  padding:9px 13px 7px;color:var(--grp);font-size:11.5px;text-transform:uppercase;letter-spacing:1.1px;font-weight:800;transition:filter .15s;font-family:inherit}
+.nav-grouphead:hover{filter:brightness(1.15)}
+.nav-grouphead .ng-ic{font-size:14px;opacity:1}
 .nav-grouphead .ng-lab{flex:1;text-align:left}
-.nav-grouphead .ng-caret{font-size:10px;opacity:.65;transition:transform .18s}
+.nav-grouphead .ng-caret{font-size:10px;opacity:.7;transition:transform .18s;color:var(--grp)}
 .nav-group.collapsed .ng-caret{transform:rotate(-90deg)}
 .nav-group.collapsed .nav-groupbody{display:none}
 .nav-groupbody .nav-item{padding-left:16px}
@@ -213,6 +213,9 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .panel .psub{color:var(--muted);font-size:13px;margin:0 0 16px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+/* let grid children shrink below content width so wide tables scroll INSIDE the panel
+   instead of blowing the panel past the screen (content was hidden on mobile) */
+.grid2>*,.grid3>*{min-width:0}
 .row-actions{display:flex;gap:9px;flex-wrap:wrap}
 .note{background:var(--ambersoft);border:1px solid #7a5b1e;color:#f5cf7a;padding:11px 14px;border-radius:11px;font-size:12.5px;line-height:1.5}
 
@@ -222,6 +225,19 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .search .si{position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.6}
 
 .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
+/* horizontal-scroll affordance for wide tables (esp. mobile): edge fade + nudging arrow */
+.scrollx{position:relative}
+.scrollx .table-wrap::-webkit-scrollbar{height:8px}
+.scrollx .table-wrap::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
+.scrollx::after{content:"";position:absolute;top:1px;bottom:1px;right:1px;width:52px;pointer-events:none;z-index:2;
+  border-radius:0 var(--radius) var(--radius) 0;opacity:0;transition:opacity .2s;
+  background:linear-gradient(to left, var(--panel2), transparent)}
+.scrollx::before{content:"›";position:absolute;top:50%;right:9px;transform:translateY(-50%);z-index:3;pointer-events:none;
+  width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:800;font-size:19px;
+  box-shadow:0 3px 10px rgba(0,0,0,.4);opacity:0;transition:opacity .2s;animation:sxnudge 1.3s ease-in-out infinite}
+.scrollx.scrollable:not(.at-end)::after,.scrollx.scrollable:not(.at-end)::before{opacity:1}
+@keyframes sxnudge{0%,100%{transform:translateY(-50%) translateX(0)}50%{transform:translateY(-50%) translateX(3px)}}
 table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
 thead th{background:var(--panel2);text-align:left;padding:12px 14px;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;white-space:nowrap;position:sticky;top:0}
 tbody td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}
@@ -356,8 +372,9 @@ body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
 /* ===== dashboard quick-tiles (screenshot style) ===== */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px;margin-bottom:8px}
-.tilegroup{margin-bottom:16px}
-.tilegroup-head{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted2);font-weight:700;margin:2px 2px 10px;display:flex;align-items:center;gap:7px}
+.tilegroup{margin-bottom:16px;--grp:var(--muted2)}
+.tilegroup-head{font-size:12px;text-transform:uppercase;letter-spacing:1.1px;color:var(--grp);font-weight:800;margin:2px 2px 10px;display:flex;align-items:center;gap:8px;padding-left:10px;border-left:3px solid var(--grp);line-height:1.1}
+.tilegroup-head span{font-size:14px}
 .tile{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:15px;padding:16px 10px;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;cursor:pointer;text-align:center;transition:.14s;min-height:96px}
 .tile:hover{border-color:var(--brand);transform:translateY(-2px);box-shadow:0 10px 24px rgba(99,102,241,.18)}
@@ -510,20 +527,20 @@ const WORKER_DEFAULT=['purchases','sales','cashbook'];
 const VIEW_LABELS={dashboard:'Dashboard',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
-  {tag:'Overview', ic:'📊', items:[
+  {tag:'Overview', ic:'📊', color:'#818cf8', items:[
     {v:'dashboard', ic:'📊', lab:'Dashboard'} ]},
-  {tag:'Buy & Stock', ic:'📦', items:[
+  {tag:'Buy & Stock', ic:'📦', color:'#f5b301', items:[
     {v:'purchases', ic:'📥', lab:'Purchases'},
     {v:'inventory', ic:'📦', lab:'Inventory'},
     {v:'products',  ic:'🏷️', lab:'Products'},
     {v:'compare',   ic:'🔎', lab:'Price Compare'} ]},
-  {tag:'Sell & Bill', ic:'🧾', items:[
+  {tag:'Sell & Bill', ic:'🧾', color:'#22c55e', items:[
     {v:'sales',    ic:'🧾', lab:'Sales & Billing'},
     {v:'payments', ic:'💵', lab:'Payments'} ]},
-  {tag:'Cash & Cards', ic:'💳', items:[
+  {tag:'Cash & Cards', ic:'💳', color:'#38bdf8', items:[
     {v:'cashbook', ic:'🧰', lab:'Cash Book'},
     {v:'cards',    ic:'💳', lab:'Credit Cards', owner:true} ]},
-  {tag:'Management', ic:'🛠️', owner:true, items:[
+  {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'profit',    ic:'💰', lab:'Profit & Reports', owner:true},
     {v:'settings',  ic:'⚙️', lab:'Settings'} ]},
@@ -900,7 +917,7 @@ function renderSidebar(){
   host.innerHTML=NAV_GROUPS.map((g,gi)=>{
     const items=g.items.map(it=>`<div class="nav-item" data-view="${it.v}" ${it.owner?'data-owner':''} onclick="go('${it.v}')">
         <span class="ico">${it.ic}</span> ${it.lab}${it.badge?` <span class="nav-badge hidden" id="${it.badge}"></span>`:''}</div>`).join('');
-    return `<div class="nav-group" data-grp="${gi}" ${g.owner?'data-owner':''}>
+    return `<div class="nav-group" data-grp="${gi}" ${g.owner?'data-owner':''} style="--grp:${g.color}">
       <button type="button" class="nav-grouphead" onclick="toggleNavGroup(${gi})">
         <span class="ng-ic">${g.ic}</span><span class="ng-lab">${g.tag}</span><span class="ng-caret">▾</span></button>
       <div class="nav-groupbody">${items}</div></div>`;
@@ -930,7 +947,7 @@ function dashTiles(){
   return NAV_GROUPS.filter(g=>g.tag!=='Overview').map(g=>{
     const items=g.items.filter(t=>canView(t.v));
     if(!items.length) return '';
-    return `<div class="tilegroup"><div class="tilegroup-head"><span>${g.ic}</span> ${g.tag}</div>
+    return `<div class="tilegroup" style="--grp:${g.color}"><div class="tilegroup-head"><span>${g.ic}</span> ${g.tag}</div>
       <div class="tiles">${items.map(t=>`<div class="tile" onclick="go('${t.v}')"><div class="tic">${t.ic}</div><div class="tlab">${t.lab}</div></div>`).join('')}</div></div>`;
   }).join('');
 }
@@ -1645,6 +1662,14 @@ function printSale(id){
 /* =========================================================
    PAYMENTS (records / ledger)
    ========================================================= */
+/* toggle the scroll affordance on .scrollx wrappers when their table overflows */
+function enhanceScrollx(){
+  $$('.scrollx').forEach(sx=>{ const w=sx.querySelector('.table-wrap'); if(!w)return;
+    const upd=()=>{ sx.classList.toggle('scrollable', w.scrollWidth>w.clientWidth+2);
+      sx.classList.toggle('at-end', w.scrollLeft+w.clientWidth>=w.scrollWidth-2); };
+    upd(); if(!w._sxBound){ w._sxBound=1; w.addEventListener('scroll',upd,{passive:true}); } });
+}
+if(!window._sxResize){ window._sxResize=1; window.addEventListener('resize',()=>{ try{enhanceScrollx();}catch(e){} }); }
 views.payments=function(){
   return `
   <div class="page-head"><div><h2>Payments</h2><p>Money in from sales, money out for purchases, and outstanding credit — cash, card & bank.</p></div></div>
@@ -1667,17 +1692,17 @@ function renderPayments(){
     <div class="stat red"><span class="ic">📉</span><div class="label">Payables</div><div class="val">${money(payl)}</div><div class="foot">To pay suppliers</div></div>`;
 
   const recvRows=DB.sales.filter(s=>s.total-(s.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
-  $('#recvList').innerHTML=recvRows.length?`<div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
+  $('#recvList').innerHTML=recvRows.length?`<div class="scrollx"><div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
     <tbody>${recvRows.map(s=>`<tr><td><b>${esc(s.invoiceNo)}</b></td><td>${esc(s.customer||'Walk-in')}</td><td class="num">${money(s.total)}</td>
       <td class="num" style="color:var(--amber)">${money(s.total-(s.paid||0))}</td>
-      <td class="num"><button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button></td></tr>`).join('')}</tbody></table></div>`
+      <td class="num"><button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button></td></tr>`).join('')}</tbody></table></div></div>`
     :emptyBox('✅','All collected','No customer balances outstanding.');
 
   const payRows=DB.purchases.filter(p=>purchaseTotal(p)-(p.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
-  $('#payblList').innerHTML=payRows.length?`<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Supplier</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
+  $('#payblList').innerHTML=payRows.length?`<div class="scrollx"><div class="table-wrap"><table><thead><tr><th>Ref</th><th>Supplier</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
     <tbody>${payRows.map(p=>`<tr><td><b>${esc(p.ref)}</b></td><td>${esc(p.supplier||'—')}</td><td class="num">${money(purchaseTotal(p))}</td>
       <td class="num" style="color:var(--red)">${money(purchaseTotal(p)-(p.paid||0))}</td>
-      <td class="num"><button class="mini-btn gold" onclick="recordPay('purchase','${p.id}')">Pay</button></td></tr>`).join('')}</tbody></table></div>`
+      <td class="num"><button class="mini-btn gold" onclick="recordPay('purchase','${p.id}')">Pay</button></td></tr>`).join('')}</tbody></table></div></div>`
     :emptyBox('✅','All settled','No supplier balances outstanding.');
 
   const led=[];
@@ -1685,12 +1710,13 @@ function renderPayments(){
   DB.purchases.forEach(p=>(p.payments||[]).forEach(pm=>led.push({date:pm.date,type:'OUT',party:p.supplier||'—',doc:p.ref,method:pm.method,amount:pm.amount})));
   led.sort((a,b)=>a.date<b.date?1:-1);
   const show=led.slice(0,40);
-  $('#ledgerList').innerHTML=show.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>Party</th><th>Method</th><th class="num">Amount</th></tr></thead>
+  $('#ledgerList').innerHTML=show.length?`<div class="scrollx"><div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>Party</th><th>Method</th><th class="num">Amount</th></tr></thead>
     <tbody>${show.map(l=>`<tr><td>${fmtDate(l.date)}</td>
       <td><span class="tag ${l.type==='IN'?'paid':'due'}">${l.type==='IN'?'IN':'OUT'}</span></td>
-      <td>${esc(l.doc)}</td><td>${esc(l.party)}</td><td><span class="tag ${l.method}">${(l.method||'cash').toUpperCase()}</span></td>
-      <td class="num" style="color:${l.type==='IN'?'var(--green)':'var(--red)'}">${l.type==='IN'?'+':'−'} ${money(l.amount)}</td></tr>`).join('')}</tbody></table></div>`
+      <td>${esc(l.doc)}</td><td>${esc(l.party)}</td><td>${payMethodTag(l.method)}</td>
+      <td class="num" style="color:${l.type==='IN'?'var(--green)':'var(--red)'}">${l.type==='IN'?'+':'−'} ${money(l.amount)}</td></tr>`).join('')}</tbody></table></div></div>`
     :emptyBox('🧾','No payments yet','Payments will appear here as you record sales & purchases.');
+  enhanceScrollx();
 }
 function recordPay(kind,id){
   const rec = kind==='sale'? DB.sales.find(s=>s.id===id) : DB.purchases.find(p=>p.id===id);
