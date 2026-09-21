@@ -253,6 +253,15 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
   box-shadow:0 3px 10px rgba(0,0,0,.4);opacity:0;transition:opacity .2s;animation:sxnudge 1.3s ease-in-out infinite}
 .scrollx.scrollable:not(.at-end)::after,.scrollx.scrollable:not(.at-end)::before{opacity:1}
 @keyframes sxnudge{0%,100%{transform:translateY(-50%) translateX(0)}50%{transform:translateY(-50%) translateX(3px)}}
+/* click-to-set product image (inventory) */
+.thumb-edit{position:relative;cursor:pointer;flex:0 0 auto;line-height:0}
+.thumb-edit .thumb-cam{position:absolute;right:-4px;bottom:-4px;width:19px;height:19px;border-radius:50%;background:var(--brand);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);border:2px solid var(--panel)}
+.thumb-edit:hover{filter:brightness(1.06)}
+.imgfind-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:9px}
+.imgfind-grid img{width:100%;height:86px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px;cursor:pointer;padding:4px;transition:transform .12s,border-color .12s}
+.imgfind-grid img:hover{transform:translateY(-2px);border-color:var(--brand)}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid var(--line2);border-top-color:var(--brand);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
 table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
 thead th{background:var(--panel2);text-align:left;padding:12px 14px;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;white-space:nowrap;position:sticky;top:0}
 tbody td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}
@@ -641,6 +650,7 @@ function seed(){
       showTrn:true, showPhone:true, showEmail:false, showTerms:true, showLogo:true,
       lowStockLevel:3,
       avgWindowN:0, avgWindowUnit:'all',
+      imgApiKey:'', imgCseId:'',
       theme:'dark'
     }
   };
@@ -2238,7 +2248,7 @@ function setInvSort(v){ _invSort=v; renderInventory(); }
 function invRow(x){
   const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
   return `<tr>
-    <td><div class="prodcell">${productThumb(x.p)}<b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history">${esc(x.p.name)}</b></div></td>
+    <td><div class="prodcell"><span class="thumb-edit" onclick="openImageFinder('${x.p.id}')" title="Click to auto-find / change the product image">${productThumb(x.p)}<span class="thumb-cam">📷</span></span><b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history">${esc(x.p.name)}</b></div></td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
     <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
@@ -2246,6 +2256,69 @@ function invRow(x){
     <td class="num" style="white-space:nowrap">${acts}</td></tr>`;
 }
 const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
+
+/* ========= AUTO PRODUCT IMAGE (click a thumbnail → find & set) =========
+   Free by default via Wikipedia (no API key). If a Google Programmable
+   Search key + engine id are set in Settings, those results are added too. */
+let _imgCands=[];
+async function fetchImageCandidates(name){
+  const out=[], q=(name||'').trim(); if(!q)return out; const st=S();
+  // 1) Google Custom Search image results (optional — better coverage)
+  if(st.imgApiKey && st.imgCseId){
+    try{ const r=await fetch(`https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(st.imgApiKey)}&cx=${encodeURIComponent(st.imgCseId)}&searchType=image&num=8&safe=active&q=${encodeURIComponent(q)}`);
+      if(r.ok){ const d=await r.json(); (d.items||[]).forEach(it=>{ const full=it.link, thumb=(it.image&&it.image.thumbnailLink)||it.link; if(full)out.push({thumb,full}); }); } }catch(e){}
+  }
+  // 2) Wikipedia (keyless, CORS-friendly) — try full name, then a trimmed name
+  const tries=[q]; const short=q.split(/[–—\-,(]/)[0].trim(); if(short && short!==q)tries.push(short);
+  for(const t of tries){
+    try{ const r=await fetch(`https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(t)}&limit=6`);
+      if(r.ok){ const d=await r.json(); (d.pages||[]).forEach(p=>{ if(p.thumbnail&&p.thumbnail.url){ const big=('https:'+p.thumbnail.url).replace(/\/\d+px-/,'/320px-'); out.push({thumb:big,full:big}); } }); }
+    }catch(e){}
+    if(out.length)break;
+  }
+  const seen=new Set(); return out.filter(c=>{ if(seen.has(c.full))return false; seen.add(c.full); return true; });
+}
+function openImageFinder(pid){
+  const p=productById(pid); if(!p)return; _imgCands=[];
+  const gimg=`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(p.name)}`;
+  openModal('📷 Product Image',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13.5px">Auto-searching the web for <b style="color:var(--text)">${esc(p.name)}</b>. Click an image to use it.</p>
+    <div id="imgfind_grid" style="min-height:96px;display:flex;align-items:center;justify-content:center;color:var(--muted);gap:9px"><span class="spin"></span> Searching…</div>
+    <div class="field" style="margin-top:14px"><label>Or paste an image URL</label><input id="imgfind_url" placeholder="https://… (right-click an image → Copy image address)" value="${esc(p.imageUrl||'')}"></div>
+    <div style="font-size:12px;color:var(--muted2);margin-top:2px">Nothing good? <a href="${gimg}" target="_blank" rel="noopener">Open Google Images ↗</a>, copy an image address and paste it above.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     ${p.imageUrl?`<button class="btn-sm btn-red" onclick="setProductImage('${pid}','')">Remove image</button>`:''}
+     <button class="btn-sm" onclick="setProductImage('${pid}',($('#imgfind_url').value||'').trim())">Use this URL</button>`);
+  fetchImageCandidates(p.name).then(cands=>{ _imgCands=cands; const grid=$('#imgfind_grid'); if(!grid)return;
+    if(!cands.length){ grid.style.display='block'; grid.innerHTML=`<div style="color:var(--muted);font-size:13px">No image found automatically — paste a URL below, or open Google Images.</div>`; return; }
+    grid.style.display='block'; grid.className='imgfind-grid';
+    grid.innerHTML=cands.map((c,i)=>`<img src="${esc(c.thumb)}" loading="lazy" title="Use this image" onclick="pickImgCand('${pid}',${i})" onerror="this.remove()">`).join('');
+  }).catch(()=>{ const grid=$('#imgfind_grid'); if(grid){grid.style.display='block';grid.innerHTML='<div style="color:var(--red);font-size:13px">Search failed — paste a URL below instead.</div>';} });
+}
+/* fetch a remote image and shrink it to a small self-contained thumbnail (JPEG data URI)
+   so the stored image doesn't depend on the source staying online / allowing hotlinks */
+async function urlToThumb(url,max){ max=max||400;
+  const blob=await (await fetch(url,{mode:'cors'})).blob();
+  if(!/^image\//.test(blob.type))throw new Error('not an image');
+  const o=URL.createObjectURL(blob);
+  try{ const im=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('decode')); i.src=o; });
+    const sc=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight));
+    const c=document.createElement('canvas'); c.width=Math.round(im.naturalWidth*sc)||1; c.height=Math.round(im.naturalHeight*sc)||1;
+    const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(im,0,0,c.width,c.height);
+    return c.toDataURL('image/jpeg',0.82);
+  } finally { URL.revokeObjectURL(o); }
+}
+async function pickImgCand(pid,i){ const c=_imgCands[i]; if(!c)return;
+  const grid=$('#imgfind_grid'); if(grid){ grid.className=''; grid.style.display='flex'; grid.innerHTML='<span class="spin"></span> &nbsp;Saving image…'; }
+  let val=c.full; try{ val=await urlToThumb(c.full); }catch(e){ /* blocked → keep the remote URL as-is */ }
+  setProductImage(pid,val);
+}
+function setProductImage(pid,url){
+  const p=productById(pid); if(!p)return; p.imageUrl=url||''; save(); closeModal();
+  toast(url?'Product image updated':'Image removed');
+  const v=$('.nav-item.active')?.dataset.view;
+  if(v==='inventory')renderInventory(); else if(v==='products'&&typeof renderProducts==='function')renderProducts();
+}
 
 /* =========================================================
    DETAIL VIEWS — click a product / invoice / purchase ref
@@ -2825,6 +2898,15 @@ views.settings=function(){
   <div class="panel"><h3>👥 Users &amp; Roles</h3><p class="psub">Admin/owner only. Create owners & workers, set their phone, PIN, role and which screens a worker can open.</p>
     <div id="usersList"></div><button class="btn-sm" style="margin-top:12px" onclick="editUser()">＋ Add User</button></div>`:''}
   <div class="panel">
+    <h3>🖼️ Auto Product Images</h3><p class="psub">In Inventory, click any product's photo to auto-search the web and set its image. Works free out of the box (Wikipedia). For much better coverage, add a free Google image-search key below.</p>
+    <div class="grid2">
+      <div class="field"><label>Google API Key <span style="color:var(--muted2)">(optional)</span></label><input id="st_imgkey" value="${esc(st.imgApiKey||'')}" placeholder="AIza… — from Google Cloud Console" autocomplete="off"></div>
+      <div class="field"><label>Search Engine ID (cx) <span style="color:var(--muted2)">(optional)</span></label><input id="st_imgcx" value="${esc(st.imgCseId||'')}" placeholder="from programmablesearchengine.google.com" autocomplete="off"></div>
+    </div>
+    <div style="color:var(--muted2);font-size:11.5px;margin:2px 0 12px">Create a Programmable Search Engine (whole web + image search on) and an API key — free 100 searches/day. Leave blank to use the built-in free Wikipedia search.</div>
+    <button class="btn-sm" onclick="saveSettings('imgsearch')">Save Image Search</button>
+  </div>
+  <div class="panel">
     <h3>💾 Backup &amp; Restore</h3><p class="psub">Data is stored on this device. Export a backup to move it to another device or keep it safe.</p>
     <div class="note" style="margin-bottom:14px">Future plan: GitHub + Vercel hosting + Supabase (free 500 MB) for shared multi-device data. Product photos are kept as URLs/small thumbnails so you stay well under 500 MB. Ask to enable the cloud version when ready.</div>
     <div class="row-actions">
@@ -2852,6 +2934,8 @@ function saveSettings(which){
     st.tagline=$('#st_tag').value.trim(); st.city=$('#st_city').value.trim();
     st.address=$('#st_addr').value.trim(); st.phone=$('#st_phone').value.trim(); st.email=$('#st_email').value.trim(); st.trn=$('#st_trn').value.trim();
     st.logoUrl=$('#st_logo').value.trim(); applyBrand();
+  } else if(which==='imgsearch'){
+    st.imgApiKey=$('#st_imgkey').value.trim(); st.imgCseId=$('#st_imgcx').value.trim();
   } else {
     st.currency=$('#st_cur').value.trim()||'AED'; st.invoicePrefix=$('#st_prefix').value.trim()||'INV-';
     st.vatPercent=+$('#st_vat').value||0; st.footer=$('#st_footer').value.trim(); st.terms=$('#st_terms').value.trim();
