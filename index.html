@@ -210,7 +210,10 @@ body.light .req-star{color:#e11d48}
   background:color-mix(in srgb,var(--grp) 18%,transparent);
   box-shadow:inset 3px 0 0 var(--grp)}
 
-.main{flex:1;padding:22px;max-width:1200px;margin:0 auto;width:100%}
+/* min-width:0 lets this flex child shrink to the space left by the sidebar instead of
+   overflowing past the viewport (which body{overflow-x:hidden} would then clip, hiding
+   the right edge of wide tables & their scroll controls) */
+.main{flex:1;min-width:0;padding:22px;max-width:1200px;margin:0 auto;width:100%}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap}
 .page-head h2{margin:0;font-size:22px;letter-spacing:.2px}
 .page-head p{margin:5px 0 0;color:var(--muted);font-size:13.5px}
@@ -248,19 +251,32 @@ body.light .req-star{color:#e11d48}
 .search .si{position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.6}
 
 .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
-/* horizontal-scroll affordance for wide tables (esp. mobile): edge fade + nudging arrow */
+/* horizontal-scroll affordance for wide tables: edge fades + CLICKABLE arrow buttons
+   (so the right-hand action column is reachable even where drag/wheel scrolling
+   doesn't work, e.g. inside an Android WebView) */
 .scrollx{position:relative}
-.scrollx .table-wrap::-webkit-scrollbar{height:8px}
+.scrollx .table-wrap::-webkit-scrollbar{height:9px}
 .scrollx .table-wrap::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
-.scrollx::after{content:"";position:absolute;top:1px;bottom:1px;right:1px;width:52px;pointer-events:none;z-index:2;
-  border-radius:0 var(--radius) var(--radius) 0;opacity:0;transition:opacity .2s;
-  background:linear-gradient(to left, var(--panel2), transparent)}
-.scrollx::before{content:"›";position:absolute;top:50%;right:9px;transform:translateY(-50%);z-index:3;pointer-events:none;
-  width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:800;font-size:19px;
-  box-shadow:0 3px 10px rgba(0,0,0,.4);opacity:0;transition:opacity .2s;animation:sxnudge 1.3s ease-in-out infinite}
-.scrollx.scrollable:not(.at-end)::after,.scrollx.scrollable:not(.at-end)::before{opacity:1}
+.scrollx::after,.scrollx::before{content:"";position:absolute;top:1px;bottom:1px;width:56px;pointer-events:none;z-index:2;opacity:0;transition:opacity .2s}
+.scrollx::after{right:1px;border-radius:0 var(--radius) var(--radius) 0;background:linear-gradient(to left, var(--panel2), transparent)}
+.scrollx::before{left:1px;border-radius:var(--radius) 0 0 var(--radius);background:linear-gradient(to right, var(--panel2), transparent)}
+.scrollx.scrollable:not(.at-end)::after{opacity:1}
+.scrollx.scrollable:not(.at-start)::before{opacity:1}
+.sx-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:4;width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:800;color:#fff;line-height:0;padding:0;
+  background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 3px 12px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .2s,transform .12s}
+.sx-arrow:active{transform:translateY(-50%) scale(.9)}
+.sx-arrow.right{right:9px}
+.sx-arrow.left{left:9px}
+.scrollx.scrollable:not(.at-end) .sx-arrow.right{opacity:1;pointer-events:auto;animation:sxnudge 1.3s ease-in-out infinite}
+.scrollx.scrollable:not(.at-start) .sx-arrow.left{opacity:1;pointer-events:auto}
 @keyframes sxnudge{0%,100%{transform:translateY(-50%) translateX(0)}50%{transform:translateY(-50%) translateX(3px)}}
+@media(prefers-reduced-motion:reduce){.scrollx .sx-arrow.right{animation:none}}
+/* keep list-table product names from hogging the row on desktop/tablet so action columns stay in view */
+@media(min-width:861px){
+  #buyList .prodcell b,#saleList .prodcell b{display:inline-block;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+  #buyList .prodcell>div,#saleList .prodcell>div{min-width:0}
+}
 /* click-to-set product image (inventory) */
 .thumb-edit{position:relative;cursor:pointer;flex:0 0 auto;line-height:0}
 .thumb-edit .thumb-cam{position:absolute;right:-4px;bottom:-4px;width:19px;height:19px;border-radius:50%;background:var(--brand);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);border:2px solid var(--panel)}
@@ -2104,8 +2120,17 @@ function enhanceScrollx(){
     if(p && !p.classList.contains('scrollx')){ const sx=document.createElement('div'); sx.className='scrollx';
       p.insertBefore(sx, w); sx.appendChild(w); } });
   $$('.scrollx').forEach(sx=>{ const w=sx.querySelector('.table-wrap'); if(!w)return;
+    if(!sx._arrows){ sx._arrows=1; ['left','right'].forEach(dir=>{
+      const b=document.createElement('button'); b.type='button'; b.className='sx-arrow '+dir;
+      b.textContent=dir==='right'?'›':'‹'; b.setAttribute('aria-label',dir==='right'?'Scroll table right':'Scroll table left');
+      // don't let the button take focus — that makes the browser jump the whole page to it
+      b.addEventListener('mousedown',e=>e.preventDefault());
+      b.addEventListener('click',e=>{ e.preventDefault();
+        w.scrollBy({left:(dir==='right'?1:-1)*Math.max(180,w.clientWidth*0.7),behavior:'smooth'}); });
+      sx.appendChild(b); }); }
     const upd=()=>{ sx.classList.toggle('scrollable', w.scrollWidth>w.clientWidth+2);
-      sx.classList.toggle('at-end', w.scrollLeft+w.clientWidth>=w.scrollWidth-2); };
+      sx.classList.toggle('at-end', w.scrollLeft+w.clientWidth>=w.scrollWidth-2);
+      sx.classList.toggle('at-start', w.scrollLeft<=2); };
     upd(); if(!w._sxBound){ w._sxBound=1; w.addEventListener('scroll',upd,{passive:true}); } });
 }
 if(!window._sxResize){ window._sxResize=1; window.addEventListener('resize',()=>{ try{enhanceScrollx();}catch(e){} }); }
