@@ -749,6 +749,7 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
    ========================================================= */
 
 const KEY='lae_db_v1';
+const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','shop','purchases','sales','payments','cards','cashbook','inventory','products','compare','profit','settings'];
 const WORKER_DEFAULT=['shop','purchases','sales','cashbook'];
@@ -1178,6 +1179,7 @@ function doLogin(){
   session=user; $('#loginErr').textContent=''; $('#loginPass').value=''; enterApp();
 }
 function enterApp(){
+  try{ if(session)localStorage.setItem(SKEY,session.id); }catch(e){}   // remember this login across refreshes
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
   renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
@@ -1209,7 +1211,14 @@ function renderWalletPop(){ const pop=$('#walletPop'); if(!pop)return; const bal
       <button class="btn-sm btn-ghost" onclick="closeWalletPop();cashModal('in')">＋ Cash In</button>
       <button class="btn-sm" onclick="closeWalletPop();go('cashbook')">Open Cash Book</button>
     </div>`; }
-function logout(){ session=null; $('#app').style.display='none'; $('#login').style.display='flex'; $('#loginPass').value=''; closeModal(); }
+function logout(){ session=null; try{localStorage.removeItem(SKEY);}catch(e){} $('#app').style.display='none'; $('#login').style.display='flex'; $('#loginPass').value=''; closeModal(); }
+/* restore a remembered login on page load / refresh */
+function restoreSession(){
+  try{ const id=localStorage.getItem(SKEY); if(!id)return false;
+    const u=DB.users.find(x=>x.id===id); if(!u){ localStorage.removeItem(SKEY); return false; }
+    session=u; enterApp(); return true;
+  }catch(e){ return false; }
+}
 function applyBrand(){ $('#brandName').textContent=S().company; $('#brandCity').textContent=S().city; document.title='Little Angel Electronics';
   $('#topLogo').innerHTML=brandMark(30); applyTheme(); }
 function applyTheme(){ const t=S().theme, dark=t==='dark';
@@ -3660,13 +3669,15 @@ function confirmBox(title,msg,onYes,yesLabel){
 /* boot */
 applyTheme();
 $('#loginBadge').innerHTML=logoMark(58);
+restoreSession();   // keep the user logged in across refreshes
 document.addEventListener('click',e=>{ const w=$('#bellWrap'); if(w&&!w.contains(e.target))$('#bellPop')?.classList.add('hidden');
   const ww=$('#walletWrap'), wc=$('#walletChip'); if((!ww||!ww.contains(e.target))&&(!wc||!wc.contains(e.target)))$('#walletPop')?.classList.add('hidden'); });
 /* pull the shared cloud copy (if configured); refresh screen when it arrives */
 cloudPull().then(ok=>{
   if(!ok) return;
   applyTheme();
-  if(session){ applyBrand(); go($('.nav-item.active')?.dataset.view || 'dashboard'); }
+  // cloud data replaced DB — re-point the session at the fresh user record (or sign out if it's gone)
+  if(session){ const u=DB.users.find(x=>x.id===session.id); if(u){ session=u; applyBrand(); applyAccess(); go($('.nav-item.active')?.dataset.view || 'dashboard'); } else { logout(); } }
 });
 </script>
 </body>
