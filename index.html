@@ -232,7 +232,9 @@ body.light .req-star{color:#e11d48}
 .stat .val{font-size:24px;font-weight:800;margin-top:8px;letter-spacing:.3px}
 .stat .foot{font-size:12px;color:var(--muted2);margin-top:6px}
 .stat .ic{position:absolute;top:14px;right:14px;font-size:22px;opacity:.85}
-.stat.green .val{color:var(--green)} .stat.gold .val{color:var(--gold2)} .stat.blue .val{color:var(--blue)} .stat.red .val{color:#fca5a5} .stat.amber .val{color:var(--amber)}
+/* colour only the meaningful figures — green (good) & red (alert); neutral ones (limit/redeem/sales)
+   stay in the normal text colour, with a subtle coloured left-rail + icon as the only hint */
+.stat.green .val{color:var(--green)} .stat.gold .val{color:var(--text)} .stat.blue .val{color:var(--text)} .stat.red .val{color:#fca5a5} .stat.amber .val{color:var(--amber)}
 
 .panel{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:20px}
 .panel h3{margin:0 0 4px;font-size:16px}
