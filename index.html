@@ -475,6 +475,41 @@ body.light .pstack>*{border-color:#fff!important}
 @keyframes vtIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.modal-back,.modal,.li-row.row-new,.split-row.row-new,.rippling::after,.toast.show::after{animation:none}}
 
+/* ===== REPORTS: daily summary (day cards) & card statement ===== */
+.rep-day{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;transition:border-color .18s,box-shadow .18s}
+.rep-day:hover{border-color:var(--line2)}
+.rep-day.open{box-shadow:0 12px 30px rgba(0,0,0,.24)}
+.rep-dayhead{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;user-select:none}
+.rd-cal{width:46px;height:52px;flex:0 0 auto;border-radius:11px;overflow:hidden;text-align:center;border:1px solid var(--line2);background:var(--bg)}
+.rd-cal .m{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-size:10px;font-weight:800;letter-spacing:.6px;padding:3px 0;text-transform:uppercase}
+.rd-cal .d{font-size:20px;font-weight:800;line-height:1.45;color:var(--text)}
+.rep-dayhead .rd-title{min-width:0;flex:1 1 auto}
+.rep-dayhead .rd-title .t1{font-weight:800;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rep-dayhead .rd-title .t2{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rep-dayhead .rd-net{text-align:right;white-space:nowrap;flex:0 0 auto}
+.rep-dayhead .rd-net .lab{font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.rep-dayhead .rd-net .val{font-size:17px;font-weight:800}
+.rep-dayhead .rd-caret{flex:0 0 auto;color:var(--muted2);transition:transform .2s;font-size:12px}
+.rep-day.open .rd-caret{transform:rotate(180deg)}
+.rd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line)}
+.rd-kpi{background:var(--panel);padding:10px 13px}
+.rd-kpi .k{font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.rd-kpi .v{font-size:15px;font-weight:800;margin-top:3px;letter-spacing:.2px}
+.rd-kpi .s{font-size:10.5px;color:var(--muted2);margin-top:1px}
+.rep-daybody{display:none;padding:2px 16px 16px;border-top:1px solid var(--line)}
+.rep-day.open .rep-daybody{display:block}
+@media(prefers-reduced-motion:no-preference){.rep-day.open .rep-daybody{animation:revealUp .3s cubic-bezier(.22,.61,.36,1)}}
+.rep-sec{margin-top:15px}
+.rep-sec>.rsh{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 8px}
+.rep-sec>.rsh .cc{background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text);font-weight:700}
+.rep-sec>.rsh .amt{margin-left:auto;color:var(--text);font-weight:800}
+.rep-cardhead{display:flex;gap:18px;flex-wrap:wrap;align-items:stretch;margin-bottom:8px}
+.rep-cardhead .cv{width:300px;max-width:100%;flex:0 0 auto}
+.rep-cardhead .cvk{flex:1 1 260px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;align-content:start}
+.cvk .kk{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:11px 13px}
+.cvk .kk .k{font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.cvk .kk .v{font-size:16px;font-weight:800;margin-top:3px}
+
 /* ===== STAGGERED REVEAL (store grid, dashboard cards & tiles) ===== */
 .reveal{opacity:0;animation:revealUp .45s cubic-bezier(.22,.61,.36,1) forwards;animation-delay:var(--d,0ms)}
 @keyframes revealUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
@@ -753,7 +788,7 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','shop','purchases','sales','payments','cards','cashbook','inventory','products','compare','profit','settings'];
 const WORKER_DEFAULT=['shop','purchases','sales','cashbook'];
-const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',profit:'Profit & Reports',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -770,6 +805,9 @@ const NAV_GROUPS=[
   {tag:'Cash & Cards', ic:'💳', color:'#38bdf8', items:[
     {v:'cashbook', ic:'🧰', lab:'Cash Book'},
     {v:'cards',    ic:'💳', lab:'Credit Cards', owner:true} ]},
+  {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
+    {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
+    {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'profit',    ic:'💰', lab:'Profit & Reports', owner:true},
@@ -3268,6 +3306,205 @@ function renderProfit(){
     </div>
   </div>
   <div class="panel"><h3>📅 Daily Report</h3><p class="psub">Date-wise sales & purchases, split by cash and card (newest first)</p>${dailyHtml}</div>`;
+}
+
+/* =========================================================
+   REPORTS — Daily Summary (day-book) & Card Statement
+   ========================================================= */
+function fmtDayLong(d){ const p=(d||'').split('-'); if(p.length!==3)return d;
+  const dt=new Date(+p[0],+p[1]-1,+p[2]); return dt.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'short',year:'numeric'}); }
+function dayCalChip(d){ const p=(d||'').split('-'); if(p.length!==3)return '';
+  const dt=new Date(+p[0],+p[1]-1,+p[2]); const mon=dt.toLocaleDateString('en-GB',{month:'short'});
+  return `<div class="rd-cal"><div class="m">${mon}</div><div class="d">${p[2]}</div></div>`; }
+/* gather every day's invoices, purchases, cash & card activity + per-day and range totals */
+function daybookData(inR){
+  const eng=computeEngine();
+  const day={}, get=d=>day[d]||(day[d]={date:d,sales:[],purch:[],cash:[],cards:[],recvC:0,recvK:0,paidC:0,paidK:0});
+  DB.sales.forEach(s=>{ if(inR(s.date))get(s.date).sales.push(s);
+    (s.payments||[]).forEach(pm=>{ if(inR(pm.date)){ const g=get(pm.date); if(pm.method==='card')g.recvK+=+pm.amount||0; else g.recvC+=+pm.amount||0; } }); });
+  DB.purchases.forEach(p=>{ if(inR(p.date))get(p.date).purch.push(p);
+    (p.payments||[]).forEach(pm=>{ if(inR(pm.date)){ const g=get(pm.date); if(pm.method==='card')g.paidK+=+pm.amount||0; else g.paidC+=+pm.amount||0; } }); });
+  cashEntries().forEach(e=>{ if(e.date&&inR(e.date))get(e.date).cash.push(e); });
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(inR(t.date))get(t.date).cards.push({...t,card:c.name}); }));
+  const dates=Object.keys(day).sort((a,b)=>a<b?1:-1);
+  const totals={salesTotal:0,received:0,purchTotal:0,paid:0,netCash:0,profit:0,salesCount:0,purchCount:0};
+  dates.forEach(d=>{ const g=day[d];
+    g.salesTotal=g.sales.reduce((a,s)=>a+(+s.total||0),0);
+    g.profit=g.sales.reduce((a,s)=>a+(netOf(s)-(eng.saleCost[s.id]||0)),0);
+    g.purchTotal=g.purch.reduce((a,p)=>a+purchaseTotal(p),0);
+    g.received=g.recvC+g.recvK; g.paid=g.paidC+g.paidK;
+    g.cashIn=g.cash.filter(x=>x.dir==='in').reduce((a,x)=>a+x.amount,0);
+    g.cashOut=g.cash.filter(x=>x.dir==='out').reduce((a,x)=>a+x.amount,0);
+    g.netCash=g.cashIn-g.cashOut;
+    g.expenses=g.cash.filter(x=>x.cat==='expense').reduce((a,x)=>a+x.amount,0);
+    totals.salesTotal+=g.salesTotal; totals.received+=g.received; totals.purchTotal+=g.purchTotal; totals.paid+=g.paid;
+    totals.netCash+=g.netCash; totals.profit+=g.profit; totals.salesCount+=g.sales.length; totals.purchCount+=g.purch.length; });
+  return {dates,day,totals,eng};
+}
+function dayCard(g,idx,eng,owner){
+  const kpi=(k,v,s,cls)=>`<div class="rd-kpi"><div class="k">${k}</div><div class="v"${cls?` style="color:${cls}"`:''}>${v}</div>${s?`<div class="s">${s}</div>`:''}</div>`;
+  let sec='';
+  if(g.sales.length) sec+=`<div class="rep-sec"><div class="rsh">🧾 Invoices <span class="cc">${g.sales.length}</span><span class="amt">${money(g.salesTotal)}</span></div>
+    <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Invoice</th><th>Customer</th><th>Items</th><th>Method</th><th class="num">Total</th><th class="num">Received</th><th class="num">Balance</th>${owner?'<th class="num">Profit</th>':''}</tr></thead>
+    <tbody>${g.sales.map(s=>{const bal=s.total-(s.paid||0),prof=netOf(s)-(eng.saleCost[s.id]||0);return `<tr>
+      <td><b class="rowlink" onclick="saleDetail('${s.id}')">${esc(s.invoiceNo)}</b></td>
+      <td>${esc(s.customer||'Walk-in')}</td>
+      <td>${esc(itemsFirstName(s.items))}${s.items.length>1?` <span style="color:var(--muted2)">+${s.items.length-1}</span>`:''}</td>
+      <td>${payMethodTag(s.payment||'cash')}</td>
+      <td class="num"><b>${money(s.total)}</b></td>
+      <td class="num" style="color:var(--green)">${money(s.paid||0)}</td>
+      <td class="num" style="color:${bal>0.01?'var(--red)':'var(--muted2)'}">${money(bal)}</td>
+      ${owner?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}</tr>`;}).join('')}</tbody></table></div></div>`;
+  if(g.purch.length) sec+=`<div class="rep-sec"><div class="rsh">📥 Purchases <span class="cc">${g.purch.length}</span><span class="amt">${money(g.purchTotal)}</span></div>
+    <div class="table-wrap"><table style="min-width:600px"><thead><tr><th>Ref</th><th>Supplier</th><th class="num">Qty</th><th class="num">Total</th><th>Method</th><th class="num">Paid</th><th class="num">Balance</th></tr></thead>
+    <tbody>${g.purch.map(p=>{const tot=purchaseTotal(p),bal=tot-(p.paid||0);return `<tr>
+      <td><b class="rowlink" onclick="purchaseDetail('${p.id}')">${esc(p.ref)}</b></td>
+      <td>${esc(p.supplier||'—')}</td>
+      <td class="num">${num(purchaseQty(p))}</td>
+      <td class="num"><b>${money(tot)}</b></td>
+      <td>${payMethodTag(p.payment||'cash')}</td>
+      <td class="num" style="color:var(--green)">${money(p.paid||0)}</td>
+      <td class="num" style="color:${bal>0.01?'var(--red)':'var(--muted2)'}">${money(bal)}</td></tr>`;}).join('')}</tbody></table></div></div>`;
+  if(g.cash.length) sec+=`<div class="rep-sec"><div class="rsh">🧰 Cash movements <span class="cc">${g.cash.length}</span><span class="amt" style="color:${g.netCash>=0?'var(--green)':'var(--red)'}">${g.netCash>=0?'+':'−'}${money(Math.abs(g.netCash))}</span></div>
+    <div class="table-wrap"><table style="min-width:520px"><thead><tr><th>Type</th><th>Description</th><th>By</th><th class="num">In</th><th class="num">Out</th></tr></thead>
+    <tbody>${g.cash.map(e=>`<tr><td><span class="tag ${CASH_TAG[e.cat]||'bank'}">${(e.cat||'').toUpperCase()}</span></td><td>${esc(e.desc||'')}</td><td>${esc(userName(e.who))}</td>
+      <td class="num" style="color:var(--green)">${e.dir==='in'?money(e.amount):''}</td><td class="num" style="color:var(--red)">${e.dir==='out'?money(e.amount):''}</td></tr>`).join('')}</tbody></table></div></div>`;
+  if(g.cards.length) sec+=`<div class="rep-sec"><div class="rsh">💳 Card usage <span class="cc">${g.cards.length}</span></div>
+    <div class="table-wrap"><table style="min-width:480px"><thead><tr><th>Card</th><th>Type</th><th>Note</th><th class="num">Amount</th></tr></thead>
+    <tbody>${g.cards.map(t=>`<tr><td>${esc(t.card)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}</tr>`).join('')}</tbody></table></div></div>`;
+  return `<div class="rep-day ${idx===0?'open':''}">
+    <div class="rep-dayhead" onclick="this.closest('.rep-day').classList.toggle('open')">
+      ${dayCalChip(g.date)}
+      <div class="rd-title"><div class="t1">${fmtDayLong(g.date)}</div><div class="t2">${g.sales.length} invoice${g.sales.length===1?'':'s'} · ${g.purch.length} purchase${g.purch.length===1?'':'s'}${g.cards.length?` · ${g.cards.length} card txn${g.cards.length===1?'':'s'}`:''}</div></div>
+      <div class="rd-net"><div class="lab">Net cash</div><div class="val" style="color:${g.netCash>=0?'var(--green)':'var(--red)'}">${g.netCash>=0?'+':'−'}${money(Math.abs(g.netCash))}</div></div>
+      <div class="rd-caret">▼</div>
+    </div>
+    <div class="rd-kpis">
+      ${kpi('Sales',money(g.salesTotal),g.sales.length+' bill'+(g.sales.length===1?'':'s'),'var(--gold2)')}
+      ${kpi('Collected',money(g.received),'cash '+money(g.recvC)+' · card '+money(g.recvK),'var(--green)')}
+      ${kpi('Purchases',money(g.purchTotal),g.purch.length+' entr'+(g.purch.length===1?'y':'ies'))}
+      ${kpi('Paid Out',money(g.paid),'cash '+money(g.paidC)+' · card '+money(g.paidK),'var(--red)')}
+      ${kpi('Expenses',money(g.expenses))}
+      ${owner?kpi('Profit',money(g.profit),'',g.profit>=0?'var(--green)':'var(--red)'):''}
+    </div>
+    <div class="rep-daybody">${sec||'<div class="empty" style="padding:22px">No detail</div>'}</div>
+  </div>`;
+}
+views.daybook=function(){
+  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The daily summary is restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>📅 Daily Summary</h2><p>Day-by-day account — every invoice, purchase, cash &amp; card movement, newest day first. Tap a day to expand.</p></div>
+    <div class="row-actions">
+      <input id="dbFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderDaybook()" title="From date">
+      <input id="dbTo" type="date" class="mini-btn" style="padding:9px" oninput="renderDaybook()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearDbRange()">Clear</button>
+      <button class="btn-sm btn-green" onclick="exportDaybookExcel()">⬇ Excel</button>
+    </div></div>
+  <div id="dbStats" class="cards"></div>
+  <div id="dbBody"></div>`;
+};
+views._after_daybook=()=>{ if(isOwner())renderDaybook(); };
+function clearDbRange(){ if($('#dbFrom'))$('#dbFrom').value=''; if($('#dbTo'))$('#dbTo').value=''; renderDaybook(); }
+function renderDaybook(){
+  if(!isOwner())return;
+  const from=$('#dbFrom')?.value, to=$('#dbTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const {dates,day,totals,eng}=daybookData(inR); const owner=isOwner();
+  const cs=$('#dbStats'); if(cs)cs.innerHTML=`
+    <div class="stat gold"><span class="ic">🧾</span><div class="label">Total Sales</div><div class="val">${money(totals.salesTotal)}</div><div class="foot">${totals.salesCount} invoice${totals.salesCount===1?'':'s'}</div></div>
+    <div class="stat green"><span class="ic">💵</span><div class="label">Collected</div><div class="val">${money(totals.received)}</div></div>
+    <div class="stat blue"><span class="ic">📥</span><div class="label">Purchases</div><div class="val">${money(totals.purchTotal)}</div><div class="foot">${totals.purchCount} entr${totals.purchCount===1?'y':'ies'}</div></div>
+    <div class="stat red"><span class="ic">📤</span><div class="label">Paid Out</div><div class="val">${money(totals.paid)}</div></div>
+    <div class="stat"><span class="ic">🧰</span><div class="label">Net Cash Flow</div><div class="val" style="color:${totals.netCash>=0?'var(--green)':'var(--red)'}">${money(totals.netCash)}</div><div class="foot">${dates.length} day${dates.length===1?'':'s'}</div></div>
+    ${owner?`<div class="stat green"><span class="ic">💰</span><div class="label">Gross Profit</div><div class="val">${money(totals.profit)}</div></div>`:''}`;
+  const body=$('#dbBody'); if(!body)return;
+  if(!dates.length){ body.innerHTML=`<div class="panel">${emptyBox('📅','No activity','No sales, purchases or cash movements in this period.')}</div>`; return; }
+  body.innerHTML=dates.map((d,i)=>dayCard(day[d],i,eng,owner)).join('');
+}
+function exportDaybookExcel(){
+  const from=$('#dbFrom')?.value, to=$('#dbTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const {dates,day,totals,eng}=daybookData(inR); const owner=isOwner();
+  if(!dates.length){ toast('Nothing to export in this period',1); return; }
+  const head=['Date','Invoices','Sales','Collected Cash','Collected Card','Purchases','Paid Cash','Paid Card','Cash In','Cash Out','Net Cash']; if(owner)head.push('Profit');
+  const rows=[head];
+  dates.forEach(d=>{const g=day[d]; const r=[d,g.sales.length,num2(g.salesTotal),num2(g.recvC),num2(g.recvK),num2(g.purchTotal),num2(g.paidC),num2(g.paidK),num2(g.cashIn),num2(g.cashOut),num2(g.netCash)]; if(owner)r.push(num2(g.profit)); rows.push(r);});
+  const tot=['TOTAL',totals.salesCount,num2(totals.salesTotal),'','',num2(totals.purchTotal),'','','','',num2(totals.netCash)]; if(owner)tot.push(num2(totals.profit)); rows.push([]); rows.push(tot);
+  const invHead=['Date','Invoice','Customer','Items','Method','Total','Received','Balance']; if(owner)invHead.push('Profit');
+  const inv=[invHead];
+  dates.forEach(d=>day[d].sales.forEach(s=>{const bal=s.total-(s.paid||0); const r=[d,s.invoiceNo,s.customer||'Walk-in',s.items.length,(s.payment||'').toUpperCase(),num2(s.total),num2(s.paid),num2(bal)]; if(owner)r.push(num2(netOf(s)-(eng.saleCost[s.id]||0))); inv.push(r);}));
+  exportExcel('daily_summary_'+todayStr()+'.xlsx',[{name:'Daily Totals',rows},{name:'Invoices',rows:inv}]);
+}
+/* ---- Card Statement report ---- */
+function cardStatementPanel(c,inR){
+  const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
+  const due=nextDue(c.paymentDay), dl=daysUntil(due);
+  const asc=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
+  let bal=+c.openingOutstanding||0; const rr=[];
+  asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
+  let spend=0,pay=0,redeem=0,pcount=0,maxp=0; rr.forEach(t=>{ if(t.type==='purchase'){spend+=+t.amount||0;pcount++;maxp=Math.max(maxp,+t.amount||0);} else if(t.type==='payment'||t.type==='recharge')pay+=+t.amount||0; else if(t.type==='discount')redeem+=+t.amount||0; });
+  const avg=pcount?spend/pcount:0;
+  const disp=[...rr].reverse();
+  const ledger= disp.length? disp.map(t=>`<tr><td>${fmtDate(t.date)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}<td class="num" style="font-weight:700">${money(t.bal)}</td></tr>`).join('')
+    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:18px">No transactions in this period</td></tr>`;
+  const k=(kk,vv,cls)=>`<div class="kk"><div class="k">${kk}</div><div class="v"${cls?` style="color:${cls}"`:''}>${vv}</div></div>`;
+  return `<div class="panel">
+    <div class="rep-cardhead">
+      <div class="cv">${cardVisual(c)}</div>
+      <div class="cvk">
+        ${k('Credit Limit',money(limit))}
+        ${k('Outstanding',money(out),out>0.005?'var(--amber)':'var(--green)')}
+        ${k('Available',money(avail),avail<0?'var(--red)':'var(--green)')}
+        ${k('Usage',Math.round(usedPct)+'%')}
+        ${k('Spend · period',money(spend))}
+        ${k('Payments · period',money(pay))}
+        ${k('Redeem · period',money(redeem),'var(--gold2)')}
+        ${k('Next due',fmtDate(isoDate(due))+' · '+(dl<=0?'today':dl+'d'), (dl<=3&&out>0.005)?'var(--red)':'')}
+      </div>
+    </div>
+    <div class="bar" style="margin:2px 2px 12px"><i style="width:${usedPct}%"></i></div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 8px">📄 Statement <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${rr.length} txn${rr.length===1?'':'s'}</span><span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">${pcount} buy · avg ${money(avg)} · max ${money(maxp)}</span></div>
+    <div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Outstanding</th></tr></thead><tbody>${ledger}</tbody></table></div>
+  </div>`;
+}
+views.cardreport=function(){
+  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card statements are restricted to the owner account.</p></div>`;
+  const opts=(DB.cards||[]).map(c=>`<option value="${c.id}">${esc(cardLabel(c))}</option>`).join('');
+  return `
+  <div class="page-head"><div><h2>💳 Card Statement</h2><p>Per-card statement, usage &amp; running balance. Filter by card and period.</p></div>
+    <div class="row-actions">
+      <select id="crCard" class="mini-btn" style="padding:9px" onchange="renderCardReport()"><option value="">All cards</option>${opts}</select>
+      <input id="crFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderCardReport()" title="From date">
+      <input id="crTo" type="date" class="mini-btn" style="padding:9px" oninput="renderCardReport()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearCrRange()">Clear</button>
+      <button class="btn-sm btn-green" onclick="exportCardReportExcel()">⬇ Excel</button>
+    </div></div>
+  <div id="crStats" class="cards"></div>
+  <div id="crBody"></div>`;
+};
+views._after_cardreport=()=>{ if(isOwner())renderCardReport(); };
+function clearCrRange(){ if($('#crCard'))$('#crCard').value=''; if($('#crFrom'))$('#crFrom').value=''; if($('#crTo'))$('#crTo').value=''; renderCardReport(); }
+function renderCardReport(){
+  if(!isOwner())return;
+  const from=$('#crFrom')?.value, to=$('#crTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const sel=$('#crCard')?.value||''; const all=DB.cards||[]; const cards= sel? all.filter(c=>c.id===sel): all;
+  let tL=0,tO=0; all.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); }); const tA=tL-tO;
+  let tSpend=0,tPay=0,tRedeem=0; cards.forEach(c=>(c.txns||[]).forEach(t=>{ if(!inR(t.date))return; if(t.type==='purchase')tSpend+=+t.amount||0; else if(t.type==='payment'||t.type==='recharge')tPay+=+t.amount||0; else if(t.type==='discount')tRedeem+=+t.amount||0; }));
+  const cs=$('#crStats'); if(cs)cs.innerHTML= all.length?`
+    <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${all.length} card${all.length===1?'':'s'}</div></div>
+    <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
+    <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
+    <div class="stat gold"><span class="ic">🛒</span><div class="label">Spend · period</div><div class="val">${money(tSpend)}</div><div class="foot">redeem ${money(tRedeem)} · paid ${money(tPay)}</div></div>`:'';
+  const body=$('#crBody'); if(!body)return;
+  if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see statements.')}</div>`; return; }
+  body.innerHTML=cards.map(c=>cardStatementPanel(c,inR)).join('');
+}
+function exportCardReportExcel(){
+  const from=$('#crFrom')?.value, to=$('#crTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const sel=$('#crCard')?.value||''; const all=DB.cards||[]; const cards= sel? all.filter(c=>c.id===sel): all;
+  const rows=[['Card','Date','Type','Note','Amount','Outstanding After']];
+  cards.forEach(c=>{ const asc=[...(c.txns||[])].sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0)); let bal=+c.openingOutstanding||0;
+    asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=(t.type==='purchase'?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'',num2(signed),num2(bal)]); } }); });
+  if(rows.length===1){ toast('No card transactions in this period',1); return; }
+  exportExcel('card_statement_'+todayStr()+'.xlsx',[{name:'Card Statement',rows}]);
 }
 
 /* =========================================================
