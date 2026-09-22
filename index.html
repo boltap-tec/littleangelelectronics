@@ -459,6 +459,35 @@ body.light .pstack>*{border-color:#fff!important}
 @keyframes vtIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.modal-back,.modal,.li-row.row-new,.split-row.row-new,.rippling::after,.toast.show::after{animation:none}}
 
+/* ===== STAGGERED REVEAL (store grid, dashboard cards & tiles) ===== */
+.reveal{opacity:0;animation:revealUp .45s cubic-bezier(.22,.61,.36,1) forwards;animation-delay:var(--d,0ms)}
+@keyframes revealUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;animation:none}}
+
+/* ===== SKELETON / IMAGE SHIMMER ===== */
+@keyframes shim{to{background-position:-200% 0}}
+.imgskel::before{content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;
+  background:linear-gradient(100deg,var(--panel2) 28%,var(--line2) 48%,var(--panel2) 68%);background-size:200% 100%;animation:shim 1.15s linear infinite}
+.imgskel img{position:relative;z-index:1}
+.imgloaded img{animation:imgFade .4s ease}
+@keyframes imgFade{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.imgskel::before{animation:none}.imgloaded img{animation:none}}
+.skeleton{background:linear-gradient(100deg,var(--panel2) 28%,var(--line2) 48%,var(--panel2) 68%);background-size:200% 100%;animation:shim 1.15s linear infinite;border-radius:10px}
+
+/* ===== CONFETTI (full-payment celebration) ===== */
+#confettiRoot{position:fixed;inset:0;pointer-events:none;z-index:250;overflow:hidden}
+.cfetti{position:absolute;top:-14px;width:10px;height:14px;border-radius:2px;opacity:0;will-change:transform,opacity;
+  animation:cfall var(--dur,2.6s) cubic-bezier(.35,.6,.5,1) forwards;animation-delay:var(--cd,0ms)}
+@keyframes cfall{0%{opacity:1;transform:translate3d(0,0,0) rotate(0)}100%{opacity:.9;transform:translate3d(var(--dx,0),105vh,0) rotate(var(--rot,540deg))}}
+
+/* ===== ANIMATED TOAST ICON + EMPTY STATES ===== */
+.toast.show .i{display:inline-flex;animation:iconPop .42s cubic-bezier(.34,1.56,.64,1)}
+@keyframes iconPop{0%{transform:scale(0) rotate(-25deg)}60%{transform:scale(1.25) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
+.empty{animation:revealUp .4s cubic-bezier(.22,.61,.36,1)}
+.empty .big{display:inline-block;animation:floaty 3.2s ease-in-out infinite}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@media(prefers-reduced-motion:reduce){.toast.show .i,.empty,.empty .big{animation:none}}
+
 /* modal */
 .modal-back{position:fixed;inset:0;background:rgba(4,8,16,.66);backdrop-filter:blur(4px);z-index:80;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto}
 .modal{width:100%;max-width:720px;background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line2);border-radius:20px;box-shadow:var(--shadow);margin:auto}
@@ -670,6 +699,7 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 
 <div id="printRoot" class="hidden"></div>
 <div id="modalRoot"></div>
+<div id="confettiRoot"></div>
 <div class="toast" id="toast"><span class="i">✓</span><span id="toastMsg"></span></div>
 
 <!-- Supabase JS SDK (loads global `supabase`; app still works offline if this fails) -->
@@ -880,6 +910,41 @@ function setFlow(id,states){
 /* gentle entrance for a freshly-added line-item / split row */
 function flashNewRow(sel){ if(reducedMotion())return; const rows=$$(sel); const last=rows[rows.length-1];
   if(last){ last.classList.add('row-new'); last.addEventListener('animationend',()=>last.classList.remove('row-new'),{once:true}); } }
+/* confetti burst — fired when a bill/purchase is saved fully paid */
+function confetti(){
+  if(reducedMotion())return; const root=document.getElementById('confettiRoot'); if(!root)return;
+  const colors=['#6366f1','#818cf8','#f5b301','#ffcf3f','#22c55e','#3ddc84','#38bdf8','#ef4444'];
+  const N=window.innerWidth<=560?60:110; const frag=document.createDocumentFragment();
+  for(let i=0;i<N;i++){ const p=document.createElement('i'); p.className='cfetti';
+    const dx=(Math.random()*2-1)*38; // vw drift
+    p.style.left=Math.random()*100+'vw';
+    p.style.background=colors[i%colors.length];
+    p.style.setProperty('--dx',dx+'vw');
+    p.style.setProperty('--rot',(Math.random()*720-360)+'deg');
+    p.style.setProperty('--dur',(2.1+Math.random()*1.6)+'s');
+    p.style.setProperty('--cd',(Math.random()*250)+'ms');
+    if(Math.random()<0.5){p.style.width='7px';p.style.height='10px';p.style.borderRadius='50%';}
+    frag.appendChild(p);
+  }
+  root.appendChild(frag);
+  setTimeout(()=>{root.innerHTML='';},4200);
+}
+/* staggered entrance for grids after a view renders */
+function staggerReveal(root){ if(reducedMotion())return;
+  const els=(root||document).querySelectorAll('.shop-card, .cards > .stat, .tiles > .tile');
+  els.forEach((el,i)=>{ el.classList.add('reveal'); el.style.setProperty('--d',Math.min(i*45,600)+'ms');
+    el.addEventListener('animationend',()=>{el.classList.remove('reveal');el.style.removeProperty('--d');},{once:true}); });
+}
+/* image shimmer skeleton until product photos load (never hides the image) */
+function initImgSkel(root){
+  (root||document).querySelectorAll('.shop-img, .thumb.photo').forEach(c=>{
+    if(c.dataset.sk)return; const img=c.querySelector('img'); if(!img){return;} c.dataset.sk='1';
+    if(img.complete && img.naturalWidth>0){ c.classList.add('imgloaded'); return; }
+    c.classList.add('imgskel');
+    img.addEventListener('load',()=>{ c.classList.remove('imgskel'); c.classList.add('imgloaded'); },{once:true});
+    img.addEventListener('error',()=>{ c.classList.remove('imgskel'); },{once:true});
+  });
+}
 /* material-style ripple on primary buttons */
 document.addEventListener('pointerdown',e=>{
   if(reducedMotion())return; const b=e.target.closest&&e.target.closest('.btn,.btn-sm,.mini-btn'); if(!b)return;
@@ -1158,7 +1223,7 @@ function _go(v,vt){
   main.innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
   if(!vt){ main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); } // replay enter animation (fallback path)
-  animateCounts(main);
+  animateCounts(main); staggerReveal(main); initImgSkel(main);
   if(window.innerWidth<=860) closeNav();
   window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); if(session)applyAccess();
 }
@@ -1611,6 +1676,7 @@ function savePurchase(id){
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
   save();closeModal();renderPurchases();renderBell();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
+  if(!negWarn.length && tot>0 && paid>=tot-0.01) confetti();   // 🎉 paid in full
 }
 function delPurchase(id){
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
@@ -1643,6 +1709,7 @@ function renderShop(){
     .filter(x=>(showOOS||x.qty>0) && ((x.p.name||'').toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q)));
   if(!list.length){ host.innerHTML=`<div class="panel">${emptyBox('🛍️','Nothing to show',showOOS?'No products match your search.':'No products in stock. Add stock via Purchases, or tick “Show out of stock”.')}</div>`; renderShopCart(); return; }
   host.innerHTML=`<div class="shop-grid">${list.map(shopCard).join('')}</div>`;
+  initImgSkel(host);
   renderShopCart();
 }
 function shopCard(x){
@@ -1870,6 +1937,7 @@ function saveSale(id,print){
   DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
   DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Initial'}]:[]});
   save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
+  if(paid>=t.total-0.01 && t.total>0) confetti();   // 🎉 paid in full
   if(print)setTimeout(()=>printSale(nid),120);
 }
 function delSale(id){
