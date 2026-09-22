@@ -3412,6 +3412,7 @@ function dayCard(g,idx,eng,owner){
     <div class="rep-dayhead" onclick="this.closest('.rep-day').classList.toggle('open')">
       ${dayCalChip(g.date)}
       <div class="rd-title"><div class="t1">${fmtDayLong(g.date)}</div><div class="t2">${g.sales.length} invoice${g.sales.length===1?'':'s'} · ${g.purch.length} purchase${g.purch.length===1?'':'s'}${g.cards.length?` · ${g.cards.length} card txn${g.cards.length===1?'':'s'}`:''}</div></div>
+      <button class="mini-btn" style="flex:0 0 auto;margin-right:4px" onclick="event.stopPropagation();pdfDay('${g.date}')" title="Download this day as a PDF statement">📄 PDF</button>
       <div class="rd-net"><div class="lab">Net cash</div><div class="val" style="color:${g.netCash>=0?'var(--green)':'var(--red)'}">${g.netCash>=0?'+':'−'}${money(Math.abs(g.netCash))}</div></div>
       <div class="rd-caret">▼</div>
     </div>
@@ -3469,6 +3470,79 @@ function exportDaybookExcel(){
   dates.forEach(d=>day[d].sales.forEach(s=>{const bal=s.total-(s.paid||0); const r=[d,s.invoiceNo,s.customer||'Walk-in',s.items.length,(s.payment||'').toUpperCase(),num2(s.total),num2(s.paid),num2(bal)]; if(owner)r.push(num2(netOf(s)-(eng.saleCost[s.id]||0))); inv.push(r);}));
   exportExcel('daily_summary_'+todayStr()+'.xlsx',[{name:'Daily Totals',rows},{name:'Invoices',rows:inv}]);
 }
+/* ---- printable "Daily Account" statement for ONE date (PDF) ---- */
+function daySummaryHtml(dstr){
+  const {day,eng}=daybookData(d=>d===dstr); const g=day[dstr]; if(!g)return null;
+  const st=S(), owner=isOwner(), cur=st.currency;
+  const M=n=>cur+' '+(Number(n)||0).toLocaleString('en-AE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const logo=st.showLogo?(st.logoUrl?`<img src="${esc(st.logoUrl)}" style="height:54px;object-fit:contain">`:logoMark(54)):'';
+  const cardSpend=g.cards.filter(t=>t.type==='purchase').reduce((a,t)=>a+(+t.amount||0),0);
+  const creditGiven=g.sales.reduce((a,s)=>a+Math.max(0,s.total-(s.paid||0)),0);
+  const creditTaken=g.purch.reduce((a,p)=>a+Math.max(0,purchaseTotal(p)-(p.paid||0)),0);
+  const sec=(title,head,rows)=> rows? `<div class="ds-h">${title}</div><table class="ds-t"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`:'';
+  const invRows=g.sales.map(s=>{const bal=s.total-(s.paid||0),prof=netOf(s)-(eng.saleCost[s.id]||0);return `<tr><td>${esc(s.invoiceNo)}</td><td>${esc(s.customer||'Walk-in')}</td><td>${esc(itemsFirstName(s.items))}${s.items.length>1?' +'+(s.items.length-1):''}</td><td>${(s.payment||'cash').toUpperCase()}</td><td class="r">${M(s.total)}</td><td class="r">${M(s.paid||0)}</td><td class="r">${M(bal)}</td>${owner?`<td class="r">${M(prof)}</td>`:''}</tr>`;}).join('');
+  const purRows=g.purch.map(p=>{const tot=purchaseTotal(p),bal=tot-(p.paid||0);return `<tr><td>${esc(p.ref)}</td><td>${esc(p.supplier||'—')}</td><td class="r">${num(purchaseQty(p))}</td><td class="r">${M(tot)}</td><td>${(p.payment||'cash').toUpperCase()}</td><td class="r">${M(p.paid||0)}</td><td class="r">${M(bal)}</td></tr>`;}).join('');
+  const cashRows=g.cash.map(e=>`<tr><td>${(e.cat||'').toUpperCase()}</td><td>${esc(e.desc||'')}</td><td>${esc(userName(e.who))}</td><td class="r">${e.dir==='in'?M(e.amount):''}</td><td class="r">${e.dir==='out'?M(e.amount):''}</td></tr>`).join('');
+  const cardRows=g.cards.map(t=>{const sign=t.type==='adjust'?((+t.amount>=0)?'+':'−'):(t.type==='purchase'?'−':'+');return `<tr><td>${esc(t.card)}</td><td>${txnLabel(t.type)}</td><td>${esc(t.note||'')}</td><td class="r">${sign}${M(Math.abs(+t.amount||0))}</td></tr>`;}).join('');
+  const kpi=(k,v)=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  return `<div id="invoiceArea" style="max-width:760px;margin:0 auto;padding:30px;font-family:Segoe UI,Arial,sans-serif;color:#111;background:#fff">
+    <style>
+      #invoiceArea .ds-t{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0 10px}
+      #invoiceArea .ds-t th{background:#f3f4f8;text-align:left;padding:7px 9px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#555;border-bottom:2px solid #e5e7eb}
+      #invoiceArea .ds-t td{padding:7px 9px;border-bottom:1px solid #eee}
+      #invoiceArea .ds-t td.r,#invoiceArea .ds-t th.r{text-align:right}
+      #invoiceArea .ds-h{font-size:12.5px;font-weight:800;color:#222;margin:16px 0 4px;border-left:4px solid #c9962f;padding-left:8px}
+      #invoiceArea .ds-kpi{display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 4px}
+      #invoiceArea .ds-kpi>div{flex:1 1 120px;border:1px solid #e5e7eb;border-radius:8px;padding:8px 11px}
+      #invoiceArea .ds-kpi .k{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:#888;font-weight:700}
+      #invoiceArea .ds-kpi .v{font-size:14px;font-weight:800;color:#111;margin-top:2px}
+    </style>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #c9962f;padding-bottom:14px">
+      <div style="display:flex;gap:12px;align-items:flex-start">${logo}<div>
+        <div style="font-size:16px;font-weight:800;line-height:1.25;max-width:360px">${esc(st.company)}</div>
+        <div style="color:#777;font-size:11px;margin-top:3px;max-width:360px">${esc(st.address)}</div>
+        ${st.showTrn&&st.trn?`<div style="color:#111;font-size:11.5px;margin-top:2px"><b>TRN:</b> ${esc(st.trn)}</div>`:''}</div></div>
+      <div style="text-align:right"><div style="font-size:18px;font-weight:800;color:#c9962f;letter-spacing:.5px">DAILY ACCOUNT</div>
+        <div style="font-size:12.5px;color:#333;margin-top:3px">${fmtDayLong(dstr)}</div></div>
+    </div>
+    <div class="ds-kpi">
+      ${kpi('Sales ('+g.sales.length+')',M(g.salesTotal))}
+      ${kpi('Collected',M(g.received))}
+      ${kpi('Purchases ('+g.purch.length+')',M(g.purchTotal))}
+      ${kpi('Paid Out',M(g.paid))}
+      ${kpi('Net Cash',(g.netCash>=0?'+':'−')+M(Math.abs(g.netCash)))}
+      ${owner?kpi('Gross Profit',M(g.profit)):''}
+    </div>
+    ${sec('🧾 Invoices',`<th>Invoice</th><th>Customer</th><th>Items</th><th>Method</th><th class="r">Total</th><th class="r">Received</th><th class="r">Balance</th>${owner?'<th class="r">Profit</th>':''}`,invRows)}
+    ${sec('📥 Purchases',`<th>Ref</th><th>Supplier</th><th class="r">Qty</th><th class="r">Total</th><th>Method</th><th class="r">Paid</th><th class="r">Balance</th>`,purRows)}
+    ${sec('🧰 Cash movements',`<th>Type</th><th>Description</th><th>By</th><th class="r">In</th><th class="r">Out</th>`,cashRows)}
+    ${sec('💳 Card usage',`<th>Card</th><th>Type</th><th>Note</th><th class="r">Amount</th>`,cardRows)}
+    <div style="margin-top:16px;border-top:2px solid #e5e7eb;padding-top:10px;font-size:12px;color:#333;display:flex;flex-wrap:wrap;gap:6px 26px">
+      <span>Cash In: <b>${M(g.cashIn)}</b></span><span>Cash Out: <b>${M(g.cashOut)}</b></span>
+      <span>Net Cash: <b>${(g.netCash>=0?'+':'−')+M(Math.abs(g.netCash))}</b></span>
+      <span>Card spend: <b>${M(cardSpend)}</b></span>
+      <span>Credit given: <b>${M(creditGiven)}</b></span><span>Credit taken: <b>${M(creditTaken)}</b></span>
+    </div>
+    <div style="margin-top:22px;color:#999;font-size:10px;text-align:center">Generated ${fmtDate(todayStr())} · ${esc(st.company)}</div>
+  </div>`;
+}
+async function buildDayPdf(dstr){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
+  const html=daySummaryHtml(dstr); if(!html){ toast('No activity on this day',1); return null; }
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#invoiceArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    return {blob:pdf.output('blob'), filename:'daily_account_'+dstr+'.pdf'};
+  }catch(e){ toast('Could not build the PDF',1); return null; }
+  finally{ document.body.removeChild(holder); }
+}
+async function pdfDay(dstr){ toast('Preparing PDF…',0); const r=await buildDayPdf(dstr); if(!r)return;
+  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
 /* ---- Card Statement report ---- */
 function cardStatementPanel(c,inR){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
