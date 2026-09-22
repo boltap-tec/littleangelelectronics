@@ -1221,6 +1221,7 @@ function enterApp(){
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
   renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
+  checkNegativeOnBoot();   // 🚨 alert immediately if any card is already over its limit
 }
 /* show/hide nav + bell + bottom-nav by this user's permissions */
 function applyAccess(){
@@ -1639,7 +1640,10 @@ function splitHintText(s){ const info=payMethodInfo(s.method); const c=s.cardId?
   if(info.savedCard){ return c ? `Points card <b style="color:var(--text)">${esc(cardLabel(c))}</b>` : '<span style="color:var(--muted2)">Select a saved card</span>'; }
   if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
   const av=cardAvailForSplit(c), amt=+s.amount||0, over=amt-av;
-  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${over>1e-6?` · <span style="color:var(--red)">⚠ goes negative — pay ${money(over)} before midnight 🌙</span>`:''}`; }
+  const overMsg = over>1e-6 ? (cardAllowsNeg(c)
+      ? ` · <span style="color:var(--red)">⚠ over limit by ${money(over)} — pay immediately</span>`
+      : ` · <span style="color:var(--red)">🚫 exceeds limit by ${money(over)} — not allowed on this card</span>`) : '';
+  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${overMsg}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
 function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=activeCards();
@@ -1685,7 +1689,8 @@ function quickAddCardFromPurchase(i){
       <div class="field"><label>Redeem Points (%)</label>${redeemSelect('qc_disc','qc_discOther',0)}</div>
       <div class="field"><label>Payment Day (1–31)</label><input id="qc_day" type="number" min="1" max="31" value="1"></div>
     </div>
-    <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>`,
+    <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>
+    <label class="chk" style="margin-top:2px"><input type="checkbox" id="qc_allowneg" style="width:16px;height:16px;accent-color:var(--brand)"> Allow this card to go over-limit (negative) — you'll be alerted to pay it immediately</label>`,
     `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
      <button class="btn-sm" onclick="quickSaveCard(${i})">Save Card</button>`);
   setTimeout(()=>$('#qc_name')?.focus(),30);
@@ -1694,7 +1699,7 @@ function quickSaveCard(i){
   const name=$('#qc_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#qc_day').value||1));
   const c={id:uid(),name,owner:$('#qc_owner').value.trim(),bank:$('#qc_bank').value.trim(),number:$('#qc_number').value.trim(),theme:'indigo',
-    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,discountPercent:redeemVal('qc_disc','qc_discOther'),
+    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,allowNegative:!!$('#qc_allowneg')?.checked,discountPercent:redeemVal('qc_disc','qc_discOther'),
     maxDiscountMonthly:+$('#qc_maxdisc').value||0,paymentDay:day,openingOutstanding:0,txns:[]};
   DB.cards.push(c); save(); renderBell();
   buySplits[i].method='card'; buySplits[i].cardId=c.id;
@@ -1734,20 +1739,25 @@ function savePurchase(id){
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
   const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard;
     return {method:s.method,cardId:linksCard?(s.cardId||''):'',ref:linksCard?'':(s.ref||'').trim(),amount:+s.amount}; });
-  // Cards MAY go negative — we don't block. Track which cards overshoot so we can warn
-  // that the negative amount has to be cleared before midnight.
+  // A card may be swiped past its limit ONLY if it's flagged "allow negative".
+  // Cards not allowed are blocked; allowed cards go through but raise an immediate alert.
   const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+s.amount; });
-  const negWarn=[]; for(const cid in cardReq){ const c=cardById(cid); if(c){ const av=cardAvailForSplit(c); if(cardReq[cid]>av+1e-6) negWarn.push({name:c.name, over:cardReq[cid]-av}); } }
+  const negWarn=[], negBlock=[];
+  for(const cid in cardReq){ const c=cardById(cid); if(c){ const av=cardAvailForSplit(c); const over=cardReq[cid]-av;
+    if(over>1e-6){ if(cardAllowsNeg(c)) negWarn.push({id:cid,name:c.name,over}); else negBlock.push({name:c.name,over,av}); } } }
+  if(negBlock.length){ const b=negBlock[0];
+    return toast(`${b.name}: only ${money(Math.max(0,b.av))} available — this card can't go over its limit. Reduce the amount, or enable over-limit for it in Credit Cards.`,1); }
   let paid=splits.reduce((a,s)=>a+s.amount,0); if(paid>tot+0.01)paid=tot;
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
   const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',payRef:s.ref||'',ref:'Initial'}));
   const data={date,supplier,items,discount,payment:methodTag,paid,payments};
-  const negMsg=negWarn.length?(' · 🌙 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay before midnight'):'';
+  const negMsg=negWarn.length?(' · 🔴 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay immediately'):'';
   if(id){ // EDIT existing — confirm; workers route to admin approval
     const rec=DB.purchases.find(x=>x.id===id); const ref=rec?rec.ref:'';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
     return confirmBox('Save changes?',`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated.`,()=>{
-      commitPurchase(id,data); save();closeModal();renderPurchases();renderBell();toast('Purchase updated'); },'Save');
+      commitPurchase(id,data); save();closeModal();renderPurchases();renderBell();toast('Purchase updated'+negMsg, negWarn.length?1:0);
+      if(negWarn.length) setTimeout(()=>alertNegativeCards(),200); },'Save');
   }
   // NEW purchase (allowed for owner & worker)
   DB.counters.purchase++; const purchaseId=uid(), ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
@@ -1756,7 +1766,8 @@ function savePurchase(id){
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
   save();closeModal();renderPurchases();renderBell();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
-  if(!negWarn.length && tot>0 && paid>=tot-0.01) confetti();   // 🎉 paid in full
+  if(negWarn.length) setTimeout(()=>alertNegativeCards(),200);   // 🚨 immediate over-limit alert
+  else if(tot>0 && paid>=tot-0.01) confetti();                  // 🎉 paid in full
 }
 function delPurchase(id){
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
@@ -2300,6 +2311,25 @@ function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=nextDue(c.pay
 function lowBalanceCards(){ return (DB.cards||[]).filter(c=>{ const al=+c.balanceLimitAlert||0; return al>0 && cardAvailable(c)<=al; }); }
 /* cards charged past their limit — the negative amount must be cleared before midnight */
 function negativeCards(){ return (DB.cards||[]).map(c=>({c,av:cardAvailable(c)})).filter(x=>x.av<-0.005).sort((a,b)=>a.av-b.av); }
+/* whether a card is permitted to be swiped past its limit (into a negative available balance) */
+function cardAllowsNeg(c){ return !!(c&&c.allowNegative); }
+/* URGENT pop-up shown the moment a card is over its limit (negative balance) */
+let _negAlertShown=false;
+function alertNegativeCards(neg){
+  neg = neg || negativeCards();
+  if(!neg.length) return;
+  const rows=neg.map(x=>`<div style="display:flex;align-items:center;gap:12px;background:var(--redsoft);border:1px solid #7f1d2b;border-radius:12px;padding:12px 14px;margin-bottom:10px">
+      <div style="font-size:22px;line-height:1" class="blink">🔴</div>
+      <div style="flex:1;min-width:0"><b>${esc(cardLabel(x.c))}</b><div style="color:var(--muted);font-size:12.5px">Over limit by <b style="color:var(--red)">${money(Math.abs(x.av))}</b> — pay immediately</div></div>
+      <button class="btn-sm btn-gold" style="flex:0 0 auto" onclick="closeModal();go('cards');setTimeout(()=>cardDetail('${x.c.id}'),80)">Pay now</button>
+    </div>`).join('');
+  openModal('🚨 Card over limit — pay now',
+    `<p style="margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.6">${neg.length===1?'This card has':neg.length+' cards have'} a <b style="color:var(--red)">negative balance</b> (swiped past the limit). Clear the negative amount <b>immediately</b> to avoid penalties.</p>${rows}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Dismiss</button>
+     <button class="btn-sm btn-red" onclick="closeModal();go('cards')">Open Credit Cards</button>`);
+}
+/* show the negative-card alert once shortly after entering the app, if any card is negative */
+function checkNegativeOnBoot(){ if(_negAlertShown)return; const neg=negativeCards(); if(neg.length){ _negAlertShown=true; setTimeout(()=>alertNegativeCards(neg),500); } }
 function recentActivity(n){ const a=[];
   DB.sales.forEach(s=>a.push({t:'sale',date:s.date,ref:s.invoiceNo,name:s.customer||'Walk-in',amt:s.total}));
   DB.purchases.forEach(p=>a.push({t:'purchase',date:p.date,ref:p.ref,name:p.supplier||'—',amt:purchaseTotal(p)}));
@@ -2691,6 +2721,12 @@ function editCard(id){
       <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}"></div>
     </div>
     <div class="field"><label>Status</label><select id="c_status"><option value="active" ${c.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${c.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
+    <div class="field"><label>Over-limit (negative) swiping</label>
+      <select id="c_allowneg">
+        <option value="0" ${c.allowNegative?'':'selected'}>🚫 Block — never let this card exceed its limit</option>
+        <option value="1" ${c.allowNegative?'selected':''}>⚠️ Allow — permit a negative balance (pay it immediately)</option>
+      </select>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Only cards set to <b>Allow</b> can be swiped past the limit. Any card that goes negative triggers an immediate “pay now” alert.</div></div>
     ${id?'':`<div class="grid2">
       <div class="field"><label>Available Balance (${S().currency})</label><input id="c_avail" type="number" step="any" value="" placeholder="usable balance right now — blank = full limit" oninput="cAvailSync('avail')"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">How much you can currently spend on this card.</div></div>
       <div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="or enter amount already owed" oninput="cAvailSync('open')"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Auto-filled from available &amp; limit.</div></div>
@@ -2708,6 +2744,7 @@ function saveCard(id){
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
+    allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
   if(id){ Object.assign(cardById(id),data); }
   else{ const availRaw=$('#c_avail').value; data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : (+$('#c_open').value||0); data.txns=[]; DB.cards.push({id:uid(),...data}); }
