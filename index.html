@@ -409,6 +409,56 @@ body.light .pstack>*{border-color:#fff!important}
 .sw:hover{transform:scale(1.12)}
 .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--brand)}
 
+/* ===== FORM FLOW / PROGRESS STEPPER ===== */
+.flow{margin:-2px 0 18px;padding:14px 16px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:14px}
+.flow-track{display:flex;align-items:flex-start}
+.flow-step{display:flex;flex-direction:column;align-items:center;gap:7px;flex:0 0 auto;z-index:2}
+.flow-dot{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;
+  background:var(--bg);border:2px solid var(--line2);color:var(--muted2);transition:background .3s,border-color .3s,color .3s,box-shadow .3s,transform .3s cubic-bezier(.34,1.56,.64,1)}
+.flow-step.done .flow-dot{background:linear-gradient(135deg,var(--green),#3ddc84);border-color:transparent;color:#fff;box-shadow:0 4px 13px rgba(34,197,94,.42)}
+.flow-step.active .flow-dot{background:linear-gradient(135deg,var(--brand),var(--brand2));border-color:transparent;color:#fff;box-shadow:0 0 0 4px rgba(99,102,241,.22);transform:scale(1.08)}
+.flow-lab{font-size:11px;font-weight:700;color:var(--muted2);letter-spacing:.2px;white-space:nowrap;transition:color .25s}
+.flow-step.done .flow-lab{color:var(--text)}
+.flow-step.active .flow-lab{color:var(--brand2)}
+.flow-line{flex:1;height:3px;border-radius:3px;background:var(--line2);margin:14px 6px 0;position:relative;overflow:hidden}
+.flow-line>i{position:absolute;inset:0;width:0;background:linear-gradient(90deg,var(--green),#3ddc84);border-radius:3px;transition:width .45s cubic-bezier(.22,.61,.36,1)}
+.flow-line.fill>i{width:100%}
+.flow-bar{height:6px;border-radius:6px;background:var(--line2);overflow:hidden;margin-top:14px}
+.flow-bar>i{display:block;height:100%;width:0;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--brand2),var(--gold2));background-size:220% 100%;
+  transition:width .5s cubic-bezier(.22,.61,.36,1);animation:flowsheen 2.4s linear infinite}
+@keyframes flowsheen{to{background-position:220% 0}}
+.flow-step.pulse .flow-dot{animation:flowpop .45s cubic-bezier(.34,1.56,.64,1)}
+@keyframes flowpop{0%{transform:scale(.6)}55%{transform:scale(1.22)}100%{transform:scale(1)}}
+@media(max-width:560px){.flow-lab{display:none}.flow{padding:12px}}
+@media(prefers-reduced-motion:reduce){.flow-dot,.flow-line>i,.flow-bar>i{transition:none}.flow-bar>i{animation:none}.flow-step.pulse .flow-dot{animation:none}}
+
+/* ===== MODAL POP-IN + ROW / RIPPLE / TOAST MICRO-ANIMATIONS ===== */
+.modal-back{animation:mbIn .2s ease}
+@keyframes mbIn{from{opacity:0}to{opacity:1}}
+.modal{animation:mpIn .34s cubic-bezier(.34,1.56,.64,1)}
+@keyframes mpIn{from{opacity:0;transform:translateY(20px) scale(.965)}to{opacity:1;transform:none}}
+.li-row.row-new,.split-row.row-new{animation:rowIn .32s cubic-bezier(.22,.61,.36,1)}
+@keyframes rowIn{from{opacity:0;transform:translateY(-7px)}to{opacity:1;transform:none}}
+.btn,.btn-sm,.mini-btn{position:relative;overflow:hidden}
+.rippling::after{content:"";position:absolute;left:var(--rx,50%);top:var(--ry,50%);width:14px;height:14px;border-radius:50%;
+  background:rgba(255,255,255,.5);transform:translate(-50%,-50%) scale(0);animation:ripple .6s ease-out forwards;pointer-events:none}
+@keyframes ripple{to{transform:translate(-50%,-50%) scale(30);opacity:0}}
+.toast{overflow:hidden}
+.toast::after{content:"";position:absolute;left:0;bottom:0;height:3px;width:100%;transform-origin:left;border-radius:0 0 12px 12px;
+  background:linear-gradient(90deg,var(--brand2),var(--brand))}
+.toast.show::after{animation:toastbar 2.4s linear forwards}
+.toast.bad.show::after{background:linear-gradient(90deg,#fca5a5,var(--red))}
+@keyframes toastbar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+/* ===== VIEW TRANSITIONS (scoped to main content) ===== */
+#main{view-transition-name:mainview}
+@media(prefers-reduced-motion:no-preference){
+  ::view-transition-old(mainview){animation:vtOut .2s ease both}
+  ::view-transition-new(mainview){animation:vtIn .32s cubic-bezier(.22,.61,.36,1) both}
+}
+@keyframes vtOut{to{opacity:0;transform:translateY(-8px)}}
+@keyframes vtIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.modal-back,.modal,.li-row.row-new,.split-row.row-new,.rippling::after,.toast.show::after{animation:none}}
+
 /* modal */
 .modal-back{position:fixed;inset:0;background:rgba(4,8,16,.66);backdrop-filter:blur(4px);z-index:80;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto}
 .modal{width:100%;max-width:720px;background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line2);border-radius:20px;box-shadow:var(--shadow);margin:auto}
@@ -802,6 +852,42 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;'
 function fmtDate(d){ if(!d)return''; const p=d.split('-'); return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:d; }
 function toast(msg,bad){ const t=$('#toast'); $('#toastMsg').textContent=msg; t.className='toast show '+(bad?'bad':'ok'); $('.i',t).textContent=bad?'✕':'✓'; clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast',2400); }
 const isOwner=()=>session&&session.role==='owner';
+/* ===== motion / form-flow helpers ===== */
+function reducedMotion(){ return !!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches); }
+/* build a live step tracker (data-driven): labels + connecting lines + a progress bar */
+function flowScaffold(id,labels){
+  let s='';
+  labels.forEach((l,i)=>{ s+=`<div class="flow-step" data-i="${i}"><div class="flow-dot">${i+1}</div><div class="flow-lab">${l}</div></div>`;
+    if(i<labels.length-1) s+=`<div class="flow-line"><i></i></div>`; });
+  return `<div class="flow" id="${id}"><div class="flow-track">${s}</div><div class="flow-bar"><i></i></div></div>`;
+}
+/* update the tracker in place (keeps CSS transitions smooth); states = array of booleans (step done) */
+function setFlow(id,states){
+  const host=document.getElementById(id); if(!host)return;
+  const steps=host.querySelectorAll('.flow-step'), lines=host.querySelectorAll('.flow-line');
+  let activeIdx=states.findIndex(d=>!d); if(activeIdx<0)activeIdx=states.length-1;
+  let done=0;
+  steps.forEach((st,i)=>{
+    const wasDone=st.classList.contains('done');
+    st.classList.toggle('done',!!states[i]);
+    st.classList.toggle('active',i===activeIdx&&!states[i]);
+    const dot=st.querySelector('.flow-dot'); if(dot)dot.textContent=states[i]?'✓':(i+1);
+    if(states[i]){ done++; if(!wasDone&&!reducedMotion()){ st.classList.remove('pulse'); void st.offsetWidth; st.classList.add('pulse'); } }
+  });
+  lines.forEach((ln,i)=>ln.classList.toggle('fill',!!states[i]));
+  const bar=host.querySelector('.flow-bar>i'); if(bar)bar.style.width=Math.round(done/states.length*100)+'%';
+}
+/* gentle entrance for a freshly-added line-item / split row */
+function flashNewRow(sel){ if(reducedMotion())return; const rows=$$(sel); const last=rows[rows.length-1];
+  if(last){ last.classList.add('row-new'); last.addEventListener('animationend',()=>last.classList.remove('row-new'),{once:true}); } }
+/* material-style ripple on primary buttons */
+document.addEventListener('pointerdown',e=>{
+  if(reducedMotion())return; const b=e.target.closest&&e.target.closest('.btn,.btn-sm,.mini-btn'); if(!b)return;
+  const r=b.getBoundingClientRect();
+  b.style.setProperty('--rx',(e.clientX-r.left)+'px'); b.style.setProperty('--ry',(e.clientY-r.top)+'px');
+  b.classList.remove('rippling'); void b.offsetWidth; b.classList.add('rippling');
+  b.addEventListener('animationend',()=>b.classList.remove('rippling'),{once:true});
+},true);
 function payStatus(total,paid){ paid=+paid||0; total=+total||0; return paid<=0.0001?'due':(paid>=total-0.0001?'paid':'partial'); }
 function statusTag(total,paid){ const st=payStatus(total,paid); const bal=total-paid;
   return `<span class="tag ${st}">${st==='paid'?'PAID':st==='partial'?'PARTIAL':'CREDIT'}</span>${st!=='paid'?`<div style="color:var(--muted2);font-size:11px;margin-top:2px">Bal ${money(bal)}</div>`:''}`; }
@@ -1058,6 +1144,12 @@ function renderSidebar(){
 function toggleNavGroup(gi){ const el=$(`.nav-group[data-grp="${gi}"]`); if(el)el.classList.toggle('collapsed'); }
 function expandActiveGroup(v){ const gi=navGroupOf(v); if(gi<0)return; const el=$(`.nav-group[data-grp="${gi}"]`); if(el)el.classList.remove('collapsed'); }
 function go(v){
+  // Use the View Transitions API for a smooth cross-fade between screens where supported,
+  // falling back to the CSS enter-animation otherwise. Reduced-motion users skip both.
+  if(document.startViewTransition && !reducedMotion()){ document.startViewTransition(()=>_go(v,true)); }
+  else _go(v,false);
+}
+function _go(v,vt){
   if(!canView(v)) v = canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales');
   $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
   $$('#bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
@@ -1065,7 +1157,7 @@ function go(v){
   const main=$('#main');
   main.innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
-  main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); // replay enter animation
+  if(!vt){ main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); } // replay enter animation (fallback path)
   animateCounts(main);
   if(window.innerWidth<=860) closeNav();
   window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); if(session)applyAccess();
@@ -1341,6 +1433,7 @@ function newPurchase(id,prefillPid){
 function renderPurchaseModal(){
   const id=_buyEditId, p=id?DB.purchases.find(x=>x.id===id):null;
   openModal(`${id?'Edit':'New'} Purchase`,`
+    ${flowScaffold('b_flow',['Products','Payment','Settled'])}
     <div class="grid2">
       <div class="field"><label>Date *</label><input id="b_date" type="date" value="${p?p.date:todayStr()}"></div>
       <div class="field"><label>Supplier (purchaser name)</label><input id="b_sup" list="dl_sup" value="${esc(p?p.supplier||'':'')}" placeholder="e.g. Carrefour Deira">${dataList('dl_sup',allSuppliers())}</div>
@@ -1382,7 +1475,7 @@ function renderBuyRows(){
     </div><div class="li-hint">${it.productId?`In stock <b style="color:var(--green)">${num(st)}</b> · avg buy <b style="color:var(--gold2)">${money(bp)}</b>${last?` · last cost ${money(last)}`:''}`:'Search & pick a product (most recently stocked shown first)'}</div>`; }).join('');
   buyCalcTotal();
 }
-function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); }
+function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); flashNewRow('#b_rows .li-row'); }
 function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#np_name')?.focus(),30); }
 function buyAddNewProduct(){
   const name=$('#np_name').value.trim(); if(!name)return toast('Enter a product name',1);
@@ -1431,7 +1524,7 @@ function renderBuySplits(){
   }).join('');
   buyCalcTotal();
 }
-function addBuySplit(){ buySplits.push({method:'card',cardId:'',ref:'',amount:''}); renderBuySplits(); }
+function addBuySplit(){ buySplits.push({method:'card',cardId:'',ref:'',amount:''}); renderBuySplits(); flashNewRow('#b_splits .split-row'); }
 function buySplitCardPick(i,val){ if(val==='__new'){ quickAddCardFromPurchase(i); return; } buySplits[i].cardId=val; buyCalcTotal(); }
 function quickAddCardFromPurchase(i){
   openModal('Add Card',`
@@ -1476,6 +1569,11 @@ function buyCalcTotal(){
       <span style="color:${Math.abs(rem)<0.01?'var(--green)':(rem>0?'var(--amber)':'var(--red)')}">${money(Math.abs(rem))}</span></div>`;
   $$('#b_rows .li-row').forEach((row,i)=>{const amt=row.querySelector('input[disabled]');if(amt&&buyItems[i])amt.value=num((+buyItems[i].qty||0)*(+buyItems[i].rate||0));});
   updateSplitHints();
+  setFlow('b_flow',[
+    buyItems.some(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)),
+    paid>0,
+    tot>0 && Math.abs(rem)<0.01
+  ]);
 }
 function savePurchase(id){
   const items=buyItems.filter(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}));
@@ -1649,6 +1747,7 @@ function newSale(id,prefillPid){
   const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):'none';
   const collBy=s?(s.collectedBy||s.byId||session.id):session.id;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
+    ${flowScaffold('s_flow',['Items','Payment','Settled'])}
     <div class="grid3">
       <div class="field"><label>Date *</label><input id="s_date" type="date" value="${date}"></div>
       <div class="field"><label>Customer (buyer name)</label><input id="s_cust" list="dl_cust" value="${esc(cust||'')}" placeholder="Walk-in" onchange="saleCustAutofill()" oninput="saleCustAutofill()">${dataList('dl_cust',allCustomers())}</div>
@@ -1709,7 +1808,7 @@ function renderSaleRows(){
   </div><div class="li-hint">${saleHintHtml(i,eng)}</div>`; }).join('');
   saleCalc();
 }
-function addSaleRow(){saleDraft.push({productId:'',qty:1,rate:''});renderSaleRows();}
+function addSaleRow(){saleDraft.push({productId:'',qty:1,rate:''});renderSaleRows();flashNewRow('#s_rows .li-row');}
 let _salePaidTouched=false;
 function saleCalc(){
   const eng=computeEngine();
@@ -1739,6 +1838,11 @@ function saleCalc(){
     if(qtyIn)qtyIn.classList.toggle('qty-over',!!over);
     const hint=row.nextElementSibling; if(hint&&hint.classList.contains('li-hint'))hint.innerHTML=saleHintHtml(i,eng);
   });
+  setFlow('s_flow',[
+    saleDraft.some(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)),
+    !!(paidEl&&paidEl.value!==''&&received>0),
+    total>0 && received>0 && bal<=0.01
+  ]);
 }
 function saveSale(id,print){
   const items=saleDraft.filter(i=>i.productId&&(+i.qty>0)&&i.rate!==''&&(+i.rate>=0));
