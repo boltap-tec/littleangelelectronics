@@ -655,9 +655,11 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
   .prodcell{gap:8px;min-width:0}
   .prodcell .thumb{width:42px;height:42px;border-radius:10px}
   .prodcell .thumb.st{width:34px;height:34px}
-  .prodcell>span,.prodcell>b,.prodcell>div{flex:1 1 auto;min-width:0}
-  /* product name wraps to 2 readable lines instead of eating the whole row (Inventory / Purchases / Sales) */
-  .prodcell>span,.prodcell b,.prodcell>div>b{white-space:normal;overflow:hidden;line-height:1.22;word-break:break-word;
+  /* the image wrapper (thumb / edit-thumb / overlapping stack) stays a fixed size — never shrink or clip it */
+  .prodcell>.thumb,.prodcell>.thumb-edit,.prodcell>.pstack{flex:0 0 auto}
+  /* only the NAME element flexes & wraps to 2 lines; exclude the image wrappers so the photo isn't cut in half */
+  .prodcell>b,.prodcell>div,.prodcell>span:not(.thumb):not(.thumb-edit):not(.pstack){flex:1 1 auto;min-width:0}
+  .prodcell>b,.prodcell>div>b,.prodcell>span:not(.thumb):not(.thumb-edit):not(.pstack){white-space:normal;overflow:hidden;line-height:1.22;word-break:break-word;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13px}
   /* Inventory: fix the sticky first column to a compact width so you can swipe to value/status columns */
   #invList tbody td:first-child,#invList thead th:first-child{width:158px;min-width:158px;max-width:158px}
