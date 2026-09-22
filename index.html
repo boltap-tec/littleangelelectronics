@@ -3416,12 +3416,12 @@ function dayCard(g,idx,eng,owner){
       <div class="rd-caret">▼</div>
     </div>
     <div class="rd-kpis">
-      ${kpi('Sales',money(g.salesTotal),g.sales.length+' bill'+(g.sales.length===1?'':'s'),'var(--gold2)')}
-      ${kpi('Collected',money(g.received),'cash '+money(g.recvC)+' · card '+money(g.recvK),'var(--green)')}
+      ${kpi('Sales',money(g.salesTotal),g.sales.length+' bill'+(g.sales.length===1?'':'s'))}
+      ${kpi('Collected',money(g.received),'cash '+money(g.recvC)+' · card '+money(g.recvK))}
       ${kpi('Purchases',money(g.purchTotal),g.purch.length+' entr'+(g.purch.length===1?'y':'ies'))}
-      ${kpi('Paid Out',money(g.paid),'cash '+money(g.paidC)+' · card '+money(g.paidK),'var(--red)')}
+      ${kpi('Paid Out',money(g.paid),'cash '+money(g.paidC)+' · card '+money(g.paidK))}
       ${kpi('Expenses',money(g.expenses))}
-      ${owner?kpi('Profit',money(g.profit),'',g.profit>=0?'var(--green)':'var(--red)'):''}
+      ${owner?kpi('Profit',money(g.profit),'',g.profit<0?'var(--red)':''):''}
     </div>
     <div class="rep-daybody">${sec||'<div class="empty" style="padding:22px">No detail</div>'}</div>
   </div>`;
