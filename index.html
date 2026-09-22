@@ -635,6 +635,17 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
   #who,#walletChip{display:none !important}
   .wallet-btn{display:flex}
   .icon-btn{width:34px;height:34px;font-size:15px;flex:0 0 auto}
+  /* ---- compact product column on phones so the other columns stay reachable ---- */
+  .prodcell{gap:8px;min-width:0}
+  .prodcell .thumb{width:42px;height:42px;border-radius:10px}
+  .prodcell .thumb.st{width:34px;height:34px}
+  .prodcell>span,.prodcell>b,.prodcell>div{flex:1 1 auto;min-width:0}
+  /* product name wraps to 2 readable lines instead of eating the whole row (Inventory / Purchases / Sales) */
+  .prodcell>span,.prodcell b,.prodcell>div>b{white-space:normal;overflow:hidden;line-height:1.22;word-break:break-word;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13px}
+  /* Inventory: fix the sticky first column to a compact width so you can swipe to value/status columns */
+  #invList tbody td:first-child,#invList thead th:first-child{width:158px;min-width:158px;max-width:158px}
+  #invList table{min-width:640px}
 }
 </style>
 </head>
@@ -1211,7 +1222,11 @@ function expandActiveGroup(v){ const gi=navGroupOf(v); if(gi<0)return; const el=
 function go(v){
   // Use the View Transitions API for a smooth cross-fade between screens where supported,
   // falling back to the CSS enter-animation otherwise. Reduced-motion users skip both.
-  if(document.startViewTransition && !reducedMotion()){ document.startViewTransition(()=>_go(v,true)); }
+  if(document.startViewTransition && !reducedMotion()){
+    const t=document.startViewTransition(()=>_go(v,true));
+    // a rapid re-navigation skips the previous transition; swallow its expected rejection
+    t.ready&&t.ready.catch(()=>{}); t.finished&&t.finished.catch(()=>{});
+  }
   else _go(v,false);
 }
 function _go(v,vt){
