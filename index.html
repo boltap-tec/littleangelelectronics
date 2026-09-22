@@ -2727,18 +2727,13 @@ function editCard(id){
         <option value="1" ${c.allowNegative?'selected':''}>⚠️ Allow — permit a negative balance (pay it immediately)</option>
       </select>
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Only cards set to <b>Allow</b> can be swiped past the limit. Any card that goes negative triggers an immediate “pay now” alert.</div></div>
-    ${id?'':`<div class="grid2">
-      <div class="field"><label>Available Balance (${S().currency})</label><input id="c_avail" type="number" step="any" value="" placeholder="usable balance right now — blank = full limit" oninput="cAvailSync('avail')"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">How much you can currently spend on this card.</div></div>
-      <div class="field"><label>Opening Outstanding (${S().currency})</label><input id="c_open" type="number" min="0" step="any" value="0" placeholder="or enter amount already owed" oninput="cAvailSync('open')"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Auto-filled from available &amp; limit.</div></div>
-    </div>`}`,
+    ${id?'':`<div class="field"><label>Available Balance right now (${S().currency})</label>
+      <input id="c_avail" type="number" step="any" value="" placeholder="how much you can still spend — blank = full limit">
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Your current spendable balance (Limit − whatever you already owe). It updates automatically as you buy &amp; pay — leave blank if nothing is owed yet.</div></div>`}`,
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme);
 }
-/* keep Available Balance and Opening Outstanding mirrored via the monthly limit */
-function cAvailSync(src){ const limEl=$('#c_limit'),avEl=$('#c_avail'),opEl=$('#c_open'); if(!limEl||!avEl||!opEl)return; const lim=+limEl.value||0;
-  if(src==='avail'){ opEl.value = avEl.value==='' ? '' : (Math.round((lim-(+avEl.value||0))*100)/100); }
-  else{ avEl.value = opEl.value==='' ? '' : (Math.round((lim-(+opEl.value||0))*100)/100); } }
 function saveCard(id){
   const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
@@ -2747,7 +2742,8 @@ function saveCard(id){
     allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
   if(id){ Object.assign(cardById(id),data); }
-  else{ const availRaw=$('#c_avail').value; data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : (+$('#c_open').value||0); data.txns=[]; DB.cards.push({id:uid(),...data}); }
+  else{ const availRaw=$('#c_avail').value;   // opening outstanding is derived: Limit − Available (blank ⇒ nothing owed yet)
+    data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : 0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
 }
 function delCard(id){
