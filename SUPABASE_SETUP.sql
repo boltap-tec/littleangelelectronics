@@ -24,10 +24,22 @@ create policy "app_state open access"
   using (true)
   with check (true);
 
--- 4) (Optional) create the empty 'main' row now. The app also creates it
+-- 4) Enable Realtime on the table so every device gets live updates.
+--    (Safe to run repeatedly — it ignores the error if it's already added.)
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.app_state;
+  exception when duplicate_object then null;
+           when undefined_object  then null;   -- publication not present on very old projects
+  end;
+end $$;
+
+-- 5) (Optional) create the empty 'main' row now. The app also creates it
 --    automatically on first save, so this step is not required.
 insert into public.app_state (id, data)
 values ('main', '{}'::jsonb)
 on conflict (id) do nothing;
 
 -- Done. Now paste your Project URL + anon key into index.html (SUPABASE_URL / SUPABASE_ANON_KEY).
+-- If you set this up before, just re-run step 4 once to turn on live sync.

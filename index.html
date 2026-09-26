@@ -968,35 +968,151 @@ const cloudOn = () => /^https:\/\/.+\.supabase\.co/.test(SUPABASE_URL)
   && typeof window!=='undefined' && window.supabase;
 function cloudInit(){ if(cloudOn() && !sb){ try{ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); }catch(e){ sb=null; } } return sb; }
 
+/* ---------- sync internals: concurrency-safe writes + live merge ----------
+   The whole DB is one JSON row. To avoid one device overwriting another's
+   changes, every cloud write is guarded by the row's updated_at token, and a
+   conflict triggers a 3-way merge (baseline / this device / cloud) before we
+   retry. A Realtime subscription pulls & merges other devices' changes live. */
+const _clone = x => JSON.parse(JSON.stringify(x==null?null:x));
+const _byId  = arr => { const m={}; (arr||[]).forEach(x=>{ if(x&&x.id!=null) m[x.id]=x; }); return m; };
+let   cloudUpdatedAt = null;   // updated_at token of the cloud copy we last synced with
+let   _sub = null;             // realtime channel
+let   baseline = (()=>{ try{ return JSON.parse(localStorage.getItem(KEY+'_base')); }catch(e){ return null; } })();
+function _setBaseline(){ baseline=_clone(DB); try{ localStorage.setItem(KEY+'_base', JSON.stringify(baseline)); }catch(e){} }
+
+/* merge one collection of {id,...} records using a 3-way (base/local/remote) diff.
+   preferLocal decides same-record edit conflicts (our write vs theirs). */
+function _mergeColl(base, local, remote, preferLocal){
+  const bi=_byId(base), li=_byId(local), ri=_byId(remote);
+  const ids=new Set([...Object.keys(li),...Object.keys(ri),...Object.keys(bi)]);
+  const out=[];
+  ids.forEach(id=>{
+    const b=bi[id], l=li[id], r=ri[id];
+    const sB=b?JSON.stringify(b):null, sL=l?JSON.stringify(l):null, sR=r?JSON.stringify(r):null;
+    if(l && r){                                   // present on both sides
+      if(sL===sR) out.push(l);
+      else if(b && sB===sL) out.push(r);          // only remote edited it
+      else if(b && sB===sR) out.push(l);          // only local edited it
+      else out.push(preferLocal ? l : r);         // both edited (or no base) → tie-break
+    } else if(l && !r){                           // missing on remote
+      if(b && sB===sL) { /* unchanged locally & gone remotely → remote deleted it */ }
+      else out.push(l);                           // locally added, or locally edited after a remote delete
+    } else if(!l && r){                           // missing locally
+      if(b && sB===sR) { /* unchanged remotely & gone locally → local deleted it */ }
+      else out.push(r);                           // remotely added, or remotely edited after a local delete
+    }
+  });
+  return out;
+}
+function _mergeObj(base, local, remote, preferLocal){   // 3-way merge of a flat object (settings)
+  base=base||{}; local=local||{}; remote=remote||{};
+  const out={...local}; const keys=new Set([...Object.keys(local),...Object.keys(remote)]);
+  keys.forEach(k=>{
+    const bv=JSON.stringify(base[k]), lv=JSON.stringify(local[k]), rv=JSON.stringify(remote[k]);
+    if(lv===rv) out[k]=local[k];
+    else if(lv===bv) out[k]=remote[k];            // only remote changed
+    else if(rv===bv) out[k]=local[k];             // only local changed
+    else out[k]= preferLocal ? local[k] : remote[k];
+  });
+  return out;
+}
+function mergeDB(base, local, remote, preferLocal){
+  base=base||{}; local=local||{}; remote=remote||{};
+  const out=_clone(local);
+  ['users','products','purchases','sales','cards','cash','approvals'].forEach(k=>{
+    out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal);
+  });
+  out.counters=out.counters||{}; const lc=local.counters||{}, rc=remote.counters||{};
+  new Set([...Object.keys(lc),...Object.keys(rc)]).forEach(k=>{ out.counters[k]=Math.max(+lc[k]||0,+rc[k]||0); });
+  out.settings=_mergeObj(base.settings, local.settings, remote.settings, preferLocal);
+  return out;
+}
+
 let _pushT=null;
-function cloudPush(){                 // debounced upsert of the whole DB blob
+function cloudPush(){                  // debounced, concurrency-safe save of the whole DB
   if(!cloudInit()) return;
   clearTimeout(_pushT);
-  _pushT=setTimeout(async()=>{
-    try{
-      const { error } = await sb.from('app_state')
-        .upsert({ id:CLOUD_ROW_ID, data:DB, updated_at:new Date().toISOString() });
-      if(error) throw error;
-    }catch(e){ console.warn('Cloud save failed:',e.message||e); toast('Cloud save failed — saved on this device only','bad'); }
-  },600);
+  _pushT=setTimeout(()=>{ cloudSaveNow().catch(e=>console.warn('Cloud save failed:',e&&e.message||e)); },600);
 }
-async function cloudPull(){           // fetch cloud copy; seed cloud if empty
+async function cloudSaveNow(){
+  if(!cloudInit()) return false;
+  for(let attempt=0; attempt<5; attempt++){
+    const payload={ data:DB, updated_at:new Date().toISOString() };
+    try{
+      let q=sb.from('app_state').update(payload).eq('id',CLOUD_ROW_ID);
+      if(cloudUpdatedAt) q=q.eq('updated_at',cloudUpdatedAt);   // only write if nobody changed it since
+      const { data:rows, error }=await q.select('updated_at');
+      if(error) throw error;
+      if(rows && rows.length){ cloudUpdatedAt=rows[0].updated_at; _setBaseline(); return true; }
+      // 0 rows updated → the row is new, or someone else wrote first. Fetch the truth.
+      const { data:cur, error:e2 }=await sb.from('app_state').select('data,updated_at').eq('id',CLOUD_ROW_ID).maybeSingle();
+      if(e2) throw e2;
+      if(!cur){                                                 // row doesn't exist yet → create it
+        const ins=await sb.from('app_state').insert({ id:CLOUD_ROW_ID, ...payload }).select('updated_at');
+        if(!ins.error && ins.data && ins.data.length){ cloudUpdatedAt=ins.data[0].updated_at; _setBaseline(); return true; }
+        cloudUpdatedAt=null; continue;                          // lost the insert race → retry as update
+      }
+      // conflict → merge cloud into local (our in-flight edits win same-record ties), then retry
+      DB=mergeDB(baseline, DB, cur.data, true);
+      cloudUpdatedAt=cur.updated_at;
+      try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
+      reSync();
+    }catch(e){ console.warn('Cloud save error:',e&&e.message||e); toast('Cloud save failed — saved on this device only','bad'); return false; }
+  }
+  return false;
+}
+async function cloudPull(){            // fetch cloud copy on boot and merge it with local
   if(!cloudInit()) return false;
   try{
-    const { data, error } = await sb.from('app_state').select('data').eq('id',CLOUD_ROW_ID).maybeSingle();
+    const { data, error }=await sb.from('app_state').select('data,updated_at').eq('id',CLOUD_ROW_ID).maybeSingle();
     if(error) throw error;
-    const cloud = data && data.data;
-    const cloudHasData = cloud && Array.isArray(cloud.users) && cloud.users.length>0;   // real data, not an empty {} seed row
+    const cloud=data && data.data;
+    const cloudHasData=cloud && Array.isArray(cloud.users) && cloud.users.length>0;
     if(cloudHasData){
-      DB = cloud;
-      if(!DB.settings) DB.settings = seed().settings;
+      DB=mergeDB(baseline, DB, cloud, false);      // remote wins genuine same-record ties on boot
+      if(!DB.settings) DB.settings=seed().settings;
       migrate();
-      localStorage.setItem(KEY, JSON.stringify(DB)); // refresh offline cache (no re-push)
+      cloudUpdatedAt=data.updated_at;
+      _setBaseline();
+      localStorage.setItem(KEY, JSON.stringify(DB));
+      if(JSON.stringify(DB)!==JSON.stringify(cloud)) cloudPush();   // we had local-only changes → push them up
       return true;
     }
-    cloudPush();                      // cloud empty / not seeded → push THIS device's data up
+    cloudPush();                        // cloud empty / not seeded → push THIS device's data up
     return false;
   }catch(e){ console.warn('Cloud load failed:',e.message||e); toast('Cloud offline — using this device','bad'); return false; }
+}
+function cloudSubscribe(){             // live updates from other devices
+  if(!cloudInit() || _sub) return;
+  try{
+    _sub=sb.channel('app_state_rt')
+      .on('postgres_changes',{ event:'*', schema:'public', table:'app_state', filter:'id=eq.'+CLOUD_ROW_ID },
+          ()=>{ cloudRefresh().catch(()=>{}); })
+      .subscribe();
+  }catch(e){ console.warn('Realtime subscribe failed:',e&&e.message||e); }
+}
+async function cloudRefresh(){         // re-fetch after a remote change, merge, re-render
+  if(!cloudInit()) return;
+  const { data, error }=await sb.from('app_state').select('data,updated_at').eq('id',CLOUD_ROW_ID).maybeSingle();
+  if(error || !data || !data.data) return;
+  if(data.updated_at===cloudUpdatedAt) return;    // our own echo / nothing new
+  DB=mergeDB(baseline, DB, data.data, false);      // incoming change is newer → it wins same-record ties
+  if(!DB.settings) DB.settings=seed().settings;
+  migrate();
+  cloudUpdatedAt=data.updated_at;
+  _setBaseline();
+  try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
+  reSync();
+}
+/* re-point the session at the merged user record and refresh the current screen */
+function reSync(){
+  try{
+    if(session){ const u=(DB.users||[]).find(x=>x.id===session.id);
+      if(u){ session=u; applyBrand(); applyAccess(); go($('.nav-item.active')?.dataset.view || 'dashboard'); }
+      else { logout(); return; } }
+    if(typeof renderApprovalsBadge==='function') renderApprovalsBadge();
+    if(typeof renderBell==='function') renderBell();
+  }catch(e){ console.warn('reSync failed:',e&&e.message||e); }
 }
 
 const $=(s,r=document)=>r.querySelector(s);
@@ -4165,12 +4281,12 @@ $('#loginBadge').innerHTML=logoMark(58);
 restoreSession();   // keep the user logged in across refreshes
 document.addEventListener('click',e=>{ const w=$('#bellWrap'); if(w&&!w.contains(e.target))$('#bellPop')?.classList.add('hidden');
   const ww=$('#walletWrap'), wc=$('#walletChip'); if((!ww||!ww.contains(e.target))&&(!wc||!wc.contains(e.target)))$('#walletPop')?.classList.add('hidden'); });
-/* pull the shared cloud copy (if configured); refresh screen when it arrives */
+/* pull the shared cloud copy (if configured), merge it, then subscribe for live updates */
 cloudPull().then(ok=>{
+  cloudSubscribe();               // start live sync from other devices (no-op if cloud is off)
   if(!ok) return;
   applyTheme();
-  // cloud data replaced DB — re-point the session at the fresh user record (or sign out if it's gone)
-  if(session){ const u=DB.users.find(x=>x.id===session.id); if(u){ session=u; applyBrand(); applyAccess(); go($('.nav-item.active')?.dataset.view || 'dashboard'); } else { logout(); } }
+  reSync();                       // cloud data merged in — re-point session & refresh the screen
 });
 </script>
 </body>
