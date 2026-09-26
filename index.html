@@ -2897,7 +2897,7 @@ function cardDetail(id){
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       <td>${esc(t.note||'')}</td>
       ${txnAmtCell(t)}
-      <td class="num"><button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button></td></tr>`).join('')
+      <td class="num" style="white-space:nowrap">${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button></td></tr>`).join('')
     : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(c.name),`
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
@@ -2918,31 +2918,64 @@ function cardDetail(id){
      <button class="btn-sm btn-ghost" onclick="editCard('${c.id}')">Edit</button>
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
 }
-function cardTxnModal(id,type){
-  const c=cardById(id); const out=c?cardOutstanding(c):0;
+/* live "available after" preview inside the card-entry modal */
+let _ctBase=0,_ctSign=1,_ctNeg=false;
+function ctCalcAfter(){
+  const el=$('#ct_after'); if(!el)return;
+  const amt=+($('#ct_amt')?.value)||0;
+  const after=_ctBase + _ctSign*amt;
+  el.textContent=money(after);
+  el.style.color = after<-0.005 ? 'var(--red)' : 'var(--green)';
+  const w=$('#ct_warn'); if(w) w.style.display=(after<-0.005 && !_ctNeg) ? 'block' : 'none';
+}
+function cardTxnModal(id,type,txnId){
+  const c=cardById(id); if(!c)return;
+  const edit = txnId ? (c.txns||[]).find(t=>t.id===txnId) : null;
+  const out=cardOutstanding(c), avail=cardAvailable(c);
+  const sign = (type==='purchase') ? -1 : 1;                 // how the amount moves AVAILABLE
+  const base = edit ? (avail - sign*(+edit.amount||0)) : avail;   // available without this entry
+  const preAmt = edit ? (+edit.amount||0) : 0;
+  _ctBase=base; _ctSign=sign; _ctNeg=!!c.allowNegative;
+  const word={recharge:'recharge',payment:'payment',discount:'redeem',purchase:'charge'}[type]||'entry';
   const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Redeem Points',purchase:'Manual Charge'};
   const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Redeem points / cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
-  const dueDate=c?nextDue(c.paymentDay):null;
-  openModal(titles[type]||'Card entry',`
+  const dueDate=nextDue(c.paymentDay);
+  openModal((edit?'Edit ':'')+(titles[type]||'Card entry'),`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
-    ${type==='payment'?`<div class="totbox" style="margin-bottom:14px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div>${dueDate?`<div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div>`:''}</div>`:''}
-    <div class="grid2">
-      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00" value="${type==='payment'&&out>0.005?(+out.toFixed(2)):''}"></div>
-      <div class="field"><label>Date</label><input id="ct_date" type="date" value="${todayStr()}"></div>
+    ${type==='payment'?`<div class="totbox" style="margin-bottom:12px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div><div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div></div>`:''}
+    <div class="totbox" style="margin-bottom:14px">
+      <div class="totrow"><span>Available ${edit?'before this entry':'now'}</span><span>${money(base)}</span></div>
+      <div class="totrow" style="font-weight:800"><span>After this ${word}</span><span id="ct_after" style="color:var(--green)">${money(base+sign*preAmt)}</span></div>
+      <div id="ct_warn" style="display:none;color:var(--red);font-size:12px;margin-top:6px">⚠ This pushes the card over its limit (negative available).</div>
     </div>
-    <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no."></div>
+    <div class="grid2">
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00" value="${edit?preAmt:(type==='payment'&&out>0.005?(+out.toFixed(2)):'')}" oninput="ctCalcAfter()"></div>
+      <div class="field"><label>Date</label><input id="ct_date" type="date" value="${edit?esc(edit.date||todayStr()):todayStr()}"></div>
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no." value="${edit?esc(edit.note||''):''}"></div>
     ${(type==='recharge'||type==='payment')?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px;cursor:pointer">
-      <input type="checkbox" id="ct_cash" style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Paid from cash box (deduct from Cash Book)</span></label>`:''}`,
+      <input type="checkbox" id="ct_cash" ${edit&&edit.fromCash?'checked':''} style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Paid from cash box (deduct from Cash Book)</span></label>`:''}`,
     `<button class="btn-sm btn-ghost" onclick="cardDetail('${id}')">Back</button>
-     <button class="btn-sm" onclick="saveCardTxn('${id}','${type}')">Save</button>`);
-  setTimeout(()=>$('#ct_amt')?.focus(),30);
+     <button class="btn-sm" onclick="saveCardTxn('${id}','${type}'${edit?`,'${txnId}'`:''})">${edit?'Update':'Save'}</button>`);
+  setTimeout(()=>{$('#ct_amt')?.focus();ctCalcAfter();},30);
 }
-function saveCardTxn(id,type){
+function saveCardTxn(id,type,txnId){
   const c=cardById(id); if(!c)return; const amt=+$('#ct_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   if(!c.txns)c.txns=[];
   const fromCash=!!$('#ct_cash')?.checked;
-  c.txns.push({id:uid(),date:$('#ct_date').value||todayStr(),type,amount:amt,note:$('#ct_note').value.trim(),fromCash,byId:session.id});
-  save(); toast(fromCash?'Saved · cash deducted':'Saved'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+  const date=$('#ct_date').value||todayStr(), note=$('#ct_note').value.trim();
+  if(txnId){                                   // EDIT — update in place; statement recalculates
+    const t=(c.txns||[]).find(x=>x.id===txnId); if(!t)return toast('Entry not found',1);
+    if(t.srcPurchaseId)return toast('This entry comes from a purchase — edit it there',1);
+    t.amount=amt; t.date=date; t.note=note;
+    if(type==='recharge'||type==='payment') t.fromCash=fromCash;
+    t.editedBy=session.id; t.editedAt=todayStr();
+    save(); toast('Entry updated');
+  }else{                                       // NEW
+    c.txns.push({id:uid(),date,type,amount:amt,note,fromCash,byId:session.id});
+    save(); toast(fromCash?'Saved · cash deducted':'Saved');
+  }
+  cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 function delCardTxn(cid,tid){ const c=cardById(cid); if(!c)return;
   confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
@@ -3423,20 +3456,34 @@ function cardCashModal(){
   openModal('Card Recharge / Payment (from cash)',`
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Deposit cash to a card or pay its due from a wallet. Recorded in the card ledger AND deducted from the wallet.</p>
     <div class="grid2">
-      <div class="field"><label>Card *</label>${cardPickerHtml('cc_card', activeCards(), '', c=>'due '+money(Math.max(0,cardOutstanding(c))), 'Type owner name or last 4 digits…', ()=>cardCashDue())}</div>
-      <div class="field"><label>Type *</label><select id="cc_type"><option value="payment">Payment (reduce card due)</option><option value="recharge">Recharge (add funds)</option></select></div>
+      <div class="field"><label>Card *</label>${cardPickerHtml('cc_card', activeCards(), '', c=>'due '+money(Math.max(0,cardOutstanding(c))), 'Type owner name or last 4 digits…', ()=>{cardCashDue();ccCalcAfter();})}</div>
+      <div class="field"><label>Type *</label><select id="cc_type" onchange="ccCalcAfter()"><option value="payment">Payment (reduce card due)</option><option value="recharge">Recharge (add funds)</option></select></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Amount (${S().currency}) *</label><input id="cc_amt" type="number" min="0" step="any" placeholder="0.00"></div>
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="cc_amt" type="number" min="0" step="any" placeholder="0.00" oninput="ccCalcAfter()"></div>
       <div class="field"><label>Date</label><input id="cc_date" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="totbox" id="cc_prevbox" style="margin-bottom:14px;display:none">
+      <div class="totrow"><span>Available now</span><span id="cc_before">—</span></div>
+      <div class="totrow" style="font-weight:800"><span>After this entry</span><span id="cc_after" style="color:var(--green)">—</span></div>
     </div>
     ${owner?`<div class="field"><label>From wallet *</label><select id="cc_who">${DB.users.map(u=>`<option value="${u.id}" ${u.id===session.id?'selected':''}>${esc(u.name)}${u.id===session.id?' (you)':''}</option>`).join('')}</select></div>`:`<div class="field"><label>From wallet</label><input value="${esc(session.name)} (you)" disabled><input type="hidden" id="cc_who" value="${session.id}"></div>`}
     <div class="field"><label>Note (optional)</label><input id="cc_note" placeholder="e.g. deposited at bank"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveCardCash()">Save</button>`);
-  setTimeout(()=>$('#cc_amt')?.focus(),30);
+  setTimeout(()=>{$('#cc_amt')?.focus();ccCalcAfter();},30);
 }
 function cardCashDue(){ const c=cardById($('#cc_card').value); if(c&&$('#cc_type').value==='payment'&&!$('#cc_amt').value){ const o=cardOutstanding(c); if(o>0.005)$('#cc_amt').value=+o.toFixed(2); } }
+/* live "available now → after" preview for the cash recharge/payment modal */
+function ccCalcAfter(){
+  const box=$('#cc_prevbox'); if(!box)return;
+  const c=cardById($('#cc_card')?.value);
+  if(!c){ box.style.display='none'; return; }
+  const before=cardAvailable(c), amt=+($('#cc_amt')?.value)||0;
+  box.style.display='block';
+  $('#cc_before').textContent=money(before);
+  $('#cc_after').textContent=money(before+amt);   // payment & recharge both free up available
+}
 function saveCardCash(){
   const c=cardById($('#cc_card').value); if(!c)return toast('Pick a card',1);
   const amt=+$('#cc_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
