@@ -7,7 +7,7 @@
 <title>Little Angel Electronics</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#0b1220; --bg2:#0f172a; --panel:#111c33; --panel2:#152344;
@@ -21,7 +21,7 @@
   --blue:#38bdf8;
   --radius:16px; --radius-sm:11px;
   --shadow:0 12px 34px rgba(0,0,0,.45);
-  --font:'Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;
+  --font:'Plus Jakarta Sans','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
@@ -103,6 +103,33 @@ body.mint .tag.bank{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 body.mint .btn-primary,body.mint .btn{--brand:#17a24d;--brand2:#2bc46a}
 body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 
+/* ================= OCEAN (PREMIUM) THEME =================
+   Dark-based (no .light class) — deep teal panels with cyan accents. */
+body.ocean{
+  --bg:#07141c; --bg2:#0a1c27; --panel:#0d2431; --panel2:#123240;
+  --line:#1c3a49; --line2:#27505f;
+  --text:#e6f6fb; --muted:#93b6c4; --muted2:#638190;
+  --brand:#06b6d4; --brand2:#22d3ee; --brandsoft:#0a3a45;
+  --gold:#f5b301; --gold2:#ffcf3f;
+  --green:#22c55e; --greensoft:#0e2e24;
+  --red:#f43f5e; --redsoft:#3a1622;
+  --amber:#f5cf7a; --ambersoft:#33301a;
+  --blue:#38bdf8;
+  --shadow:0 16px 42px rgba(0,0,0,.55);
+  --font:'Plus Jakarta Sans','Poppins',system-ui,-apple-system,Roboto,Arial,sans-serif;
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(6,182,212,.22), transparent 60%),
+    radial-gradient(900px 520px at -10% 110%, rgba(56,189,248,.12), transparent 55%),
+    var(--bg);
+}
+body.ocean h1,body.ocean h2,body.ocean h3,body.ocean .stat .val,body.ocean .login-card h1{
+  font-weight:800;letter-spacing:-.4px}
+body.ocean .topbar{background:rgba(10,28,39,.82)}
+body.ocean .brand-badge,body.ocean .topbar .logo{background:radial-gradient(circle at 50% 40%,#0e3644,#0a2530)}
+body.ocean .nav-item.active{background:var(--brandsoft);color:var(--brand2)}
+body.ocean .chip .dot{background:var(--brand2)}
+body.ocean ::-webkit-scrollbar-thumb{background:#1c3a49}
+
 /* theme picker in Settings */
 .theme-choose{display:flex;gap:14px;flex-wrap:wrap}
 .theme-opt{background:var(--bg);border:2px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;color:var(--text);
@@ -115,6 +142,7 @@ body.mint ::-webkit-scrollbar-thumb{background:#a6ddbf}
 .tp-light{background:#eef1f8}.tp-light span{background:#c3ccdf}.tp-light span:nth-child(2){background:#6366f1}
 .tp-dark{background:#0b1220}.tp-dark span{background:#2c3e63}.tp-dark span:nth-child(2){background:#818cf8}
 .tp-mint{background:#d2f0df}.tp-mint span{background:#a6ddbf}.tp-mint span:nth-child(1){background:#13224c}.tp-mint span:nth-child(2){background:#1aae57}
+.tp-ocean{background:#07141c}.tp-ocean span{background:#1c3a49}.tp-ocean span:nth-child(2){background:#22d3ee}
 
 /* ================= BOTTOM NAV (mobile) ================= */
 .bottomnav{display:none}
@@ -899,7 +927,7 @@ function seed(){
       lowStockLevel:3,
       avgWindowN:0, avgWindowUnit:'all',
       imgApiKey:'', imgCseId:'',
-      theme:'dark'
+      theme:'ocean'
     }
   };
 }
@@ -1264,10 +1292,11 @@ function restoreSession(){
 }
 function applyBrand(){ $('#brandName').textContent=S().company; $('#brandCity').textContent=S().city; document.title='Little Angel Electronics';
   $('#topLogo').innerHTML=brandMark(30); applyTheme(); }
-function applyTheme(){ const t=S().theme, dark=t==='dark';
+function applyTheme(){ const t=S().theme, darkish=(t==='dark'||t==='ocean');
   document.body.classList.toggle('light', t==='light'||t==='mint');
   document.body.classList.toggle('mint', t==='mint');
-  const b=$('#themeBtn'); if(b)b.textContent=dark?'☀️':'🌙'; }
+  document.body.classList.toggle('ocean', t==='ocean');
+  const b=$('#themeBtn'); if(b)b.textContent=darkish?'☀️':'🌙'; }
 function toggleTheme(){ S().theme = S().theme==='dark'?'light':'dark'; save(); applyTheme(); toast(S().theme==='dark'?'Dark theme on':'Bright theme on'); }
 function setTheme(t){ S().theme=t; save(); applyTheme(); if($('.nav-item.active')?.dataset.view==='settings')go('settings'); }
 
@@ -3635,6 +3664,8 @@ views.settings=function(){
         <div class="tp tp-light"><span></span><span></span><span></span></div>Bright</button>
       <button class="theme-opt ${st.theme==='mint'?'on':''}" onclick="setTheme('mint')">
         <div class="tp tp-mint"><span></span><span></span><span></span></div>Mint</button>
+      <button class="theme-opt ${st.theme==='ocean'?'on':''}" onclick="setTheme('ocean')">
+        <div class="tp tp-ocean"><span></span><span></span><span></span></div>Ocean</button>
     </div>
   </div>
   <div class="panel">
@@ -3918,13 +3949,13 @@ function devClearAll(){
   if(!isOwner())return;
   openModal('🧨 Clear ALL Data',`
     <p style="margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.6">This permanently deletes <b style="color:var(--text)">everything</b> — products, purchases, sales, cards, cash, users &amp; settings — and resets the app to an empty state. <b style="color:var(--red)">This cannot be undone.</b></p>
-    <div class="field"><label>Developer password</label><input id="dev_pw" type="password" inputmode="numeric" placeholder="Enter password" autocomplete="off" onkeydown="if(event.key==='Enter')devClearConfirm()"></div>`,
+    <div class="field"><label>Developer password</label><input id="dev_pw" type="password" placeholder="Enter password" autocomplete="off" onkeydown="if(event.key==='Enter')devClearConfirm()"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm btn-red" onclick="devClearConfirm()">Clear everything</button>`);
   setTimeout(()=>$('#dev_pw')?.focus(),30);
 }
 function devClearConfirm(){
-  if(($('#dev_pw')?.value||'').trim()!=='1234'){ toast('Wrong developer password',1); return; }
+  if(($('#dev_pw')?.value||'').trim()!=='Arul@1987'){ toast('Wrong developer password',1); return; }
   try{ localStorage.removeItem(KEY); }catch(e){}
   DB=seed();
   try{ save(); }catch(e){}
