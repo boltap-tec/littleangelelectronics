@@ -1001,27 +1001,35 @@ let   _sub = null;             // realtime channel
 let   baseline = (()=>{ try{ return JSON.parse(localStorage.getItem(KEY+'_base')); }catch(e){ return null; } })();
 function _setBaseline(){ baseline=_clone(DB); try{ localStorage.setItem(KEY+'_base', JSON.stringify(baseline)); }catch(e){} }
 
-/* merge one collection of {id,...} records using a 3-way (base/local/remote) diff.
+/* merge one collection of {id,...} records. Adds & edits are unioned (a record
+   present on either side is kept); real deletions are NOT inferred here — they are
+   carried explicitly by tombstones (see _mergeDeleted / _maintainTombstones) so a
+   delete always wins and can't be resurrected by a stale copy on another device.
    preferLocal decides same-record edit conflicts (our write vs theirs). */
 function _mergeColl(base, local, remote, preferLocal){
   const bi=_byId(base), li=_byId(local), ri=_byId(remote);
-  const ids=new Set([...Object.keys(li),...Object.keys(ri),...Object.keys(bi)]);
+  const ids=new Set([...Object.keys(li),...Object.keys(ri)]);   // only records actually present somewhere
   const out=[];
   ids.forEach(id=>{
     const b=bi[id], l=li[id], r=ri[id];
     const sB=b?JSON.stringify(b):null, sL=l?JSON.stringify(l):null, sR=r?JSON.stringify(r):null;
-    if(l && r){                                   // present on both sides
+    if(l && r){                                   // present on both sides → resolve the edit
       if(sL===sR) out.push(l);
       else if(b && sB===sL) out.push(r);          // only remote edited it
       else if(b && sB===sR) out.push(l);          // only local edited it
       else out.push(preferLocal ? l : r);         // both edited (or no base) → tie-break
-    } else if(l && !r){                           // missing on remote
-      if(b && sB===sL) { /* unchanged locally & gone remotely → remote deleted it */ }
-      else out.push(l);                           // locally added, or locally edited after a remote delete
-    } else if(!l && r){                           // missing locally
-      if(b && sB===sR) { /* unchanged remotely & gone locally → local deleted it */ }
-      else out.push(r);                           // remotely added, or remotely edited after a local delete
-    }
+    } else if(l){ out.push(l); }                  // present locally only → keep (added or edited)
+    else if(r){ out.push(r); }                    // present remotely only → keep
+  });
+  return out;
+}
+/* merge two tombstone maps ({id:{t,dead}}) — the newer entry (larger t) wins,
+   so a later "revive" (dead:false, e.g. reloading demo) beats an older delete. */
+function _mergeDeleted(local, remote){
+  const out={}, L=local||{}, R=remote||{};
+  new Set([...Object.keys(L),...Object.keys(R)]).forEach(id=>{
+    const a=L[id], b=R[id];
+    out[id]= (a&&b) ? ((a.t||0)>=(b.t||0)?a:b) : (a||b);
   });
   return out;
 }
@@ -1040,9 +1048,13 @@ function _mergeObj(base, local, remote, preferLocal){   // 3-way merge of a flat
 function mergeDB(base, local, remote, preferLocal){
   base=base||{}; local=local||{}; remote=remote||{};
   const out=_clone(local);
+  const deleted=_mergeDeleted(local.deleted, remote.deleted);
+  const isDead=id=> !!(deleted[id] && deleted[id].dead);
   ['users','products','purchases','sales','cards','cash','approvals'].forEach(k=>{
-    out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal);
+    out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
+             .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
+  out.deleted=deleted;
   out.counters=out.counters||{}; const lc=local.counters||{}, rc=remote.counters||{};
   new Set([...Object.keys(lc),...Object.keys(rc)]).forEach(k=>{ out.counters[k]=Math.max(+lc[k]||0,+rc[k]||0); });
   out.settings=_mergeObj(base.settings, local.settings, remote.settings, preferLocal);
@@ -1082,7 +1094,18 @@ async function cloudSaveNow(){
   }
   return false;
 }
-async function cloudPull(){            // fetch cloud copy on boot and merge it with local
+async function cloudForcePush(){       // authoritative overwrite of the cloud row with THIS device's data
+  if(!cloudInit()){ _setBaseline(); return true; }   // cloud off → local baseline is enough
+  try{
+    const payload={ id:CLOUD_ROW_ID, data:DB, updated_at:new Date().toISOString() };
+    const { data, error }=await sb.from('app_state').upsert(payload).select('updated_at');
+    if(error) throw error;
+    if(data && data.length) cloudUpdatedAt=data[0].updated_at;
+    _setBaseline();
+    return true;
+  }catch(e){ console.warn('Cloud force-push failed:',e&&e.message||e); return false; }
+}
+async function cloudPull(){            // fetch cloud copy on boot — the CLOUD is the source of truth
   if(!cloudInit()) return false;
   try{
     const { data, error }=await sb.from('app_state').select('data,updated_at').eq('id',CLOUD_ROW_ID).maybeSingle();
@@ -1090,16 +1113,16 @@ async function cloudPull(){            // fetch cloud copy on boot and merge it 
     const cloud=data && data.data;
     const cloudHasData=cloud && Array.isArray(cloud.users) && cloud.users.length>0;
     if(cloudHasData){
-      DB=mergeDB(baseline, DB, cloud, false);      // remote wins genuine same-record ties on boot
+      DB=_clone(cloud);                 // ADOPT the cloud copy wholesale — never merge stale local data up
       if(!DB.settings) DB.settings=seed().settings;
       migrate();
       cloudUpdatedAt=data.updated_at;
       _setBaseline();
       localStorage.setItem(KEY, JSON.stringify(DB));
-      if(JSON.stringify(DB)!==JSON.stringify(cloud)) cloudPush();   // we had local-only changes → push them up
+      if(JSON.stringify(DB)!==JSON.stringify(cloud)) cloudPush();   // only migrate() tweaks — safe to push back
       return true;
     }
-    cloudPush();                        // cloud empty / not seeded → push THIS device's data up
+    cloudPush();                        // cloud empty / not seeded → seed it from this device once
     return false;
   }catch(e){ console.warn('Cloud load failed:',e.message||e); toast('Cloud offline — using this device','bad'); return false; }
 }
@@ -1112,12 +1135,12 @@ function cloudSubscribe(){             // live updates from other devices
       .subscribe();
   }catch(e){ console.warn('Realtime subscribe failed:',e&&e.message||e); }
 }
-async function cloudRefresh(){         // re-fetch after a remote change, merge, re-render
+async function cloudRefresh(){         // a remote device changed the cloud → adopt it & re-render
   if(!cloudInit()) return;
   const { data, error }=await sb.from('app_state').select('data,updated_at').eq('id',CLOUD_ROW_ID).maybeSingle();
   if(error || !data || !data.data) return;
   if(data.updated_at===cloudUpdatedAt) return;    // our own echo / nothing new
-  DB=mergeDB(baseline, DB, data.data, false);      // incoming change is newer → it wins same-record ties
+  DB=_clone(data.data);                            // ADOPT the newer cloud copy wholesale
   if(!DB.settings) DB.settings=seed().settings;
   migrate();
   cloudUpdatedAt=data.updated_at;
@@ -1150,6 +1173,7 @@ function seed(){
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
     products:[], purchases:[], sales:[], cards:[], cash:[],
+    deleted:{},                       // tombstones: id -> {t:timestamp, dead:bool} so deletes sync & stay deleted
     counters:{purchase:0,sale:0},
     settings:{
       company:'LITTLE ANGEL ELECTRONICS GENERAL TRADING - L.L.C - O.P.C',
@@ -1173,7 +1197,58 @@ function seed(){
   };
 }
 function load(){ try{DB=JSON.parse(localStorage.getItem(KEY))||seed()}catch(e){DB=seed()} if(!DB.settings)DB.settings=seed().settings; migrate(); }
-function save(){ localStorage.setItem(KEY,JSON.stringify(DB)); cloudPush(); }
+/* record tombstones for anything removed since the last synced baseline (so the
+   delete propagates to the cloud & other devices), and clear the tombstone for
+   anything present again (a revive, e.g. reloading demo). Called on every save. */
+function _maintainTombstones(){
+  if(!DB.deleted) DB.deleted={};
+  const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
+  const now=Date.now();
+  ['users','products','purchases','sales','cards','cash','approvals'].forEach(k=>{
+    const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
+    Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
+    Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
+  });
+}
+/* ---------- online-only mode: editing requires a live cloud connection ----------
+   The cloud is the single source of truth, so a change made offline would just be
+   overwritten (thrown away) on the next sync. We therefore block all writes while
+   offline and keep the app read-only until the connection returns. */
+function cloudConfigured(){ return /^https:\/\/.+\.supabase\.co/.test(SUPABASE_URL) && !SUPABASE_URL.includes('YOUR-PROJECT') && !!SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes('YOUR-'); }
+function isOnline(){ return (navigator.onLine!==false) && !!cloudInit(); }        // network up AND cloud SDK reachable
+function offlineBlocked(){ return cloudConfigured() && !isOnline(); }             // editing not allowed right now
+/* toast + banner when a write is attempted offline */
+function notifyOffline(){ try{ toast('📴 You are offline — changes are disabled until you reconnect',1); }catch(e){} updateOnlineUI(); }
+/* gate to put at the TOP of a user action so it never mutates or shows a false "saved" */
+function requireOnline(){ if(offlineBlocked()){ notifyOffline(); return false; } return true; }
+/* drop any in-memory change and restore exactly what is persisted (safety net).
+   If the persisted copy can't be read, we leave memory as-is (never wipe to empty). */
+function _revertToPersisted(){
+  let raw=null; try{ raw=localStorage.getItem(KEY); }catch(e){ return; }
+  if(raw==null) return;
+  try{ DB=JSON.parse(raw); if(!DB.settings)DB.settings=seed().settings; migrate(); }catch(e){ return; }
+  try{ closeModal(); }catch(e){}
+  try{ reSync(); }catch(e){}
+}
+function save(){
+  if(offlineBlocked()){ _revertToPersisted(); notifyOffline(); return false; }   // never persist an offline edit
+  _maintainTombstones(); localStorage.setItem(KEY,JSON.stringify(DB)); cloudPush(); return true;
+}
+/* show / hide the offline banner and reflect the current connection state */
+function updateOnlineUI(){
+  const blocked=offlineBlocked(); let bar=document.getElementById('offlineBar');
+  if(!blocked){ if(bar)bar.remove(); return; }
+  if(!bar){ bar=document.createElement('div'); bar.id='offlineBar'; document.body.appendChild(bar); }
+  const noReach = (navigator.onLine!==false) && !cloudInit();   // network is up but the cloud SDK never loaded
+  bar.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:center;gap:12px;background:#7a2b2b;color:#ffe3e3;font-weight:700;font-size:13px;text-align:center;padding:10px 14px;box-shadow:0 -2px 12px rgba(0,0,0,.28)';
+  bar.innerHTML = noReach
+    ? `⚠ Connection restored but sync isn’t active — reload to enable editing. <button onclick="location.reload()" style="background:#ffe3e3;color:#7a2b2b;border:0;border-radius:8px;padding:5px 12px;font-weight:800;cursor:pointer">Reload</button>`
+    : `📴 Offline — you can view data, but changes are disabled until you reconnect.`;
+}
+if(typeof window!=='undefined'){
+  window.addEventListener('offline', updateOnlineUI);
+  window.addEventListener('online', ()=>{ updateOnlineUI(); if(isOnline()){ try{ toast('✅ Back online — syncing latest data'); }catch(e){} cloudRefresh().catch(()=>{}); } });
+}
 /* migrate old records to include payment ledger */
 function migrate(){
   /* guarantee core structure — never leave the app without an admin login */
@@ -1181,6 +1256,7 @@ function migrate(){
   if(!DB.settings) DB.settings=sd.settings;
   ['products','purchases','sales','cards'].forEach(k=>{ if(!Array.isArray(DB[k]))DB[k]=[]; });
   if(!DB.counters) DB.counters={purchase:0,sale:0};
+  if(!DB.deleted || typeof DB.deleted!=='object' || Array.isArray(DB.deleted)) DB.deleted={};
   if(!Array.isArray(DB.users) || !DB.users.length) DB.users=sd.users;
   (DB.purchases||[]).forEach(p=>{ const tot=(+p.qty||0)*(+p.rate||0);
     if(p.paid===undefined){ p.paid=tot; p.payments=[{id:uid(),date:p.date,amount:tot,method:p.payment||'cash',ref:'Initial'}]; }
@@ -1376,6 +1452,11 @@ function darken(hex,f){ const h=(hex||'#888888').replace('#',''); let r=parseInt
   r=Math.round(r*(1-f));g=Math.round(g*(1-f));b=Math.round(b*(1-f)); return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join(''); }
 function guessHex(name){ const t=(name||'').toLowerCase().trim(); if(!t)return ''; const f=COLOR_PRESETS.find(c=>c.name.toLowerCase()===t)||COLOR_PRESETS.find(c=>t.includes(c.name.toLowerCase())||c.name.toLowerCase().includes(t)); return f?f.hex:'#8e93a1'; }
 function colorHexOf(p){ return p&&(p.colorHex|| (p.color?guessHex(p.color):'')); }
+/* stable, distinct colour for a product NAME — same product always gets the same
+   colour across Inventory / Purchases / Sales so it's easy to spot at a glance.
+   Tones are mid-range so they stay readable on both the light and dark themes. */
+const NAME_COLORS=['#e64980','#4c6ef5','#12b886','#f76707','#7950f2','#1098ad','#e8590c','#37b24d','#c2255c','#1971c2','#9c36b5','#0ca678','#f03e3e','#5f3dc4','#2b8a3e','#d6336c'];
+function prodNameColor(p){ const k=(p&&(p.id||p.name))||''; let h=0; for(let i=0;i<k.length;i++){ h=(h*31+k.charCodeAt(i))>>>0; } return NAME_COLORS[h%NAME_COLORS.length]; }
 
 function iconSVGtile(p){ return iconSVG(catKey(((p&&p.category)||'')+' '+((p&&p.name)||''))); }
 function productThumb(p,cls){
@@ -1803,6 +1884,7 @@ function clearStampImg(kind){ if(kind==='seal')S().sealUrl=''; else S().signUrl=
   const pv=$('#'+(kind==='seal'?'sealPrev':'signPrev')); if(pv)pv.innerHTML=`<span style="font-size:11px;color:#999">no ${kind}</span>`;
   toast((kind==='seal'?'Seal':'Signature')+' removed'); }
 function saveProduct(id){
+  if(!requireOnline())return;
   const name=$('#p_name').value.trim(); if(!name)return toast('Product name is required',1);
   const color=$('#p_color').value.trim();
   const data={name,category:$('#p_cat').value.trim(),unit:$('#p_unit').value.trim()||'pcs',sku:$('#p_sku').value.trim(),imageUrl:_imgBuf||'',color,colorHex:color?(_colorHex||guessHex(color)):''};
@@ -1810,6 +1892,7 @@ function saveProduct(id){
   save();closeModal();renderProducts();toast('Product saved');
 }
 function delProduct(id){
+  if(!requireOnline())return;
   const used=DB.purchases.some(p=>purchaseItems(p).some(it=>it.productId===id))||DB.sales.some(s=>s.items.some(i=>i.productId===id));
   if(used)return toast('Cannot delete: product used in purchases/sales',1);
   confirmBox('Delete product?','This cannot be undone.',()=>{DB.products=DB.products.filter(p=>p.id!==id);save();renderProducts();toast('Product deleted');});
@@ -1837,7 +1920,7 @@ function renderPurchases(){
     <thead><tr><th>Ref</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(p=>{const tot=purchaseTotal(p),its=purchaseItems(p),more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';return `<tr>
       <td><b class="rowlink" onclick="purchaseDetail('${p.id}')" title="View purchase details">${esc(p.ref)}</b></td><td>${fmtDate(p.date)}</td>
-      <td><div class="prodcell">${productStack(its)}<div><b>${esc(purchaseFirstName(p))}</b>${more}</div></div></td>
+      <td><div class="prodcell">${productStack(its)}<div><b style="color:${prodNameColor(productById(its[0]?.productId))}">${esc(purchaseFirstName(p))}</b>${more}</div></div></td>
       <td class="num">${num(purchaseQty(p))}</td><td class="num"><b>${money(tot)}</b></td>
       <td>${esc(p.supplier||'—')}</td><td>${payMethodTag(p.payment||'cash')}</td>
       <td>${statusTag(tot,p.paid)}</td>
@@ -1904,6 +1987,7 @@ function renderBuyRows(){
 function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); flashNewRow('#b_rows .li-row'); }
 function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#np_name')?.focus(),30); }
 function buyAddNewProduct(){
+  if(!requireOnline())return;
   const name=$('#np_name').value.trim(); if(!name)return toast('Enter a product name',1);
   const color=$('#np_color').value.trim();
   const np={id:uid(),name,category:$('#np_cat').value.trim(),unit:'pcs',sku:'',imageUrl:'',color,colorHex:color?guessHex(color):''};
@@ -1976,6 +2060,7 @@ function quickAddCardFromPurchase(i){
   setTimeout(()=>$('#qc_name')?.focus(),30);
 }
 function quickSaveCard(i){
+  if(!requireOnline())return;
   const name=$('#qc_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#qc_day').value||1));
   const c={id:uid(),name,owner:$('#qc_owner').value.trim(),bank:$('#qc_bank').value.trim(),number:$('#qc_number').value.trim(),theme:'indigo',
@@ -2006,6 +2091,7 @@ function buyCalcTotal(){
   ]);
 }
 function savePurchase(id){
+  if(!requireOnline())return;
   const items=buyItems.filter(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}));
   if(!items.length)return toast('Add at least one product with qty & cost',1);
   const gross=items.reduce((a,it)=>a+it.qty*it.rate,0);
@@ -2050,6 +2136,7 @@ function savePurchase(id){
   else if(tot>0 && paid>=tot-0.01) confetti();                  // 🎉 paid in full
 }
 function delPurchase(id){
+  if(!requireOnline())return;
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
   if(!isOwner()) return confirmBox('Send for approval?',`Deleting purchase <b>${esc(ref)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('purchase','delete',id,ref,null),'Send');
   confirmBox('Delete purchase?',`Delete <b>${esc(ref)}</b>? Inventory, cost, card balance & payments will recalculate. This cannot be undone.`,()=>{commitPurchaseDelete(id);save();renderPurchases();renderBell();toast('Purchase deleted');},'Delete');
@@ -2151,7 +2238,7 @@ function renderSales(){
     <tbody>${rows.map(s=>{const prof=isOwner()?netOf(s)-(eng.saleCost[s.id]||0):0;return `<tr>
       <td><b class="rowlink" onclick="saleDetail('${s.id}')" title="View bill details">${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td>
       <td>${esc(s.customer||'Walk-in')}${s.custPhone?` <a href="tel:${esc((s.custPhone||'').replace(/\s+/g,''))}" onclick="event.stopPropagation()" title="Call ${esc(s.custPhone)}" style="text-decoration:none;margin-left:4px">📞</a>`:''}</td>
-      <td><div class="prodcell">${productStack(s.items)}<div><b>${esc(itemsFirstName(s.items))}</b>${s.items.length>1?` <span style="color:var(--muted2)">+${s.items.length-1} more</span>`:''}</div></div></td><td class="num"><b>${money(s.total)}</b></td>
+      <td><div class="prodcell">${productStack(s.items)}<div><b style="color:${prodNameColor(productById(s.items[0]?.productId))}">${esc(itemsFirstName(s.items))}</b>${s.items.length>1?` <span style="color:var(--muted2)">+${s.items.length-1} more</span>`:''}</div></div></td><td class="num"><b>${money(s.total)}</b></td>
       ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}
       <td><span class="tag ${s.payment}">${s.payment.toUpperCase()}</span></td>
       <td>${statusTag(s.total,s.paid)}</td>
@@ -2283,6 +2370,7 @@ function saleCalc(){
   ]);
 }
 function saveSale(id,print){
+  if(!requireOnline())return;
   const items=saleDraft.filter(i=>i.productId&&(+i.qty>0)&&i.rate!==''&&(+i.rate>=0));
   if(!items.length)return toast('Add at least one item with qty & rate',1);
   // block selling more than available stock (accounting for this sale's own existing qty when editing)
@@ -2312,6 +2400,7 @@ function saveSale(id,print){
   if(print)setTimeout(()=>printSale(nid),120);
 }
 function delSale(id){
+  if(!requireOnline())return;
   const rec=DB.sales.find(s=>s.id===id); const inv=rec?rec.invoiceNo:'';
   if(!isOwner()) return confirmBox('Send for approval?',`Deleting invoice <b>${esc(inv)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('sale','delete',id,inv,null),'Send');
   confirmBox('Delete sale?',`Delete invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. This cannot be undone.`,()=>{commitSaleDelete(id);save();renderSales();toast('Sale deleted');},'Delete');
@@ -2544,6 +2633,7 @@ function recordPay(kind,id){
      <button class="btn-sm btn-green" onclick="savePay('${kind}','${id}')">Save Payment</button>`);
 }
 function savePay(kind,id){
+  if(!requireOnline())return;
   const rec = kind==='sale'? DB.sales.find(s=>s.id===id) : DB.purchases.find(p=>p.id===id);
   const total = kind==='sale'? rec.total : purchaseTotal(rec);
   let amt=+$('#pm_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
@@ -2704,6 +2794,7 @@ function unlinkPurchaseFromCards(pid){ (DB.cards||[]).forEach(c=>{ if(c.txns) c.
    Applying an edit/delete also revokes/re-syncs the linked cash & card entries. */
 function pendingApprovals(){ return (DB.approvals||[]).filter(r=>r.status==='pending'); }
 function queueApproval(kind,action,targetId,ref,payload){
+  if(!requireOnline())return;
   if(!DB.approvals)DB.approvals=[];
   DB.approvals.push({id:uid(),ts:todayStr(),byId:session.id,byName:session.name,kind,action,targetId,ref,payload:payload||null,status:'pending'});
   save(); closeModal(); toast('Sent to admin for approval'); renderApprovalsBadge();
@@ -2720,6 +2811,7 @@ function commitSale(id,data){ const rec=DB.sales.find(x=>x.id===id); if(rec)Obje
 function commitPurchaseDelete(id){ unlinkPurchaseFromCards(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
 function commitSaleDelete(id){ DB.sales=DB.sales.filter(s=>s.id!==id); }
 function approveReq(id){
+  if(!requireOnline())return;
   const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
   const apply=()=>{
     if(r.action==='delete'){ r.kind==='purchase'?commitPurchaseDelete(r.targetId):commitSaleDelete(r.targetId); }
@@ -2729,7 +2821,7 @@ function approveReq(id){
   };
   confirmBox('Approve request?', `${r.action==='delete'?'Delete':'Apply the edit to'} ${r.kind} <b>${esc(r.ref)}</b> requested by ${esc(r.byName)}? Linked cash & card entries will be recalculated.`, apply, 'Approve');
 }
-function rejectReq(id){ const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
+function rejectReq(id){ if(!requireOnline())return; const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
   confirmBox('Reject request?', `Reject ${r.byName}'s request to ${r.action} ${r.kind} ${esc(r.ref)}? Nothing will change.`,()=>{ r.status='rejected'; r.decidedTs=todayStr(); r.decidedBy=session.name; save(); renderApprovals(); renderApprovalsBadge(); toast('Request rejected'); },'Reject'); }
 function renderApprovalsBadge(){ const b=$('#apprBadge'); if(!b)return; const n=isOwner()?pendingApprovals().length:0;
   if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
@@ -2783,6 +2875,7 @@ function adjustBalanceModal(id){
   setTimeout(()=>$('#adj_target')?.select?.(),30);
 }
 function saveAdjust(id){
+  if(!requireOnline())return;
   const c=cardById(id); if(!c)return; const tv=$('#adj_target').value;
   if(tv==='')return toast('Enter the target available balance',1);
   const target=+tv, delta=Math.round((target-cardAvailable(c))*100)/100;
@@ -3061,6 +3154,7 @@ function cardTxnModal(id,type,txnId){
   setTimeout(()=>{$('#ct_amt')?.focus();ctCalcAfter();},30);
 }
 function saveCardTxn(id,type,txnId){
+  if(!requireOnline())return;
   const c=cardById(id); if(!c)return; const amt=+$('#ct_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   if(!c.txns)c.txns=[];
   const fromCash=!!$('#ct_cash')?.checked;
@@ -3078,7 +3172,7 @@ function saveCardTxn(id,type,txnId){
   }
   cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
-function delCardTxn(cid,tid){ const c=cardById(cid); if(!c)return;
+function delCardTxn(cid,tid){ if(!requireOnline())return; const c=cardById(cid); if(!c)return;
   confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
     c.txns=(c.txns||[]).filter(t=>t.id!==tid); save(); cardDetail(cid); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
   },'Delete'); }
@@ -3124,6 +3218,7 @@ function editCard(id){
   pickCardTheme(_cardTheme);
 }
 function saveCard(id){
+  if(!requireOnline())return;
   const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
@@ -3136,6 +3231,7 @@ function saveCard(id){
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
 }
 function delCard(id){
+  if(!requireOnline())return;
   const linked=DB.purchases.some(p=>p.cardId===id||(p.payments||[]).some(pm=>pm.cardId===id));
   confirmBox('Delete card?', linked?'Some purchases are linked to this card. Those purchase records stay, but card tracking is removed. Continue?':'This removes the card and its whole ledger. Cannot be undone.',()=>{
     DB.cards=DB.cards.filter(c=>c.id!==id); save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card deleted');
@@ -3153,7 +3249,7 @@ function setInvSort(v){ _invSort=v; renderInventory(); }
 function invRow(x){
   const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
   return `<tr>
-    <td><div class="prodcell">${productThumbEdit(x.p)}<b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history">${esc(x.p.name)}</b></div></td>
+    <td><div class="prodcell">${productThumbEdit(x.p)}<b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history" style="color:${prodNameColor(x.p)}">${esc(x.p.name)}</b></div></td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
     <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
@@ -3252,6 +3348,7 @@ async function useTypedImage(pid){
   setProductImage(pid,val);
 }
 function setProductImage(pid,url){
+  if(!requireOnline())return;
   const p=productById(pid); if(!p)return; p.imageUrl=url||''; save(); closeModal();
   toast(url?'Product image updated':'Image removed');
   const v=$('.nav-item.active')?.dataset.view;
@@ -3509,6 +3606,7 @@ function cashModal(kind){
   setTimeout(()=>$('#cb_amt')?.focus(),30);
 }
 function saveCashEntry(kind){
+  if(!requireOnline())return;
   if(kind==='adjust' && !isOwner())return toast('Only the owner can adjust a wallet balance',1);
   const amt=+$('#cb_amt').value||0;
   if(kind==='opening'){ if(amt<0)return toast('Amount cannot be negative',1); }
@@ -3542,6 +3640,7 @@ function transferModal(){
   setTimeout(()=>$('#tr_amt')?.focus(),30);
 }
 function saveTransfer(){
+  if(!requireOnline())return;
   const from=$('#tr_from').value, to=$('#tr_to').value, amt=+$('#tr_amt').value, date=$('#tr_date').value||todayStr(), note=$('#tr_note').value.trim();
   if(!(amt>0))return toast('Enter a valid amount',1);
   if(!from||!to||from===to)return toast('Pick two different people',1);
@@ -3586,6 +3685,7 @@ function ccCalcAfter(){
   $('#cc_after').textContent=money(before+amt);   // payment & recharge both free up available
 }
 function saveCardCash(){
+  if(!requireOnline())return;
   const c=cardById($('#cc_card').value); if(!c)return toast('Pick a card',1);
   const amt=+$('#cc_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
   const type=$('#cc_type').value, who=$('#cc_who')?.value||session.id, date=$('#cc_date').value||todayStr(), note=$('#cc_note').value.trim();
@@ -3594,7 +3694,7 @@ function saveCardCash(){
   save(); closeModal(); toast('Card '+(type==='recharge'?'recharged':'paid')+' from '+userName(who)+"'s cash");
   if($('.nav-item.active')?.dataset.view==='cashbook')renderCash(); renderBell();
 }
-function delCashEntry(id){ if(!isOwner())return toast('Only admin can delete cash entries',1); const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
+function delCashEntry(id){ if(!requireOnline())return; if(!isOwner())return toast('Only admin can delete cash entries',1); const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
   confirmBox('Delete cash entry?', link?'This is a transfer — both sides will be removed. Continue?':'This removes the entry and recalculates the wallet.',()=>{
     DB.cash=(DB.cash||[]).filter(e=> link? e.linkId!==link : e.id!==id); save(); renderCash(); toast('Entry deleted'); },'Delete'); }
 
@@ -3665,7 +3765,7 @@ function compareDetail(pid){
     `<button class="btn-sm" onclick="closeModal()">Close</button>`);
   setTimeout(()=>$('#cp_store')?.focus(),30);
 }
-function saveCompPrice(pid){
+function saveCompPrice(pid){ if(!requireOnline())return;
   const p=productById(pid); if(!p)return; const price=+$('#cp_price').value; if(!(price>0))return toast('Enter a valid price',1);
   if(!p.compPrices)p.compPrices=[];
   p.compPrices.push({id:uid(),store:$('#cp_store').value.trim(),emirate:$('#cp_emirate').value,price,offer:$('#cp_offer').value.trim(),date:$('#cp_date').value||todayStr()});
@@ -3944,7 +4044,7 @@ async function pdfDay(dstr){ toast('Preparing PDF…',0); const r=await buildDay
   const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
 /* ---- Card Statement report ---- */
-function cardStatementPanel(c,inR){
+function cardStatementPanel(c,inR,q){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
   const due=nextDue(c.paymentDay), dl=daysUntil(due);
   const asc=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
@@ -3952,7 +4052,11 @@ function cardStatementPanel(c,inR){
   asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
   let spend=0,pay=0,redeem=0,pcount=0,maxp=0; rr.forEach(t=>{ if(t.type==='purchase'){spend+=+t.amount||0;pcount++;maxp=Math.max(maxp,+t.amount||0);} else if(t.type==='payment'||t.type==='recharge')pay+=+t.amount||0; else if(t.type==='discount')redeem+=+t.amount||0; });
   const avg=pcount?spend/pcount:0;
-  const disp=[...rr].reverse();
+  /* text search over the running ledger — matches note, type label, amount or date */
+  const match=t=>{ if(!q)return true; const hay=[t.note||'',txnLabel(t.type),String(+t.amount||0),money(t.amount),fmtDate(t.date),t.date||''].join(' ').toLowerCase(); return hay.includes(q); };
+  const filtered=rr.filter(match);
+  if(q&&!filtered.length)return '';   // hide cards with no matching rows while searching
+  const disp=[...filtered].reverse();
   const ledger= disp.length? disp.map(t=>`<tr><td>${fmtDate(t.date)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}<td class="num" style="font-weight:700">${money(t.bal)}</td></tr>`).join('')
     : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:18px">No transactions in this period</td></tr>`;
   const k=(kk,vv,cls)=>`<div class="kk"><div class="k">${kk}</div><div class="v"${cls?` style="color:${cls}"`:''}>${vv}</div></div>`;
@@ -3971,7 +4075,7 @@ function cardStatementPanel(c,inR){
       </div>
     </div>
     <div class="bar" style="margin:2px 2px 12px"><i style="width:${usedPct}%"></i></div>
-    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 8px">📄 Statement <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${rr.length} txn${rr.length===1?'':'s'}</span><span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">${pcount} buy · avg ${money(avg)} · max ${money(maxp)}</span></div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 8px">📄 Statement <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${disp.length} txn${disp.length===1?'':'s'}${q&&disp.length!==rr.length?` of ${rr.length}`:''}</span><span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">${pcount} buy · avg ${money(avg)} · max ${money(maxp)}</span></div>
     <div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Outstanding</th></tr></thead><tbody>${ledger}</tbody></table></div>
   </div>`;
 }
@@ -3987,11 +4091,12 @@ views.cardreport=function(){
       <button class="btn-sm btn-ghost" onclick="clearCrRange()">Clear</button>
       <button class="btn-sm btn-green" onclick="exportCardReportExcel()">⬇ Excel</button>
     </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="crSearch" placeholder="Search note, type or amount..." oninput="renderCardReport()"></div></div>
   <div id="crStats" class="cards"></div>
   <div id="crBody"></div>`;
 };
 views._after_cardreport=()=>{ if(isOwner())renderCardReport(); };
-function clearCrRange(){ if($('#crCard'))$('#crCard').value=''; if($('#crFrom'))$('#crFrom').value=''; if($('#crTo'))$('#crTo').value=''; renderCardReport(); }
+function clearCrRange(){ if($('#crCard'))$('#crCard').value=''; if($('#crFrom'))$('#crFrom').value=''; if($('#crTo'))$('#crTo').value=''; if($('#crSearch'))$('#crSearch').value=''; renderCardReport(); }
 function renderCardReport(){
   if(!isOwner())return;
   const from=$('#crFrom')?.value, to=$('#crTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
@@ -4005,7 +4110,10 @@ function renderCardReport(){
     <div class="stat gold"><span class="ic">🛒</span><div class="label">Spend · period</div><div class="val">${money(tSpend)}</div><div class="foot">redeem ${money(tRedeem)} · paid ${money(tPay)}</div></div>`:'';
   const body=$('#crBody'); if(!body)return;
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see statements.')}</div>`; return; }
-  body.innerHTML=cards.map(c=>cardStatementPanel(c,inR)).join('');
+  const q=($('#crSearch')?.value||'').trim().toLowerCase();
+  const panels=cards.map(c=>cardStatementPanel(c,inR,q)).filter(Boolean);
+  body.innerHTML= panels.length? panels.join('')
+    : `<div class="panel">${emptyBox('🔎','No matches','No transactions match your search in this period.')}</div>`;
 }
 function exportCardReportExcel(){
   const from=$('#crFrom')?.value, to=$('#crTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
@@ -4147,9 +4255,10 @@ views.settings=function(){
     <div class="row-actions">
       <button class="btn-sm btn-green" onclick="exportData()">⬇ Export Backup (.json)</button>
       <label class="btn-sm btn-ghost" style="cursor:pointer">⬆ Import Backup<input type="file" accept="application/json" style="display:none" onchange="importData(this)"></label>
-      ${owner?`<button class="btn-sm btn-gold" onclick="loadDemo()">🧪 Load Demo (10 + 10)</button>`:''}
       ${owner?`<button class="btn-sm btn-red" onclick="resetAll()">Reset All Data</button>`:''}
     </div>
+    ${owner?`<div class="note" style="margin-top:14px">☁ <b>Deleted data keeps coming back?</b> Delete what you want gone first, then press this to make <b>this device</b> the master copy — it clears leftover demo / old cards from the shared cloud so other devices sync to it.
+      <div style="margin-top:10px"><button class="btn-sm" onclick="resetCloud()">☁ Reset Cloud to This Device</button></div></div>`:''}
   </div>
   <!-- ===== DEV-ONLY: remove this whole panel before going live ===== -->
   ${owner?`<div class="panel" style="border-color:var(--red)">
@@ -4163,6 +4272,7 @@ views._after_settings=()=>{ if(isOwner())renderUsers(); const l=$('#st_logo'); i
 function toggle(id,label,on){return `<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:12px 14px;border-radius:11px;cursor:pointer;margin-bottom:0">
   <input type="checkbox" id="${id}" ${on?'checked':''} style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">${label}</span></label>`;}
 function saveSettings(which){
+  if(!requireOnline())return;
   const st=S();
   if(which==='company'){
     st.company=$('#st_company').value.trim()||'Little Angel Electronics';
@@ -4182,6 +4292,7 @@ function saveSettings(which){
   save();toast('Settings saved');
 }
 function changePw(){
+  if(!requireOnline())return;
   const o=$('#pw_old').value.trim(),n=$('#pw_new').value.trim(),c=$('#pw_conf').value.trim();
   const cur=String(session.pin!==undefined?session.pin:session.password);
   if(cur!==o)return toast('Current PIN is wrong',1);
@@ -4226,6 +4337,7 @@ function editUser(id){
 }
 function userRoleToggle(){ const w=$('#u_permWrap'); if(w)w.style.display=$('#u_role').value==='owner'?'none':''; }
 function saveUser(id){
+  if(!requireOnline())return;
   const name=$('#u_name').value.trim(), phone=$('#u_phone').value.trim(), pin=$('#u_pin').value.trim(), role=$('#u_role').value;
   if(!name||!phone||!pin)return toast('Name, phone and PIN are required',1);
   const norm=s=>(s||'').replace(/[\s-]/g,'').toLowerCase();
@@ -4237,6 +4349,7 @@ function saveUser(id){
   save();closeModal();renderUsers();toast('User saved');
 }
 function delUser(id){
+  if(!requireOnline())return;
   if(DB.users.filter(u=>u.role==='owner').length<=1 && DB.users.find(u=>u.id===id).role==='owner')return toast('Cannot delete the only owner',1);
   confirmBox('Delete user?','This login will be removed.',()=>{DB.users=DB.users.filter(u=>u.id!==id);save();renderUsers();toast('User deleted');});
 }
@@ -4312,6 +4425,7 @@ function exportProfitExcel(){
   exportExcel('profit_report_'+todayStr()+'.xlsx',[{name:'Summary',rows:summary},{name:'By Product',rows:prodRows},{name:'Daily',rows:dRows}]);
 }
 function importData(input){
+  if(!requireOnline())return;
   const f=input.files[0]; if(!f)return;
   const r=new FileReader();
   r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.users||!d.settings)throw 0;
@@ -4319,7 +4433,18 @@ function importData(input){
   }catch(e){toast('Invalid backup file',1);}};
   r.readAsText(f); input.value='';
 }
-function resetAll(){confirmBox('Reset ALL data?','Deletes every product, purchase, sale & user. Cannot be undone.',()=>{localStorage.removeItem(KEY);DB=seed();save();toast('All data reset');logout();},'Reset');}
+function resetAll(){if(!requireOnline())return;confirmBox('Reset ALL data?','Deletes every product, purchase, sale & user. Cannot be undone.',()=>{localStorage.removeItem(KEY);try{localStorage.removeItem(KEY+'_base');}catch(e){}baseline=null;DB=seed();save();toast('All data reset');logout();},'Reset');}
+/* Make THIS device the master: tombstone anything already removed here, then force-overwrite
+   the shared cloud row so leftover demo / old cards are cleared for every device. */
+function resetCloud(){
+  if(!isOwner())return;
+  if(!requireOnline())return;
+  confirmBox('Reset cloud to this device?','This makes THIS device’s current data the master copy and overwrites what’s stored online — removing any leftover demo products or old cards from the shared cloud. Other devices will sync to this the next time they reload. Continue?',()=>{
+    _maintainTombstones();
+    try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
+    cloudForcePush().then(ok=>{ toast(ok?'Cloud reset — this device is now the master copy':'Cloud offline — saved on this device only', ok?0:1); });
+  },'Overwrite Cloud');
+}
 
 /* ===== DEV-ONLY: password-gated "clear everything" — remove before going live ===== */
 function devClearAll(){
@@ -4332,68 +4457,15 @@ function devClearAll(){
   setTimeout(()=>$('#dev_pw')?.focus(),30);
 }
 function devClearConfirm(){
+  if(!requireOnline())return;
   if(($('#dev_pw')?.value||'').trim()!=='Arul@1987'){ toast('Wrong developer password',1); return; }
-  try{ localStorage.removeItem(KEY); }catch(e){}
-  DB=seed();
-  try{ save(); }catch(e){}
+  try{ localStorage.removeItem(KEY); localStorage.removeItem(KEY+'_base'); }catch(e){}
+  baseline=null; DB=seed();
+  try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
+  cloudForcePush().catch(()=>{});          // wipe the shared cloud row too, not just this device
   closeModal(); toast('All data cleared — reset to empty app'); logout();
 }
 /* ===== END DEV-ONLY ===== */
-
-/* ---------- demo data (10 purchases + 10 sales) ---------- */
-function loadDemo(){
-  const st=S(); const vatOf=r=> st.applyVat? r*(st.vatPercent/100):0;
-  confirmBox('Load demo data?','Adds 10 products, 10 purchases and 10 sales (with colour variants, cash/card/bank & a couple on credit) for viewing. This REPLACES current products, purchases and sales — your company profile & users are kept.',()=>{
-    const prods=[
-      {id:'d1',name:'iPhone 15 Pro – Blue Titanium',category:'Mobile',color:'Blue Titanium',colorHex:'#5f7089'},
-      {id:'d2',name:'iPhone 15 Pro – Natural Titanium',category:'Mobile',color:'Natural Titanium',colorHex:'#b8b1a4'},
-      {id:'d3',name:'iPhone 15 – Pink',category:'Mobile',color:'Pink',colorHex:'#f19ac0'},
-      {id:'d4',name:'Samsung Galaxy S24 – Black',category:'Mobile',color:'Black',colorHex:'#1c1c1e'},
-      {id:'d5',name:'HP Pavilion Laptop – Silver',category:'Laptop',color:'Silver',colorHex:'#d6d9de'},
-      {id:'d6',name:'Dell Inspiron 15',category:'Laptop',color:'',colorHex:''},
-      {id:'d7',name:'Samsung 55" 4K TV',category:'Television',color:'',colorHex:''},
-      {id:'d8',name:'Sony WH-1000XM5 – Black',category:'Audio Headphone',color:'Black',colorHex:'#1c1c1e'},
-      {id:'d9',name:'Apple Watch Series 9',category:'Smartwatch',color:'Midnight',colorHex:'#1f2a3a'},
-      {id:'d10',name:'Anker Power Bank 20000mAh',category:'Accessory Power Bank',color:'',colorHex:''}
-    ].map(p=>({unit:'pcs',sku:'',imageUrl:'',...p}));
-
-    const buyRaw=[
-      ['d1',8,3400,'2026-07-05','Carrefour Deira','card',null],
-      ['d2',6,3450,'2026-07-08','Sharaf DG','card',null],
-      ['d3',10,2600,'2026-07-10','Lulu Hypermarket','cash',null],
-      ['d4',7,2900,'2026-07-12','Jumbo Electronics','card',15000],
-      ['d5',5,2100,'2026-07-15','Sharaf DG','bank',null],
-      ['d6',6,1950,'2026-07-18','Carrefour Deira','card',null],
-      ['d7',4,1500,'2026-07-20','Lulu Hypermarket','cash',null],
-      ['d8',12,950,'2026-07-22','Jumbo Electronics','card',null],
-      ['d9',9,1250,'2026-07-25','Sharaf DG','card',5000],
-      ['d10',20,120,'2026-07-28','Carrefour Deira','cash',null]
-    ];
-    const buys=buyRaw.map((r,i)=>{const [pid,qty,rate,date,sup,method,paidP]=r,tot=qty*rate,paid=paidP==null?tot:paidP;
-      return {id:'db'+(i+1),ref:'PUR-'+String(i+1).padStart(4,'0'),date,productId:pid,qty,rate,supplier:sup,payment:method,cardRef:method==='card'?'Visa ••'+(1000+i):'',paid,payments:paid>0?[{id:uid(),date,amount:paid,method,ref:'Initial'}]:[]};});
-
-    const sellRaw=[
-      ['2026-08-01','Ahmed Khan','050 111 2233','card',null,[['d1',2,3900]]],
-      ['2026-08-03','Fatima Ali','052 998 1020','cash',null,[['d2',1,3950]]],
-      ['2026-08-05','Mobile Zone LLC','04 222 3344','card',5000,[['d3',3,3100]]],
-      ['2026-08-07','Rashid Traders','050 777 8899','bank',null,[['d4',2,3400]]],
-      ['2026-08-09','Khalid Hassan','055 342 1188','card',null,[['d5',2,2600]]],
-      ['2026-08-11','Sara Ibrahim','056 220 4471','cash',null,[['d6',1,2450]]],
-      ['2026-08-13','Al Noor Electronics','06 745 1200','card',null,[['d7',2,1950]]],
-      ['2026-08-15','Walk-in','','cash',null,[['d8',4,1350]]],
-      ['2026-08-18','Omar Yusuf','050 909 1234','card',3000,[['d9',3,1650]]],
-      ['2026-08-20','Gadget Hub','04 556 7788','card',null,[['d10',5,199],['d8',2,1350]]]
-    ];
-    const sells=sellRaw.map((r,i)=>{const [date,customer,phone,method,paidP,items]=r;
-      const sub=items.reduce((a,it)=>a+it[1]*it[2],0),vt=vatOf(sub),total=sub+vt,paid=paidP==null?total:paidP;
-      return {id:'ds'+(i+1),invoiceNo:st.invoicePrefix+String(i+1).padStart(4,'0'),date,customer,custPhone:phone,
-        items:items.map(it=>({productId:it[0],qty:it[1],rate:it[2]})),payment:method,discount:0,
-        subtotal:sub,vat:vt,vatPercent:st.applyVat?st.vatPercent:0,total,paid,payments:paid>0?[{id:uid(),date,amount:paid,method,ref:'Initial'}]:[]};});
-
-    DB.products=prods; DB.purchases=buys; DB.sales=sells; DB.counters={purchase:10,sale:10};
-    save(); toast('Demo data loaded — 10 purchases & 10 sales'); go('dashboard');
-  },'Load Demo');
-}
 
 /* =========================================================
    MODAL / CONFIRM
@@ -4432,10 +4504,11 @@ document.addEventListener('click',e=>{ const w=$('#bellWrap'); if(w&&!w.contains
 /* pull the shared cloud copy (if configured), merge it, then subscribe for live updates */
 cloudPull().then(ok=>{
   cloudSubscribe();               // start live sync from other devices (no-op if cloud is off)
+  updateOnlineUI();               // show the offline banner if we booted without a connection
   if(!ok) return;
   applyTheme();
   reSync();                       // cloud data merged in — re-point session & refresh the screen
-});
+}).finally(()=>updateOnlineUI());
 </script>
 </body>
 </html>
