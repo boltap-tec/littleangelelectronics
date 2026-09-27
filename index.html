@@ -779,6 +779,23 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 @keyframes qtyblink{50%{box-shadow:0 0 0 3px rgba(239,68,68,.55);background:rgba(239,68,68,.14)}}
 .blink{animation:txtblink .8s steps(1,end) infinite}
 @keyframes txtblink{50%{opacity:.35}}
+/* urgent credit-card alert banner (negative balance / due within 1 day) */
+.urgent-banner{margin-top:14px;background:linear-gradient(180deg,var(--redsoft),var(--panel));border:1.5px solid var(--red);border-radius:16px;padding:14px 16px;animation:ubpulse 1.4s ease-in-out infinite}
+@keyframes ubpulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}50%{box-shadow:0 0 0 9px rgba(239,68,68,0)}}
+.urgent-banner .ub-head{display:flex;align-items:center;gap:8px;font-size:15px;margin-bottom:8px;color:var(--text)}
+.ucard-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line)}
+.ucard-row:first-of-type{border-top:none}
+.ucard-row .ur-main{flex:1;min-width:140px}
+.badge-neg{color:#fff;background:var(--red);padding:1px 8px;border-radius:6px;font-weight:800;font-size:12px;white-space:nowrap}
+.badge-due{color:#3a2a00;background:var(--gold2);padding:1px 8px;border-radius:6px;font-weight:800;font-size:12px;white-space:nowrap}
+.icon-btn.bell-urgent{border-color:var(--red);animation:txtblink .8s steps(1,end) infinite}
+/* quick card picker list */
+.pickcol{display:flex;flex-direction:column;gap:8px}
+.pickrow{display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:var(--bg);border:1px solid var(--line2);border-radius:12px;padding:11px 13px;cursor:pointer;color:var(--text);text-align:left;width:100%}
+.pickrow:hover{border-color:var(--brand)}
+.pickrow .pk-main{font-weight:700}
+.pickrow .pk-sub{font-size:12px;color:var(--muted)}
+@media(prefers-reduced-motion:reduce){.urgent-banner,.icon-btn.bell-urgent{animation:none}}
 
 #invoiceArea{background:#fff;color:#111}
 @media print{
@@ -878,6 +895,7 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
       <button class="icon-btn" title="Card payment reminders" onclick="toggleBell(event)">🔔<span class="bell-badge hidden" id="bellBadge">0</span></button>
       <div class="bell-pop hidden" id="bellPop"></div>
     </div>
+    <button class="icon-btn" id="soundBtn" title="Typing sound on / off" onclick="toggleSound()">🔊</button>
     <button class="icon-btn" id="themeBtn" title="Switch light / dark" onclick="toggleTheme()">🌙</button>
     <button class="icon-btn" title="Logout" onclick="logout()">⎋</button>
   </div>
@@ -1151,7 +1169,7 @@ function seed(){
       lowStockLevel:3,
       avgWindowN:0, avgWindowUnit:'all',
       imgApiKey:'', imgCseId:'',
-      theme:'ocean'
+      theme:'ocean', sound:true
     }
   };
 }
@@ -1190,6 +1208,7 @@ function migrate(){
   if(!Array.isArray(DB.cash))DB.cash=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
+  if(DB.settings.sound===undefined)DB.settings.sound=true;
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
   if(DB.settings.avgWindowUnit===undefined)DB.settings.avgWindowUnit='all';
   if(DB.settings.sealUrl===undefined)DB.settings.sealUrl='';
@@ -1478,6 +1497,7 @@ function enterApp(){
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
   renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
   checkNegativeOnBoot();   // 🚨 alert immediately if any card is already over its limit
+  syncSoundBtn(); startUrgentWatch();   // typing-sound icon + recurring urgent-card nudge
 }
 /* show/hide nav + bell + bottom-nav by this user's permissions */
 function applyAccess(){
@@ -1634,8 +1654,11 @@ views.dashboard=function(){
     <div class="row-actions">
       ${canView('sales')?`<button class="btn-sm" onclick="go('sales');setTimeout(newSale,50)">🧾 New Sale</button>`:''}
       ${canView('purchases')?`<button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📥 New Purchase</button>`:''}
+      ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('recharge')">💳 Card Recharge</button>`:''}
+      ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('payment')">💵 Card Pay</button>`:''}
     </div>
   </div>
+  ${urgentCardBanner()}
   ${dashTiles()}
   ${owner?`<div class="panel" style="padding:16px 18px 6px;margin-top:14px"><h3 style="margin-bottom:2px">📦 Inventory · average cost · profit/loss</h3><p class="psub">Live per-product stock, weighted-average cost & profit earned so far</p>${dashInvProfit(eng)}</div>`:''}
   <div class="cards" style="margin-top:14px">
@@ -2588,6 +2611,80 @@ function alertNegativeCards(neg){
 }
 /* show the negative-card alert once shortly after entering the app, if any card is negative */
 function checkNegativeOnBoot(){ if(_negAlertShown)return; const neg=negativeCards(); if(neg.length){ _negAlertShown=true; setTimeout(()=>alertNegativeCards(neg),500); } }
+
+/* ===== URGENT cards: negative balance OR due within 1 day ===== */
+function urgentCards(){
+  return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay), dleft=daysUntil(due), out=cardOutstanding(c), av=cardAvailable(c);
+      return {c,due,dleft,out,av,neg:av<-0.005,dueSoon:(out>0.005 && dleft<=1)}; })
+    .filter(x=>x.neg||x.dueSoon)
+    .sort((a,b)=>(a.neg===b.neg?0:(a.neg?-1:1)) || a.dleft-b.dleft);
+}
+function urgentCardBanner(){
+  if(!canView('cards')) return '';
+  const u=urgentCards(); if(!u.length) return '';
+  const rows=u.map(x=>{
+    const why = x.neg
+      ? `<span class="badge-neg">OVER LIMIT · ${money(Math.abs(x.av))}</span>`
+      : `<span class="badge-due">DUE ${x.dleft<=0?'TODAY':'TOMORROW'} · ${money(x.out)}</span>`;
+    return `<div class="ucard-row">
+      <div class="ur-main"><b>${esc(cardLabel(x.c))}</b> &nbsp;${why}</div>
+      ${x.neg?`<button class="btn-sm btn-gold" onclick="quickCardTxn('payment','${x.c.id}')">Pay now</button>`
+             :`<button class="btn-sm btn-gold" onclick="quickCardTxn('payment','${x.c.id}')">Pay</button>
+               <button class="btn-sm btn-ghost" onclick="quickCardTxn('recharge','${x.c.id}')">Recharge</button>`}
+      <button class="btn-sm btn-ghost" onclick="go('cards');setTimeout(()=>cardDetail('${x.c.id}'),60)">Open</button>
+    </div>`; }).join('');
+  return `<div class="urgent-banner"><div class="ub-head"><span class="blink" style="font-size:20px">🚨</span> <b>Action needed on ${u.length} card${u.length>1?'s':''} — pay or recharge now</b></div>${rows}</div>`;
+}
+/* quick recharge / pay a card from anywhere; picks the card if more than one */
+function quickCardTxn(type,cardId){
+  if(cardId){ go('cards'); setTimeout(()=>cardTxnModal(cardId,type),60); return; }
+  const cards=activeCards();
+  if(!cards.length) return toast('No active cards — add one in Credit Cards first',1);
+  if(cards.length===1){ go('cards'); setTimeout(()=>cardTxnModal(cards[0].id,type),60); return; }
+  const rows=cards.map(c=>{ const av=cardAvailable(c), out=cardOutstanding(c);
+    return `<button class="pickrow" onclick="closeModal();quickCardTxn('${type}','${c.id}')">
+      <span class="pk-main">${esc(cardLabel(c))}</span>
+      <span class="pk-sub">available ${money(av)}${out>0.005?' · due '+money(out):''}</span></button>`; }).join('');
+  openModal(type==='recharge'?'↑ Recharge which card?':'💵 Pay which card?',
+    `<div class="pickcol">${rows}</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>`);
+}
+/* recurring nudge while any card is urgent: soft chime + toast + blinking bell */
+let _urgentTimer=null;
+function urgentTick(){
+  const u=urgentCards();
+  const bell=$('#bellWrap button'); if(bell) bell.classList.toggle('bell-urgent', u.length>0);
+  if(!u.length) return;
+  if(document.hidden) return;                 // don't nag a hidden tab
+  playChime();
+  const neg=u.filter(x=>x.neg).length;
+  toast(neg?`🚨 ${neg} card(s) OVER LIMIT — pay now`:`🔔 ${u.length} card(s) due within a day`, 1);
+}
+function startUrgentWatch(){
+  clearInterval(_urgentTimer);
+  const bell=$('#bellWrap button'); if(bell) bell.classList.toggle('bell-urgent', urgentCards().length>0);
+  _urgentTimer=setInterval(urgentTick, 120000);   // remind every 2 minutes
+}
+
+/* ===== sound: WebAudio key clicks (WhatsApp-style typing feedback) ===== */
+let _ac=null;
+function _audio(){ try{ if(!_ac) _ac=new (window.AudioContext||window.webkitAudioContext)(); if(_ac.state==='suspended')_ac.resume(); }catch(e){ _ac=null; } return _ac; }
+function _beep(freq,dur,vol){ const ac=_audio(); if(!ac)return; const t=ac.currentTime;
+  const o=ac.createOscillator(), g=ac.createGain(); o.type='sine'; o.frequency.setValueAtTime(freq,t);
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol||0.05,t+0.005); g.gain.exponentialRampToValueAtTime(0.0001,t+(dur||0.06));
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t+(dur||0.06)+0.02); }
+function playType(kind){ if(!S().sound) return;
+  if(kind==='back') _beep(300,0.05,0.045); else if(kind==='enter') _beep(560,0.09,0.05); else _beep(600+Math.random()*90,0.045,0.04); }
+function playChime(){ if(!S().sound) return; _beep(880,0.12,0.06); setTimeout(()=>_beep(660,0.16,0.06),130); }
+function toggleSound(){ S().sound=!S().sound; save(); const b=$('#soundBtn'); if(b)b.textContent=S().sound?'🔊':'🔇'; if(S().sound)playType('enter'); toast(S().sound?'Typing sound on':'Typing sound off'); }
+function syncSoundBtn(){ const b=$('#soundBtn'); if(b)b.textContent=S().sound?'🔊':'🔇'; }
+document.addEventListener('keydown',e=>{
+  const el=e.target; if(!el||!/^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+  if(/^(range|checkbox|radio|color|file|date|button|submit)$/.test(el.type||'')) return;
+  if(e.ctrlKey||e.metaKey||e.altKey) return;
+  const k=e.key;
+  if(k==='Enter') playType('enter'); else if(k==='Backspace'||k==='Delete') playType('back'); else if(k&&k.length===1) playType();
+},true);
 function recentActivity(n){ const a=[];
   DB.sales.forEach(s=>a.push({t:'sale',date:s.date,ref:s.invoiceNo,name:s.customer||'Walk-in',amt:s.total}));
   DB.purchases.forEach(p=>a.push({t:'purchase',date:p.date,ref:p.ref,name:p.supplier||'—',amt:purchaseTotal(p)}));
@@ -2698,7 +2795,8 @@ function saveAdjust(id){
 
 /* ---- bell reminders ---- */
 function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length+negativeCards().length;
-  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden');
+  const bell=$('#bellWrap button'); if(bell) bell.classList.toggle('bell-urgent', urgentCards().length>0); }
 function toggleBell(e){ if(e)e.stopPropagation(); const pop=$('#bellPop'); if(!pop)return;
   if(pop.classList.contains('hidden')){ renderBellPop(); pop.classList.remove('hidden'); } else pop.classList.add('hidden'); }
 function closeBell(){ $('#bellPop')?.classList.add('hidden'); }
