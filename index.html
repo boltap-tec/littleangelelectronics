@@ -973,6 +973,7 @@ const NAV_GROUPS=[
     {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
+    {v:'activity',  ic:'📜', lab:'Activity Log', owner:true, badge:'actBadge'},
     {v:'profit',    ic:'💰', lab:'Profit & Reports', owner:true},
     {v:'settings',  ic:'⚙️', lab:'Settings'} ]},
 ];
@@ -1056,7 +1057,7 @@ function mergeDB(base, local, remote, preferLocal){
   const out=_clone(local);
   const deleted=_mergeDeleted(local.deleted, remote.deleted);
   const isDead=id=> !!(deleted[id] && deleted[id].dead);
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity'].forEach(k=>{
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
@@ -1161,6 +1162,7 @@ function reSync(){
       if(u){ session=u; applyBrand(); applyAccess(); go($('.nav-item.active')?.dataset.view || 'dashboard'); }
       else { logout(); return; } }
     if(typeof renderApprovalsBadge==='function') renderApprovalsBadge();
+    if(typeof renderActivityBadge==='function') renderActivityBadge();
     if(typeof renderBell==='function') renderBell();
   }catch(e){ console.warn('reSync failed:',e&&e.message||e); }
 }
@@ -1179,6 +1181,7 @@ function seed(){
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
     products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[],
+    activity:[],                      // activity log: every create/edit/delete, newest first
     deleted:{},                       // tombstones: id -> {t:timestamp, dead:bool} so deletes sync & stay deleted
     counters:{purchase:0,sale:0},
     settings:{
@@ -1210,7 +1213,7 @@ function _maintainTombstones(){
   if(!DB.deleted) DB.deleted={};
   const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
   const now=Date.now();
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity'].forEach(k=>{
     const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
@@ -1294,6 +1297,7 @@ function migrate(){
   if(!DB.cards)DB.cards=[];
   if(!Array.isArray(DB.giftcards))DB.giftcards=[];
   if(!Array.isArray(DB.approvals))DB.approvals=[];
+  if(!Array.isArray(DB.activity))DB.activity=[];
   if(!Array.isArray(DB.cash))DB.cash=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
   (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
@@ -1596,7 +1600,7 @@ function enterApp(){
   try{ if(session)localStorage.setItem(SKEY,session.id); }catch(e){}   // remember this login across refreshes
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
+  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge(); renderActivityBadge();
   checkNegativeOnBoot();   // 🚨 alert immediately if any card is already over its limit
   syncSoundBtn(); startUrgentWatch();   // typing-sound icon + recurring urgent-card nudge
 }
@@ -1685,7 +1689,7 @@ function _go(v,vt){
   if(!vt){ main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); } // replay enter animation (fallback path)
   animateCounts(main); staggerReveal(main); initImgSkel(main);
   if(window.innerWidth<=860) closeNav();
-  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); if(session)applyAccess();
+  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); renderActivityBadge(); if(session)applyAccess();
 }
 /* count-up animation for headline figures (parses the formatted value, keeps prefix/suffix) */
 function animateCounts(root){
@@ -2157,11 +2161,16 @@ function savePurchase(id){
   const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',deductPct:s.deductPct||0,payRef:s.ref||'',ref:'Initial'}));
   const data={date,supplier,items,discount,payment:methodTag,paid,payments};
   const negMsg=negWarn.length?(' · 🔴 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay immediately'):'';
-  if(id){ // EDIT existing — confirm; workers route to admin approval
+  if(id){ // EDIT existing — applies directly; staff edits raise an owner alert in the Activity Log
     const rec=DB.purchases.find(x=>x.id===id); const ref=rec?rec.ref:'';
-    if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
-    return confirmBox('Save changes?',`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated.`,()=>{
-      commitPurchase(id,data); save();closeModal();renderPurchases();renderBell();toast('Purchase updated'+negMsg, negWarn.length?1:0);
+    const editTot=(data.items||[]).reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
+    const msg=isOwner()?`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated.`
+      :`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated. The admin will be notified of this edit.`;
+    return confirmBox('Save changes?',msg,()=>{
+      commitPurchase(id,data);
+      logActivity('edit','purchase',ref,`Edited purchase · ${(data.items||[]).length} item(s)`,{amt:editTot});
+      save();closeModal();renderPurchases();renderBell();renderActivityBadge();
+      toast('Purchase updated'+negMsg+(isOwner()?'':' · admin notified'), negWarn.length?1:0);
       if(negWarn.length) setTimeout(()=>alertNegativeCards(),200); },'Save');
   }
   // NEW purchase (allowed for owner & worker)
@@ -2170,15 +2179,21 @@ function savePurchase(id){
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } }
     else if(s.giftId){ const g=giftById(s.giftId); if(g){ spendGift(g,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(g.name); } } });
-  save();closeModal();renderPurchases();renderBell();
+  logActivity('create','purchase',ref,`New purchase · ${items.length} item(s)`+(supplier?` · ${supplier}`:''),{amt:tot});
+  save();closeModal();renderPurchases();renderBell();renderActivityBadge();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
   if(negWarn.length) setTimeout(()=>alertNegativeCards(),200);   // 🚨 immediate over-limit alert
 }
 function delPurchase(id){
   if(!requireOnline())return;
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
-  if(!isOwner()) return confirmBox('Send for approval?',`Deleting purchase <b>${esc(ref)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('purchase','delete',id,ref,null),'Send');
-  confirmBox('Delete purchase?',`Delete <b>${esc(ref)}</b>? Inventory, cost, card balance & payments will recalculate. This cannot be undone.`,()=>{commitPurchaseDelete(id);save();renderPurchases();renderBell();toast('Purchase deleted');},'Delete');
+  const msg=`Delete <b>${esc(ref)}</b>? Inventory, cost, card balance & payments will recalculate. This cannot be undone.`+(isOwner()?'':' The admin will be notified of this deletion.');
+  confirmBox('Delete purchase?',msg,()=>{
+    commitPurchaseDelete(id);
+    logActivity('delete','purchase',ref,'Deleted purchase');
+    save();renderPurchases();renderBell();renderActivityBadge();
+    toast('Purchase deleted'+(isOwner()?'':' · admin notified'));
+  },'Delete');
 }
 
 /* =========================================================
@@ -2439,24 +2454,34 @@ function saveSale(id,print){
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
     payment:method,discount:+($('#s_disc').value||0),vatMode:t.mode,
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
-  if(id){ // EDIT — confirm; workers route to admin approval
+  if(id){ // EDIT — applies directly; staff edits raise an owner alert in the Activity Log
     const rec=DB.sales.find(x=>x.id===id); const inv=rec?rec.invoiceNo:'';
     const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Updated'}]:[]};
-    if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('sale','edit',id,inv,data),'Send');
-    return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.`,()=>{
-      commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>printSale(id),120); },'Save');
+    const msg=isOwner()?`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.`
+      :`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. The admin will be notified of this edit.`;
+    return confirmBox('Save changes?',msg,()=>{
+      commitSale(id,data);
+      logActivity('edit','sale',inv,`Edited invoice · total ${money(data.total)}`,{amt:data.total});
+      save();closeModal();renderSales();renderActivityBadge();
+      toast('Sale updated'+(print?' · opening bill':'')+(isOwner()?'':' · admin notified')); if(print)setTimeout(()=>printSale(id),120); },'Save');
   }
   // NEW sale
   DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
   DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
-  save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
+  logActivity('create','sale',inv,`New sale · ${base.items.length} item(s)`+(base.customer?` · ${base.customer}`:''),{amt:base.total});
+  save();closeModal();renderSales();renderActivityBadge();toast('Sale saved '+(print?'· opening bill':''));
   if(print)setTimeout(()=>printSale(nid),120);
 }
 function delSale(id){
   if(!requireOnline())return;
   const rec=DB.sales.find(s=>s.id===id); const inv=rec?rec.invoiceNo:'';
-  if(!isOwner()) return confirmBox('Send for approval?',`Deleting invoice <b>${esc(inv)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('sale','delete',id,inv,null),'Send');
-  confirmBox('Delete sale?',`Delete invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. This cannot be undone.`,()=>{commitSaleDelete(id);save();renderSales();toast('Sale deleted');},'Delete');
+  const msg=`Delete invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate. This cannot be undone.`+(isOwner()?'':' The admin will be notified of this deletion.');
+  confirmBox('Delete sale?',msg,()=>{
+    commitSaleDelete(id);
+    logActivity('delete','sale',inv,'Deleted invoice');
+    save();renderSales();renderActivityBadge();
+    toast('Sale deleted'+(isOwner()?'':' · admin notified'));
+  },'Delete');
 }
 
 /* ---------- short text summary of a bill (WhatsApp caption / fallback) ---------- */
@@ -2921,6 +2946,61 @@ function renderApprovals(){
         : `<span class="tag ${r.status==='approved'?'ok':'due'}">${r.status.toUpperCase()}</span>`}</td></tr>`; };
   host.innerHTML=`<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>By</th><th>Request</th><th>Ref</th><th>Details</th><th></th></tr></thead><tbody>${all.map(row).join('')}</tbody></table></div>`;
 }
+
+/* ========== ACTIVITY LOG ==========
+   Every create / edit / delete is recorded here, newest first. Workers now apply
+   their own edits & deletes directly (no owner approval needed) — but each such
+   action is flagged so the owner is alerted (nav badge + bell) and can review it. */
+function logActivity(action,entity,ref,detail,opts){
+  opts=opts||{};
+  if(!Array.isArray(DB.activity))DB.activity=[];
+  const owner=isOwner();
+  const entry={
+    id:uid(), ts:todayStr(), tsFull:Date.now(),
+    byId: session?session.id:'', byName: session?session.name:'System', byRole: session?session.role:'',
+    action, entity, ref:ref||'', detail:detail||'',
+    amt: (opts.amt!==undefined && opts.amt!==null && opts.amt!=='') ? +opts.amt : null,
+    alert: (!owner && (action==='edit'||action==='delete')),   // worker edit/delete → owner alert
+    seen: owner                                                 // owner's own actions need no alert
+  };
+  DB.activity.unshift(entry);                 // newest first
+  if(DB.activity.length>2000)DB.activity.length=2000;   // keep the log bounded
+  return entry;
+}
+function unseenActivityAlerts(){ return (DB.activity||[]).filter(a=>a.alert&&!a.seen); }
+function renderActivityBadge(){ const b=$('#actBadge'); if(!b)return; const n=isOwner()?unseenActivityAlerts().length:0;
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+function actionTag(a){ const map={create:'ok',edit:'partial',delete:'due',adjust:'partial'};
+  return `<span class="tag ${map[a]||'partial'}">${(a||'').toUpperCase()}</span>`; }
+views.activity=function(){
+  return `<div class="page-head"><div><h2>Activity Log</h2><p>Every create, edit &amp; delete across the shop — newest first. Staff edits &amp; deletes apply immediately and are highlighted here for your review.</p></div>
+    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="clearActivityLog()">Clear log</button></div></div>
+    <div id="actList"></div>`;
+};
+views._after_activity=renderActivity;
+function renderActivity(){
+  const host=$('#actList'); if(!host)return;
+  // owner viewing the log clears the outstanding alerts
+  if(isOwner()){ const uns=unseenActivityAlerts(); if(uns.length){ uns.forEach(a=>a.seen=true); save(); } }
+  renderActivityBadge(); renderBell();
+  const all=[...(DB.activity||[])].sort((a,b)=>(b.tsFull||0)-(a.tsFull||0));   // descending date order
+  if(!all.length){ host.innerHTML=`<div class="panel">${emptyBox('📜','No activity yet','Sales, purchases and edits will be recorded here as they happen.')}</div>`; return; }
+  const row=a=>{
+    let when=fmtDate(a.ts); try{ if(a.tsFull) when+=' · '+new Date(a.tsFull).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }catch(e){}
+    const who=`${esc(a.byName||'—')}${a.byRole==='owner'?'':' <span class="tag partial">staff</span>'}`;
+    return `<tr${a.alert?' style="background:var(--brandsoft)"':''}>
+      <td style="white-space:nowrap">${when}</td>
+      <td style="white-space:nowrap">${who}</td>
+      <td style="white-space:nowrap">${actionTag(a.action)} ${esc(a.entity||'')}</td>
+      <td><b>${esc(a.ref||'')}</b></td>
+      <td style="white-space:normal">${esc(a.detail||'')}${a.alert?' <span class="tag due">owner alert</span>':''}</td>
+      <td class="num" style="white-space:nowrap">${a.amt!=null?money(a.amt):''}</td></tr>`;
+  };
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>By</th><th>Action</th><th>Ref</th><th>Details</th><th class="num">Amount</th></tr></thead><tbody>${all.map(row).join('')}</tbody></table></div>`;
+}
+function clearActivityLog(){ if(!requireOnline())return; if(!isOwner())return toast('Only admin can clear the log',1);
+  confirmBox('Clear activity log?','This permanently removes every recorded activity entry. This cannot be undone.',()=>{
+    DB.activity=[]; save(); renderActivity(); renderActivityBadge(); renderBell(); toast('Activity log cleared'); },'Clear'); }
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
 const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
@@ -2961,7 +3041,9 @@ function saveAdjust(id){
 }
 
 /* ---- bell reminders ---- */
-function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length+negativeCards().length;
+function renderBell(){ const b=$('#bellBadge'); if(!b)return;
+  const actN=isOwner()?unseenActivityAlerts().length:0;
+  const n=cardReminders().length+lowBalanceCards().length+negativeCards().length+actN;
   if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden');
   const bell=$('#bellWrap button'); if(bell) bell.classList.toggle('bell-urgent', urgentCards().length>0); }
 function toggleBell(e){ if(e)e.stopPropagation(); const pop=$('#bellPop'); if(!pop)return;
@@ -2969,8 +3051,15 @@ function toggleBell(e){ if(e)e.stopPropagation(); const pop=$('#bellPop'); if(!p
 function closeBell(){ $('#bellPop')?.classList.add('hidden'); }
 function renderBellPop(){ const pop=$('#bellPop'); if(!pop)return;
   const due=cardReminders(), low=lowBalanceCards(), neg=negativeCards(), act=recentActivity(5);
+  const wact=isOwner()?unseenActivityAlerts():[];
   const sec=(t)=>`<div class="bh" style="background:var(--panel2)"><span>${t}</span></div>`;
   let html='';
+  /* staff edits & deletes awaiting the owner's review */
+  if(wact.length){ html+=sec('🛠️ Staff edits & deletes');
+    html+=wact.slice(0,8).map(a=>`<div class="bi2" onclick="closeBell();go('activity')">
+      <span class="d blink" style="background:var(--amber)"></span>
+      <div style="flex:1"><b>${esc(a.byName)} · ${esc(a.action)} ${esc(a.entity)}</b><div style="color:var(--muted);font-size:12px">${esc(a.ref||'')} · ${fmtDate(a.ts)}</div></div>
+      <div style="text-align:right;font-weight:700">${a.amt!=null?money(a.amt):''}</div></div>`).join(''); }
   /* 0) Cards gone negative — URGENT, must be cleared before midnight */
   if(neg.length){ html+=sec('🌙 Pay before midnight');
     html+=neg.map(x=>`<div class="bi2" onclick="closeBell();go('cards');setTimeout(()=>cardDetail('${x.c.id}'),40)">
