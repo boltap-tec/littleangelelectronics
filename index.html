@@ -947,15 +947,16 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 const KEY='lae_db_v1';
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
-const ALL_VIEWS=['dashboard','shop','purchases','sales','payments','cards','cardpref','giftcards','cashbook','inventory','products','compare','profit','settings'];
-const WORKER_DEFAULT=['shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',settings:'Settings'};
+const ALL_VIEWS=['dashboard','shop','purchases','online','sales','payments','cards','cardpref','giftcards','cashbook','inventory','products','compare','profit','settings'];
+const WORKER_DEFAULT=['shop','purchases','online','sales','cashbook','giftcards'];
+const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
     {v:'dashboard', ic:'📊', lab:'Dashboard'} ]},
   {tag:'Buy & Stock', ic:'📦', color:'#f5b301', items:[
     {v:'purchases', ic:'📥', lab:'Purchases'},
+    {v:'online',    ic:'🛒', lab:'Online Orders', badge:'onlBadge'},
     {v:'inventory', ic:'📦', lab:'Inventory'},
     {v:'products',  ic:'🏷️', lab:'Products'},
     {v:'compare',   ic:'🔎', lab:'Price Compare'} ]},
@@ -1057,7 +1058,7 @@ function mergeDB(base, local, remote, preferLocal){
   const out=_clone(local);
   const deleted=_mergeDeleted(local.deleted, remote.deleted);
   const isDead=id=> !!(deleted[id] && deleted[id].dead);
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online'].forEach(k=>{
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
@@ -1163,6 +1164,7 @@ function reSync(){
       else { logout(); return; } }
     if(typeof renderApprovalsBadge==='function') renderApprovalsBadge();
     if(typeof renderActivityBadge==='function') renderActivityBadge();
+    if(typeof renderOnlineBadge==='function') renderOnlineBadge();
     if(typeof renderBell==='function') renderBell();
   }catch(e){ console.warn('reSync failed:',e&&e.message||e); }
 }
@@ -1181,9 +1183,10 @@ function seed(){
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
     products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[],
+    online:[],                        // online orders (Amazon/Noon/etc) — enter inventory only when delivered
     activity:[],                      // activity log: every create/edit/delete, newest first
     deleted:{},                       // tombstones: id -> {t:timestamp, dead:bool} so deletes sync & stay deleted
-    counters:{purchase:0,sale:0},
+    counters:{purchase:0,sale:0,online:0},
     settings:{
       company:'LITTLE ANGEL ELECTRONICS GENERAL TRADING - L.L.C - O.P.C',
       tagline:'General Trading',
@@ -1213,7 +1216,7 @@ function _maintainTombstones(){
   if(!DB.deleted) DB.deleted={};
   const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
   const now=Date.now();
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online'].forEach(k=>{
     const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
@@ -1298,11 +1301,16 @@ function migrate(){
   if(!Array.isArray(DB.giftcards))DB.giftcards=[];
   if(!Array.isArray(DB.approvals))DB.approvals=[];
   if(!Array.isArray(DB.activity))DB.activity=[];
+  if(!Array.isArray(DB.online))DB.online=[];
+  if(!DB.counters)DB.counters={purchase:0,sale:0,online:0};
+  if(DB.counters.online===undefined)DB.counters.online=0;
   if(!Array.isArray(DB.cash))DB.cash=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
   (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
   // let existing workers who already have Purchases also see & use Gift Cards
   if(!DB.settings._gcGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&u.perms.includes('purchases')&&!u.perms.includes('giftcards'))u.perms.push('giftcards'); }); DB.settings._gcGrant=true; }
+  // workers who can record purchases can also record online orders
+  if(!DB.settings._onlGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&u.perms.includes('purchases')&&!u.perms.includes('online'))u.perms.push('online'); }); DB.settings._onlGrant=true; }
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.sound===undefined)DB.settings.sound=true;
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
@@ -1600,7 +1608,7 @@ function enterApp(){
   try{ if(session)localStorage.setItem(SKEY,session.id); }catch(e){}   // remember this login across refreshes
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge(); renderActivityBadge();
+  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge(); renderActivityBadge(); renderOnlineBadge();
   checkNegativeOnBoot();   // 🚨 alert immediately if any card is already over its limit
   syncSoundBtn(); startUrgentWatch();   // typing-sound icon + recurring urgent-card nudge
 }
@@ -1689,7 +1697,7 @@ function _go(v,vt){
   if(!vt){ main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); } // replay enter animation (fallback path)
   animateCounts(main); staggerReveal(main); initImgSkel(main);
   if(window.innerWidth<=860) closeNav();
-  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); renderActivityBadge(); if(session)applyAccess();
+  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); renderActivityBadge(); renderOnlineBadge(); if(session)applyAccess();
 }
 /* count-up animation for headline figures (parses the formatted value, keeps prefix/suffix) */
 function animateCounts(root){
@@ -2194,6 +2202,265 @@ function delPurchase(id){
     save();renderPurchases();renderBell();renderActivityBadge();
     toast('Purchase deleted'+(isOwner()?'':' · admin notified'));
   },'Delete');
+}
+
+/* =========================================================
+   ONLINE ORDERS / ONLINE PURCHASES
+   Orders placed on online platforms (Amazon, Noon, AliExpress, …) are stored
+   separately from ordinary purchases and DO NOT affect stock or cost while they
+   are in transit. When an order's status becomes "Delivered" (it reached us) it
+   is converted into a real purchase — that is the moment its goods move into
+   inventory. Payment for the resulting purchase is settled from the Purchases
+   page via the usual "Pay" flow, so the full cash/card machinery is reused.
+   Workers can manage online orders like purchases; any change other than placing
+   a new order raises an alert for the owner in the Activity Log.
+   ========================================================= */
+const ONLINE_STATUS=[
+  {k:'ordered',  lab:'Ordered',   tag:'bank',    ic:'🧾'},
+  {k:'shipped',  lab:'Shipped',   tag:'partial', ic:'🚚'},
+  {k:'delivered',lab:'Delivered', tag:'ok',      ic:'📦'},
+  {k:'cancelled',lab:'Cancelled', tag:'due',     ic:'✕'}
+];
+function onlStatusInfo(k){ return ONLINE_STATUS.find(s=>s.k===k)||ONLINE_STATUS[0]; }
+function onlStatusTag(k){ const i=onlStatusInfo(k); return `<span class="tag ${i.tag}">${i.ic} ${i.lab.toUpperCase()}</span>`; }
+function onlItemsArr(o){ return (o&&o.items&&o.items.length)?o.items:[]; }
+function onlGross(o){ return onlItemsArr(o).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function onlDiscount(o){ const g=onlGross(o); return Math.min(g,Math.max(0,+o.discount||0)); }
+function onlTotal(o){ return Math.max(0,onlGross(o)-onlDiscount(o)); }
+function onlQty(o){ return onlItemsArr(o).reduce((a,it)=>a+(+it.qty||0),0); }
+function onlFirstName(o){ const its=onlItemsArr(o); const f=productById(its[0]?.productId); return f?f.name:'—'; }
+function allOnlinePlatforms(){ return uniqSorted((DB.online||[]).map(o=>o.platform)); }
+function pendingOnline(){ return (DB.online||[]).filter(o=>o.status==='ordered'||o.status==='shipped'); }
+function renderOnlineBadge(){ const b=$('#onlBadge'); if(!b)return; const n=pendingOnline().length;
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+
+views.online=function(){
+  return `
+  <div class="page-head"><div><h2>🛒 Online Orders</h2><p>Orders placed on online platforms. They stay out of inventory until you mark them <b>Delivered</b> — then they move into stock as a purchase you can pay for.</p></div>
+    <div class="row-actions"><button class="btn-sm" onclick="newOnline()">🛒 New Online Order</button></div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="onlSearch" placeholder="Search platform / supplier / product / tracking…" oninput="renderOnline()"></div>
+    <label class="chk"><input type="checkbox" id="onlHideDone" onchange="renderOnline()"> Hide delivered &amp; cancelled</label></div>
+  <div id="onlList"></div>`;
+};
+views._after_online=renderOnline;
+function renderOnline(){
+  const host=$('#onlList'); if(!host)return;
+  renderOnlineBadge();
+  const q=($('#onlSearch')?.value||'').toLowerCase();
+  const hideDone=$('#onlHideDone')?.checked;
+  const match=o=> onlItemsArr(o).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);})
+    || (o.platform||'').toLowerCase().includes(q) || (o.supplier||'').toLowerCase().includes(q) || (o.ref||'').toLowerCase().includes(q) || (o.tracking||'').toLowerCase().includes(q);
+  let rows=[...(DB.online||[])].sort((a,b)=>(a.orderDate<b.orderDate?1:a.orderDate>b.orderDate?-1:0)).filter(match);
+  if(hideDone) rows=rows.filter(o=>o.status!=='delivered'&&o.status!=='cancelled');
+  if(!(DB.online||[]).length){ host.innerHTML=`<div class="panel">${emptyBox('🛒','No online orders yet','Record an order you placed online. It waits here until it arrives, then moves into inventory.')}</div>`; return; }
+  if(!rows.length){ host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No online orders match your filter.')}</div>`; return; }
+  const today=todayStr();
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:860px">
+    <thead><tr><th>Ref</th><th>Ordered</th><th>Expected</th><th>Products</th><th class="num">Qty</th><th class="num">Est. total</th><th>Platform</th><th>Status</th><th></th></tr></thead>
+    <tbody>${rows.map(o=>{ const its=onlItemsArr(o), more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';
+      const overdue=(o.status==='ordered'||o.status==='shipped')&&o.expectedDate&&o.expectedDate<today;
+      const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
+      return `<tr>
+        <td><b class="rowlink" onclick="onlineDetail('${o.id}')" title="View order details">${esc(o.ref)}</b></td>
+        <td>${fmtDate(o.orderDate)}</td>
+        <td>${o.expectedDate?`${fmtDate(o.expectedDate)}${overdue?' <span class="tag due">overdue</span>':''}`:'—'}</td>
+        <td><div class="prodcell">${productStack(its)}<div><b style="color:${prodNameColor(productById(its[0]?.productId))}">${esc(onlFirstName(o))}</b>${more}</div></div></td>
+        <td class="num">${num(onlQty(o))}</td>
+        <td class="num"><b>${money(onlTotal(o))}</b></td>
+        <td>${esc(o.platform||'—')}</td>
+        <td>${onlStatusTag(o.status)}${linked?` <span class="rowlink" style="font-size:11.5px" onclick="purchaseDetail('${linked.id}')" title="View stocked purchase">→ ${esc(linked.ref)}</span>`:''}</td>
+        <td class="num" style="white-space:nowrap">${onlRowActions(o)}</td></tr>`;}).join('')}
+    </tbody></table></div>`;
+}
+function onlRowActions(o){
+  if(o.status==='delivered') return `<button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
+  if(o.status==='cancelled') return `<button class="mini-btn" onclick="reopenOnline('${o.id}')">Reopen</button> <button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
+  let b='';
+  if(o.status==='ordered') b+=`<button class="mini-btn gold" onclick="setOnlineStatus('${o.id}','shipped')">Mark shipped</button> `;
+  b+=`<button class="mini-btn" style="color:var(--green);border-color:#1f5136" onclick="deliverOnline('${o.id}')">✓ Delivered</button> `;
+  b+=`<button class="mini-btn" onclick="newOnline('${o.id}')">Edit</button> `;
+  b+=`<button class="mini-btn red" onclick="cancelOnline('${o.id}')">Cancel</button>`;
+  return b;
+}
+let onlItems=[], _onlEditId='';
+function newOnline(id){
+  const o=id?(DB.online||[]).find(x=>x.id===id):null;
+  if(o&&o.status==='delivered')return toast('Delivered orders are purchases now — edit them in Purchases',1);
+  _onlEditId=id||'';
+  onlItems = o? onlItemsArr(o).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:'',qty:1,rate:''}];
+  if(!onlItems.length)onlItems=[{productId:'',qty:1,rate:''}];
+  renderOnlineModal(o);
+}
+function renderOnlineModal(o){
+  const id=_onlEditId;
+  openModal(`${id?'Edit':'New'} Online Order`,`
+    <div class="grid2">
+      <div class="field"><label>Platform / Store *</label><input id="o_plat" list="dl_onlplat" value="${esc(o?o.platform||'':'')}" placeholder="e.g. Amazon.ae, Noon, AliExpress">${dataList('dl_onlplat',allOnlinePlatforms())}</div>
+      <div class="field"><label>Seller / Supplier</label><input id="o_sup" list="dl_sup" value="${esc(o?o.supplier||'':'')}" placeholder="optional">${dataList('dl_sup',allSuppliers())}</div>
+    </div>
+    <div class="grid3">
+      <div class="field"><label>Order Date *</label><input id="o_date" type="date" value="${o?o.orderDate:todayStr()}"></div>
+      <div class="field"><label>Expected Delivery</label><input id="o_exp" type="date" value="${o?(o.expectedDate||''):''}"></div>
+      <div class="field"><label>Tracking No.</label><input id="o_track" value="${esc(o?o.tracking||'':'')}" placeholder="optional"></div>
+    </div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
+    <div class="line-items"><div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Cost/unit</div><div>Amount</div><div></div></div><div id="o_rows"></div></div>
+    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addOnlRow()">＋ Add product</button><button class="mini-btn" onclick="onlNewProdToggle()">✨ New product</button></div>
+    <div id="o_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
+      <div class="grid3">
+        <div class="field"><label>Name *</label><input id="onp_name" placeholder="Product name"></div>
+        <div class="field"><label>Category</label><input id="onp_cat" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
+        <div class="field"><label>Colour</label><input id="onp_color" placeholder="optional"></div>
+      </div>
+      <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn gold" onclick="onlAddNewProduct()">Add to list</button><button class="mini-btn" onclick="onlNewProdToggle()">Close</button></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Discount (${S().currency})</label><input id="o_disc" type="number" min="0" step="any" value="${o?(+o.discount||0):0}" placeholder="0" oninput="onlCalcTotal()"></div>
+      <div class="field"><label>Notes</label><input id="o_notes" value="${esc(o?o.notes||'':'')}" placeholder="optional"></div>
+    </div>
+    <div class="totbox" id="o_tot"></div>
+    <div class="note" style="margin-top:10px">📦 This order does not change stock yet. Mark it <b>Delivered</b> when it reaches you and it becomes a purchase in inventory — then settle the payment from the Purchases page.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveOnline('${id||''}')">Save Order</button>`);
+  renderOnlRows();
+}
+function onlProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
+  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}</option>`;}).join(''); }
+function renderOnlRows(){
+  const host=$('#o_rows'); if(!host)return; const eng=computeEngine();
+  host.innerHTML=onlItems.map((it,i)=>{ const last=it.productId?lastKnownRate(it.productId):0, st=it.productId?stockOf(it.productId,eng):0;
+    return `<div class="li-row">
+      <select class="rq" onchange="onlItems[${i}].productId=this.value;renderOnlRows()">${onlProdOpts(it.productId,eng)}</select>
+      <input class="rq" type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="onlItems[${i}].qty=+this.value;onlCalcTotal()">
+      <input class="rq" type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="onlItems[${i}].rate=+this.value;onlCalcTotal()">
+      <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
+      <button class="li-x" onclick="onlItems.splice(${i},1);renderOnlRows()">✕</button>
+    </div><div class="li-hint">${it.productId?`In stock <b style="color:var(--green)">${num(st)}</b>${last?` · last cost ${money(last)}`:''}`:'Search &amp; pick a product'}</div>`; }).join('');
+  onlCalcTotal();
+}
+function addOnlRow(){ onlItems.push({productId:'',qty:1,rate:''}); renderOnlRows(); flashNewRow('#o_rows .li-row'); }
+function onlNewProdToggle(){ const w=$('#o_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#onp_name')?.focus(),30); }
+function onlAddNewProduct(){
+  if(!requireOnline())return;
+  const name=$('#onp_name').value.trim(); if(!name)return toast('Enter a product name',1);
+  const color=$('#onp_color').value.trim();
+  const np={id:uid(),name,category:$('#onp_cat').value.trim(),unit:'pcs',sku:'',imageUrl:'',color,colorHex:color?guessHex(color):'',compPrices:[]};
+  DB.products.push(np); save();
+  onlItems.push({productId:np.id,qty:1,rate:''});
+  onlNewProdToggle(); renderOnlRows(); toast('Product "'+name+'" added');
+}
+function onlItemsTotal(){ return onlItems.reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function onlCalcTotal(){
+  const gross=onlItemsTotal(), disc=Math.min(gross,Math.max(0,+($('#o_disc')?.value||0))), tot=Math.max(0,gross-disc);
+  const box=$('#o_tot'); if(box)box.innerHTML=`
+    <div class="totrow"><span>Items total</span><span>${money(gross)}</span></div>
+    ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div>`:''}
+    <div class="totrow grand"><span>Estimated total</span><span>${money(tot)}</span></div>`;
+  $$('#o_rows .li-row').forEach((row,i)=>{const amt=row.querySelector('input[disabled]');if(amt&&onlItems[i])amt.value=num((+onlItems[i].qty||0)*(+onlItems[i].rate||0));});
+}
+function saveOnline(id){
+  if(!requireOnline())return;
+  const items=onlItems.filter(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}));
+  if(!items.length)return toast('Add at least one product with qty & cost',1);
+  const platform=$('#o_plat').value.trim(); if(!platform)return toast('Enter the platform / store',1);
+  const gross=items.reduce((a,it)=>a+it.qty*it.rate,0);
+  const discount=Math.min(gross,Math.max(0,+($('#o_disc').value||0)));
+  const tot=Math.max(0,gross-discount);
+  const data={platform,supplier:$('#o_sup').value.trim(),orderDate:$('#o_date').value||todayStr(),expectedDate:$('#o_exp').value||'',tracking:$('#o_track').value.trim(),notes:$('#o_notes').value.trim(),items,discount};
+  if(id){
+    const rec=(DB.online||[]).find(x=>x.id===id); if(!rec)return; if(rec.status==='delivered')return toast('Delivered orders are purchases now',1);
+    Object.assign(rec,data);
+    logActivity('edit','online order',rec.ref,`Edited online order · ${items.length} item(s)`,{amt:tot});
+    save();closeModal();renderOnline();renderActivityBadge();renderBell();
+    toast('Online order updated'+(isOwner()?'':' · admin notified'));
+    return;
+  }
+  if(!Array.isArray(DB.online))DB.online=[];
+  if(!DB.counters.online)DB.counters.online=0;
+  DB.counters.online++; const ref='ONL-'+String(DB.counters.online).padStart(4,'0');
+  DB.online.push({id:uid(),ref,status:'ordered',byId:session.id,createdTs:todayStr(),purchaseId:'',...data});
+  logActivity('create','online order',ref,`New online order · ${items.length} item(s) · ${platform}`,{amt:tot});
+  save();closeModal();renderOnline();renderActivityBadge();renderBell();
+  toast('Online order '+ref+' saved');
+}
+function setOnlineStatus(id,status){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered')return;
+  o.status=status;
+  logActivity('edit','online order',o.ref,'Status → '+status);
+  save();renderOnline();renderActivityBadge();renderBell();
+  toast('Marked '+status+(isOwner()?'':' · admin notified'));
+}
+function cancelOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered')return;
+  confirmBox('Cancel this order?',`Mark online order <b>${esc(o.ref)}</b> as cancelled? It will not be added to inventory.`+(isOwner()?'':' The admin will be notified.'),()=>{
+    o.status='cancelled';
+    logActivity('cancel','online order',o.ref,'Order cancelled');
+    save();renderOnline();renderActivityBadge();renderBell();
+    toast('Order cancelled'+(isOwner()?'':' · admin notified'));
+  },'Cancel order');
+}
+function reopenOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status!=='cancelled')return;
+  o.status='ordered';
+  logActivity('edit','online order',o.ref,'Reopened → ordered');
+  save();renderOnline();renderActivityBadge();renderBell();
+  toast('Order reopened');
+}
+function deliverOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered')return;
+  const items=onlItemsArr(o); if(!items.length)return toast('This order has no products to stock',1);
+  const tot=onlTotal(o);
+  confirmBox('Mark as delivered?',`Add online order <b>${esc(o.ref)}</b> to inventory now? This creates a purchase of ${money(tot)} dated today and the stock becomes available immediately. Settle the payment afterwards from the Purchases page.`+(isOwner()?'':' The admin will be notified.'),()=>{
+    const today=todayStr();
+    if(!DB.counters.purchase)DB.counters.purchase=0;
+    DB.counters.purchase++; const purchaseId=uid(), pref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
+    const supplier=o.platform+(o.supplier?(' · '+o.supplier):'');
+    DB.purchases.push({id:purchaseId,ref:pref,byId:session.id,date:today,supplier,items:items.map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})),discount:+o.discount||0,payment:'cash',paid:0,payments:[],fromOnline:o.id,onlineRef:o.ref});
+    o.status='delivered'; o.deliveredDate=today; o.purchaseId=purchaseId;
+    logActivity('deliver','online order',o.ref,`Delivered → stocked as ${pref}`,{amt:tot});
+    logActivity('create','purchase',pref,`From online order ${o.ref} · ${items.length} item(s)`,{amt:tot});
+    save();renderOnline();renderPurchases&&renderPurchases();renderActivityBadge();renderBell();
+    toast('📦 '+o.ref+' delivered — stocked as '+pref+' (unpaid — record payment in Purchases)');
+  },'Mark delivered');
+}
+function delOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o)return;
+  const linked=o.purchaseId&&DB.purchases.some(p=>p.id===o.purchaseId);
+  const msg=(linked?`Delete online order <b>${esc(o.ref)}</b> AND the purchase it was stocked as? Inventory, cost &amp; payments will recalculate. `:`Delete online order <b>${esc(o.ref)}</b>? `)+'This cannot be undone.'+(isOwner()?'':' The admin will be notified.');
+  confirmBox('Delete online order?',msg,()=>{
+    if(linked) commitPurchaseDelete(o.purchaseId);
+    DB.online=(DB.online||[]).filter(x=>x.id!==id);
+    logActivity('delete','online order',o.ref,linked?'Deleted (also removed the stocked purchase)':'Deleted online order');
+    save();renderOnline();renderActivityBadge();renderBell();
+    toast('Online order deleted'+(isOwner()?'':' · admin notified'));
+  },'Delete');
+}
+function onlineDetail(id){
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o)return;
+  const its=onlItemsArr(o);
+  const rows=its.map(it=>{const p=productById(it.productId);return `<tr><td>${esc(p?p.name:'—')}</td><td class="num">${num(it.qty)}</td><td class="num">${money(it.rate)}</td><td class="num">${money((+it.qty||0)*(+it.rate||0))}</td></tr>`;}).join('');
+  const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
+  const cell=(lab,val)=>`<div><div style="color:var(--muted);font-size:12px">${lab}</div><b>${val}</b></div>`;
+  openModal('Online Order · '+esc(o.ref),`
+    <div class="grid3" style="gap:12px;margin-bottom:12px">
+      ${cell('Platform',esc(o.platform||'—'))}
+      <div><div style="color:var(--muted);font-size:12px">Status</div>${onlStatusTag(o.status)}</div>
+      ${cell('Ordered',fmtDate(o.orderDate))}
+      ${cell('Expected',o.expectedDate?fmtDate(o.expectedDate):'—')}
+      ${o.supplier?cell('Seller',esc(o.supplier)):''}
+      ${o.tracking?cell('Tracking',esc(o.tracking)):''}
+      ${o.status==='delivered'?cell('Delivered',fmtDate(o.deliveredDate||'')):''}
+      ${linked?`<div><div style="color:var(--muted);font-size:12px">Stocked as</div><b class="rowlink" onclick="closeModal();purchaseDetail('${linked.id}')">${esc(linked.ref)}</b></div>`:''}
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="3" class="num"><b>Estimated total${onlDiscount(o)>0?` (after ${money(onlDiscount(o))} discount)`:''}</b></td><td class="num"><b>${money(onlTotal(o))}</b></td></tr></tfoot></table></div>
+    ${o.notes?`<div class="note" style="margin-top:10px">📝 ${esc(o.notes)}</div>`:''}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>${(o.status!=='delivered'&&o.status!=='cancelled')?` <button class="btn-sm" onclick="closeModal();newOnline('${o.id}')">Edit</button> <button class="btn-sm btn-green" onclick="closeModal();deliverOnline('${o.id}')">✓ Mark Delivered</button>`:''}`);
 }
 
 /* =========================================================
@@ -2960,8 +3227,8 @@ function logActivity(action,entity,ref,detail,opts){
     byId: session?session.id:'', byName: session?session.name:'System', byRole: session?session.role:'',
     action, entity, ref:ref||'', detail:detail||'',
     amt: (opts.amt!==undefined && opts.amt!==null && opts.amt!=='') ? +opts.amt : null,
-    alert: (!owner && (action==='edit'||action==='delete')),   // worker edit/delete → owner alert
-    seen: owner                                                 // owner's own actions need no alert
+    alert: (!owner && action!=='create'),   // any worker change other than a new record → owner alert
+    seen: owner                             // owner's own actions need no alert
   };
   DB.activity.unshift(entry);                 // newest first
   if(DB.activity.length>2000)DB.activity.length=2000;   // keep the log bounded
