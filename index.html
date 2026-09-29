@@ -2173,7 +2173,6 @@ function savePurchase(id){
   save();closeModal();renderPurchases();renderBell();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
   if(negWarn.length) setTimeout(()=>alertNegativeCards(),200);   // 🚨 immediate over-limit alert
-  else if(tot>0 && paid>=tot-0.01) confetti();                  // 🎉 paid in full
 }
 function delPurchase(id){
   if(!requireOnline())return;
@@ -2451,7 +2450,6 @@ function saveSale(id,print){
   DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
   DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
   save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
-  if(paid>=t.total-0.01 && t.total>0) confetti();   // 🎉 paid in full
   if(print)setTimeout(()=>printSale(nid),120);
 }
 function delSale(id){
@@ -3491,58 +3489,105 @@ function renderGiftCards(){
   host.innerHTML=(sec('🟢 Active',act,'var(--green)')+sec('⚪ Inactive',inact,'var(--muted)'));
 }
 
-/* ---- purchase (buy) a gift card — like buying a product; loads its balance ---- */
+/* ---- purchase (buy) a gift card — like buying a product; loads its balance ----
+   Paid for with the same split payment as a product purchase: cash and/or one
+   or more credit cards (charge a card to still earn its cashback). */
+let giftBuySplits=[];
 function purchaseGiftModal(){
-  const cards=activeCards();
+  giftBuySplits=[{method:'cash',cardId:'',deductPct:'',amount:''}];
   openModal('Purchase Gift Card',`
-    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Buy a store gift card. The face value is loaded as its opening balance, and how you paid for it is recorded (cash out of the wallet, or charged to a credit card so you still earn its cashback).</p>
+    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Buy a store gift card. The face value is loaded as its opening balance, and you pay for it the same way as a product purchase — cash and/or credit cards.</p>
     <div class="grid2">
       <div class="field"><label>Store *</label><input id="g_store" list="dl_giftstore" placeholder="e.g. Carrefour">${dataList('dl_giftstore',allGiftStores())}</div>
       <div class="field"><label>Gift Card Name / Label *</label><input id="g_name" placeholder="e.g. Carrefour Gift Card"></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Card Number (optional)</label><input id="g_number" inputmode="numeric" placeholder="shown in full on the card so you can redeem it"></div>
+      <div class="field"><label>Card Number (last 4 required) *</label><input id="g_number" inputmode="numeric" placeholder="at least the last 4 digits"></div>
       <div class="field"><label>Date</label><input id="g_date" type="date" value="${todayStr()}"></div>
     </div>
-    <div class="field"><label>Amount Loaded (${S().currency}) *</label><input id="g_amt" type="number" min="0" step="any" placeholder="face value of the gift card" oninput="giftBuyCalc()"></div>
-    <div class="field"><label>Paid For With</label>
-      <select id="g_paidby" onchange="giftBuyCalc()">
-        <option value="cash">💵 Cash (out of the cash wallet)</option>
-        ${cards.map(c=>`<option value="card:${c.id}">💳 ${esc(cardLabel(c))} · avail ${money(cardAvailable(c))}</option>`).join('')}
-        <option value="none">— Not tracked (already owned / gifted)</option>
-      </select></div>
-    <div id="g_buyhint" class="li-hint" style="margin-bottom:12px"></div>
-    <div class="field"><label>Note (optional)</label><input id="g_note" placeholder="e.g. receipt no."></div>`,
+    <div class="field"><label>Amount Loaded (${S().currency}) *</label><input id="g_amt" type="number" min="0" step="any" placeholder="face value of the gift card" oninput="giftBuyCalc()">
+      <div class="li-hint" id="g_availhint" style="margin-top:5px"></div></div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination</label>
+    <div class="line-items" style="padding:8px"><div id="gb_splits"></div></div>
+    <button class="mini-btn" onclick="addGiftBuySplit()">＋ Add payment</button>
+    <div class="totbox" id="gb_tot" style="margin-top:12px"></div>
+    <div class="field" style="margin-top:12px"><label>Note (optional)</label><input id="g_note" placeholder="e.g. receipt no."></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveGiftPurchase()">Purchase</button>`);
-  setTimeout(()=>{$('#g_store')?.focus();giftBuyCalc();},30);
+  renderGiftBuySplits(); setTimeout(()=>$('#g_store')?.focus(),30);
 }
+function renderGiftBuySplits(){
+  const host=$('#gb_splits'); if(!host)return; const cards=activeCards();
+  host.innerHTML=giftBuySplits.map((s,i)=>{
+    let mid;
+    if(s.method==='card'){
+      mid = cards.length
+        ? `<div class="cardpick-wrap">${cardPickerHtml('gbc_'+i, cards, s.cardId, c=>'avail '+money(cardAvailable(c)), 'Owner name or last 4…', (id)=>{ giftBuySplits[i].cardId=id; giftBuyCalc(); })}</div>`
+        : `<div style="color:var(--amber);font-size:11.5px;align-self:center">No cards — add one in Credit Cards</div>`;
+    } else {
+      mid=`<input type="number" min="0" max="100" step="any" value="${s.deductPct!=null&&s.deductPct!==''?s.deductPct:''}" placeholder="Cash discount %" oninput="giftBuySplits[${i}].deductPct=this.value;giftBuyCalc()">`;
+    }
+    const hint = (s.method==='card'&&s.cardId) ? (()=>{ const c=cardById(s.cardId), av=c?cardAvailable(c):0, over=(+s.amount||0)-av;
+        return `<div class="li-hint">Available <b style="color:var(--text)">${money(av)}</b>${c&&c.discountPercent?` · earns ${c.discountPercent}% cashback`:''}${over>1e-6&&!(c&&cardAllowsNeg(c))?` · <span style="color:var(--red)">🚫 exceeds by ${money(over)}</span>`:''}</div>`; })()
+      : (s.method==='cash'&&(+s.deductPct>0) ? `<div class="li-hint">Cash discount ${(+s.deductPct)}% → pay <b style="color:var(--green)">${money((+s.amount||0)*(1-(+s.deductPct||0)/100))}</b> cash</div>` : '');
+    return `<div class="split-row">
+      <select onchange="giftBuySplits[${i}].method=this.value;giftBuySplits[${i}].cardId='';giftBuySplits[${i}].deductPct='';renderGiftBuySplits()">
+        <option value="cash" ${s.method==='cash'?'selected':''}>Cash Payment</option>
+        <option value="card" ${s.method==='card'?'selected':''}>Credit Card</option>
+      </select>
+      ${mid}
+      <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="giftBuySplits[${i}].amount=this.value;giftBuyCalc()">
+      <button class="li-x" onclick="giftBuySplits.splice(${i},1);renderGiftBuySplits()">✕</button>
+    </div>${hint}`;
+  }).join('');
+  giftBuyCalc();
+}
+function addGiftBuySplit(){ giftBuySplits.push({method:'cash',cardId:'',deductPct:'',amount:''}); renderGiftBuySplits(); flashNewRow('#gb_splits .split-row'); }
 function giftBuyCalc(){
-  const el=$('#g_buyhint'); if(!el)return; const amt=+($('#g_amt')?.value||0), pb=$('#g_paidby')?.value||'cash';
-  if(pb==='cash') el.innerHTML=amt>0?`Pays <b style="color:var(--text)">${money(amt)}</b> cash from ${esc(session.name)}'s wallet, loads <b style="color:var(--green)">${money(amt)}</b> onto the gift card.`:'Cash leaves the wallet; the balance is loaded onto the card.';
-  else if(pb.startsWith('card:')){ const c=cardById(pb.slice(5)); const av=c?cardAvailable(c):0; const over=amt-av;
-    el.innerHTML=`Charges <b style="color:var(--text)">${money(amt)}</b> to ${esc(c?c.name:'card')} (avail ${money(av)})${c&&c.discountPercent?` · earns ${c.discountPercent}% cashback`:''}${over>1e-6?` · <span style="color:var(--red)">⚠ exceeds available by ${money(over)}</span>`:''}`; }
-  else el.innerHTML='Just records the gift card & its balance — no cash or card is charged.';
+  const amt=+($('#g_amt')?.value||0);
+  // suggest how much funding is on hand (cash wallet + the best available card)
+  const ah=$('#g_availhint');
+  if(ah){ const wallet=walletBalance(session.id), cards=activeCards();
+    const bestCard=cards.length?cards.reduce((a,b)=>cardAvailable(b)>cardAvailable(a)?b:a):null;
+    const parts=[`💵 Cash in wallet <b style="color:var(--text)">${money(wallet)}</b>`];
+    if(bestCard)parts.push(`💳 ${esc(bestCard.name)} avail <b style="color:var(--text)">${money(cardAvailable(bestCard))}</b>`);
+    const short = amt>0 && amt>wallet && (!bestCard || amt>cardAvailable(bestCard));
+    ah.innerHTML=`Available to pay — ${parts.join(' · ')}${short?` · <span style="color:var(--amber)">⚠ more than any single source — split it across cash &amp; cards below</span>`:''}`;
+  }
+  const paid=giftBuySplits.reduce((a,s)=>a+(+s.amount||0),0), rem=amt-paid;
+  const box=$('#gb_tot'); if(box)box.innerHTML=`
+    <div class="totrow"><span>Amount loaded</span><span>${money(amt)}</span></div>
+    <div class="totrow"><span>Paid now</span><span>${money(paid)}</span></div>
+    <div class="totrow grand"><span>${Math.abs(rem)<0.01?'Fully paid':(rem>0?'Untracked (already owned / gifted)':'Overpaid')}</span>
+      <span style="color:${Math.abs(rem)<0.01?'var(--green)':(rem>0?'var(--amber)':'var(--red)')}">${money(Math.abs(rem))}</span></div>`;
 }
 function saveGiftPurchase(){
   if(!requireOnline())return;
   const store=$('#g_store').value.trim(), name=$('#g_name').value.trim();
+  if(!store)return toast('Enter the store',1);
   if(!name)return toast('Enter a gift card name',1);
+  const number=$('#g_number').value.trim(), digits=number.replace(/\D/g,'');
+  if(digits.length<4)return toast('Card number is required (at least the last 4 digits)',1);
   const amt=+$('#g_amt').value; if(!(amt>0))return toast('Enter the amount loaded',1);
-  const date=$('#g_date').value||todayStr(), number=$('#g_number').value.trim(), note=$('#g_note').value.trim();
-  const pb=$('#g_paidby').value;
-  if(pb.startsWith('card:')){ const c=cardById(pb.slice(5)); if(c){ const over=amt-cardAvailable(c);
-    if(over>1e-6 && !cardAllowsNeg(c)) return toast(`${c.name}: only ${money(Math.max(0,cardAvailable(c)))} available — reduce the amount or enable over-limit for it.`,1); } }
+  const date=$('#g_date').value||todayStr(), note=$('#g_note').value.trim();
+  const splits=giftBuySplits.filter(s=>+s.amount>0);
+  if(splits.some(s=>s.method==='card' && !s.cardId))return toast('Pick a card for each card payment',1);
+  const paid=splits.reduce((a,s)=>a+(+s.amount||0),0);
+  if(paid>amt+0.01)return toast('Payment exceeds the amount loaded — reduce it',1);
+  const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+(+s.amount||0); });
+  for(const cid in cardReq){ const c=cardById(cid); if(c){ const over=cardReq[cid]-cardAvailable(c);
+    if(over>1e-6 && !cardAllowsNeg(c))return toast(`${c.name}: only ${money(Math.max(0,cardAvailable(c)))} available — reduce the amount or enable over-limit for it.`,1); } }
   const gid=uid();
   const g={id:gid,name,store,number,status:'active',date,note,openingBalance:0,byId:session.id,
     txns:[{id:uid(),date,type:'load',amount:amt,note:'Purchased'+(store?' at '+store:'')}]};
   DB.giftcards.push(g);
-  // record how it was paid for
-  if(pb==='cash'){ if(!Array.isArray(DB.cash))DB.cash=[];
-    DB.cash.push({id:uid(),date,dir:'out',amount:amt,cat:'giftbuy',desc:'Gift card · '+name+(store?' ('+store+')':''),who:session.id,byId:session.id,linkId:gid}); }
-  else if(pb.startsWith('card:')){ const c=cardById(pb.slice(5)); if(c)chargeCard(c,amt,date,'Gift card · '+name+(store?' ('+store+')':''),'gift:'+gid); }
+  const charged=[];
+  splits.forEach(s=>{ const a=+s.amount||0; if(a<=0)return;
+    if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,a,date,'Gift card · '+name+(store?' ('+store+')':''),'gift:'+gid); charged.push(c.name); } }
+    else { const ded=+s.deductPct||0, net=a*(1-ded/100); if(!Array.isArray(DB.cash))DB.cash=[];
+      DB.cash.push({id:uid(),date,dir:'out',amount:net,cat:'giftbuy',desc:'Gift card · '+name+(store?' ('+store+')':'')+(ded>0?` · ${ded}% cash disc.`:''),who:session.id,byId:session.id,linkId:gid}); charged.push('cash'); } });
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
-  toast('Gift card purchased · '+money(amt)+' loaded'); confetti();
+  toast('Gift card purchased · '+money(amt)+' loaded');
 }
 
 /* ---- gift card detail + payment/usage history ---- */
