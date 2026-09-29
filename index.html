@@ -947,15 +947,16 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 const KEY='lae_db_v1';
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
-const ALL_VIEWS=['dashboard','shop','purchases','sales','payments','cards','cardpref','giftcards','cashbook','inventory','products','compare','profit','settings'];
+const ALL_VIEWS=['dashboard','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
     {v:'dashboard', ic:'📊', lab:'Dashboard'} ]},
   {tag:'Buy & Stock', ic:'📦', color:'#f5b301', items:[
     {v:'purchases', ic:'📥', lab:'Purchases'},
+    {v:'online',    ic:'🛒', lab:'Online Orders', badge:'onlBadge'},
     {v:'inventory', ic:'📦', lab:'Inventory'},
     {v:'products',  ic:'🏷️', lab:'Products'},
     {v:'compare',   ic:'🔎', lab:'Price Compare'} ]},
@@ -967,12 +968,14 @@ const NAV_GROUPS=[
     {v:'cashbook',  ic:'🧰', lab:'Cash Book'},
     {v:'cards',     ic:'💳', lab:'Credit Cards', owner:true},
     {v:'cardpref',  ic:'⭐', lab:'Card Preference', owner:true},
+    {v:'lenders',   ic:'🤝', lab:'Card Lenders', owner:true, badge:'lenderBadge'},
     {v:'giftcards', ic:'🎁', lab:'Gift Cards'} ]},
   {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
     {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
     {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
+    {v:'activity',  ic:'🧾', lab:'Activity Log', owner:true},
     {v:'profit',    ic:'💰', lab:'Profit & Reports', owner:true},
     {v:'settings',  ic:'⚙️', lab:'Settings'} ]},
 ];
@@ -1056,7 +1059,7 @@ function mergeDB(base, local, remote, preferLocal){
   const out=_clone(local);
   const deleted=_mergeDeleted(local.deleted, remote.deleted);
   const isDead=id=> !!(deleted[id] && deleted[id].dead);
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders'].forEach(k=>{
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
@@ -1178,9 +1181,9 @@ function seed(){
     users:[
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
-    products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[],
+    products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[], activity:[], online:[], lenders:[],
     deleted:{},                       // tombstones: id -> {t:timestamp, dead:bool} so deletes sync & stay deleted
-    counters:{purchase:0,sale:0},
+    counters:{purchase:0,sale:0,online:0},
     settings:{
       company:'LITTLE ANGEL ELECTRONICS GENERAL TRADING - L.L.C - O.P.C',
       tagline:'General Trading',
@@ -1210,7 +1213,7 @@ function _maintainTombstones(){
   if(!DB.deleted) DB.deleted={};
   const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
   const now=Date.now();
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','online','lenders'].forEach(k=>{
     const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
@@ -1293,12 +1296,19 @@ function migrate(){
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
   if(!DB.cards)DB.cards=[];
   if(!Array.isArray(DB.giftcards))DB.giftcards=[];
+  if(!Array.isArray(DB.activity))DB.activity=[];
   if(!Array.isArray(DB.approvals))DB.approvals=[];
   if(!Array.isArray(DB.cash))DB.cash=[];
+  if(!Array.isArray(DB.online))DB.online=[];
+  if(!DB.counters.online)DB.counters.online=0;
+  if(!Array.isArray(DB.lenders))DB.lenders=[];
+  (DB.lenders||[]).forEach(l=>{ if(!Array.isArray(l.cards))l.cards=[]; if(!Array.isArray(l.txns))l.txns=[]; if(l.status===undefined)l.status='active'; });
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
   (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
   // let existing workers who already have Purchases also see & use Gift Cards
   if(!DB.settings._gcGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&u.perms.includes('purchases')&&!u.perms.includes('giftcards'))u.perms.push('giftcards'); }); DB.settings._gcGrant=true; }
+  // workers who can record purchases can also manage online orders
+  if(!DB.settings._onlGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&u.perms.includes('purchases')&&!u.perms.includes('online'))u.perms.push('online'); }); DB.settings._onlGrant=true; }
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.sound===undefined)DB.settings.sound=true;
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
@@ -1560,6 +1570,7 @@ function canView(v){ if(!session)return false; if(session.role==='owner')return 
    mandatory reference (card number / holder name / mobile) and don't touch the wallet. */
 const PAY_METHODS=[
   {k:'card',        label:'Credit Card',          tag:'card',   ref:null},
+  {k:'cardborrow',  label:'Credit Card (Borrowed)',tag:'card',  ref:'mandatory', refLabel:'Borrower name', refKind:'text'},
   {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'share_points',label:'Share Points',         tag:'points', ref:'optional',  refLabel:'Shareholder name (optional)', refKind:'text'},
@@ -1567,6 +1578,7 @@ const PAY_METHODS=[
   {k:'platinum',    label:'Platinum Points',      tag:'points', ref:'mandatory', savedCard:true, refLabel:'Pick a saved card (required)'},
   {k:'diners',      label:'Diners Points',        tag:'points', ref:'mandatory', savedCard:true, refLabel:'Pick a saved card (required)'},
   {k:'happiness',   label:'Happiness Points',     tag:'points', ref:'optional',  refLabel:'Mobile number (optional)',    refKind:'tel'},
+  {k:'aldar',       label:'Aldar Points',         tag:'points', ref:'optional',  refLabel:'Aldar member / mobile no. (optional)', refKind:'tel'},
   {k:'cash',        label:'Cash Payment',         tag:'cash',   ref:null},
 ];
 const PAY_BY_KEY=Object.fromEntries(PAY_METHODS.map(m=>[m.k,m]));
@@ -1596,7 +1608,7 @@ function enterApp(){
   try{ if(session)localStorage.setItem(SKEY,session.id); }catch(e){}   // remember this login across refreshes
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge();
+  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge(); renderOnlineBadge(); renderLenderBadge();
   checkNegativeOnBoot();   // 🚨 alert immediately if any card is already over its limit
   syncSoundBtn(); startUrgentWatch();   // typing-sound icon + recurring urgent-card nudge
 }
@@ -1685,7 +1697,7 @@ function _go(v,vt){
   if(!vt){ main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); } // replay enter animation (fallback path)
   animateCounts(main); staggerReveal(main); initImgSkel(main);
   if(window.innerWidth<=860) closeNav();
-  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); if(session)applyAccess();
+  window.scrollTo(0,0); renderBell(); renderApprovalsBadge(); renderOnlineBadge(); renderLenderBadge(); if(session)applyAccess();
 }
 /* count-up animation for headline figures (parses the formatted value, keeps prefix/suffix) */
 function animateCounts(root){
@@ -1761,6 +1773,8 @@ views.dashboard=function(){
     </div>
   </div>
   ${urgentCardBanner()}
+  ${onlineAlertBanner()}
+  ${lenderAlertBanner()}
   ${dashTiles()}
   ${owner?`<div class="panel" style="padding:16px 18px 6px;margin-top:14px"><h3 style="margin-bottom:2px">📦 Inventory · average cost · profit/loss</h3><p class="psub">Live per-product stock, weighted-average cost & profit earned so far</p>${dashInvProfit(eng)}</div>`:''}
   <div class="cards" style="margin-top:14px">
@@ -1910,14 +1924,14 @@ function saveProduct(id){
   const name=$('#p_name').value.trim(); if(!name)return toast('Product name is required',1);
   const color=$('#p_color').value.trim();
   const data={name,category:$('#p_cat').value.trim(),unit:$('#p_unit').value.trim()||'pcs',sku:$('#p_sku').value.trim(),imageUrl:_imgBuf||'',color,colorHex:color?(_colorHex||guessHex(color)):''};
-  if(id){Object.assign(productById(id),data);} else {DB.products.push({id:uid(),...data});}
+  if(id){const p=productById(id);const before=p?p.name:'';Object.assign(p,data);logAct('edit','product',data.name,before&&before!==data.name?`${before} → ${data.name}`:'details updated');} else {DB.products.push({id:uid(),...data});}
   save();closeModal();renderProducts();toast('Product saved');
 }
 function delProduct(id){
   if(!requireOnline())return;
   const used=DB.purchases.some(p=>purchaseItems(p).some(it=>it.productId===id))||DB.sales.some(s=>s.items.some(i=>i.productId===id));
   if(used)return toast('Cannot delete: product used in purchases/sales',1);
-  confirmBox('Delete product?','This cannot be undone.',()=>{DB.products=DB.products.filter(p=>p.id!==id);save();renderProducts();toast('Product deleted');});
+  confirmBox('Delete product?','This cannot be undone.',()=>{const p=productById(id);logAct('delete','product',p?p.name:'');DB.products=DB.products.filter(p=>p.id!==id);save();renderProducts();toast('Product deleted');});
 }
 
 /* =========================================================
@@ -2037,6 +2051,10 @@ function splitHintText(s){ const info=payMethodInfo(s.method);
       : ` · <span style="color:var(--red)">🚫 exceeds limit by ${money(over)} — not allowed on this card</span>`) : '';
   return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% cashback`:''}${overMsg}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
+function borrowHintText(s){ if(!s||s.method!=='cardborrow'||!s.lenderId||!(+s.amount>0))return '';
+  const c=+s.commission||0, net=lenderNet_(+s.amount,c), comm=Math.round(((+s.amount||0)-net)*100)/100, l=lenderById(s.lenderId);
+  return `You keep <b style="color:var(--green)">${money(comm)}</b> (${c}%) · owe ${esc(l?l.name:'lender')} <b>${money(net)}</b>`; }
+function updateBorrowHint(i){ const el=$('#bbh_'+i); if(el)el.innerHTML=borrowHintText(buySplits[i]); }
 function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=activeCards();
   host.innerHTML=buySplits.map((s,i)=>{
@@ -2045,6 +2063,13 @@ function renderBuySplits(){
     let mid;
     if(s.method==='card'){
       mid=`<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`;
+    } else if(s.method==='cardborrow'){
+      const lenders=activeLenders(); const bl=s.lenderId?lenderById(s.lenderId):null; const bcards=bl?(bl.cards||[]):[];
+      mid=`<div style="display:flex;flex-direction:column;gap:6px">
+        <select onchange="buyBorrowLender(${i},this.value)"><option value="">— lender * —</option>${lenders.map(x=>`<option value="${x.id}" ${s.lenderId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}<option value="__new">＋ New lender…</option></select>
+        ${bl?`<select onchange="buyBorrowCard(${i},this.value)"><option value="">— card * —</option>${bcards.map(c=>`<option value="${c.id}" ${s.lenderCardId===c.id?'selected':''}>${esc(c.label)} (${c.commission||0}%)</option>`).join('')}<option value="__new">＋ Add card…</option></select>
+        <input type="number" min="0" max="100" step="any" value="${s.commission!=null&&s.commission!==''?s.commission:''}" placeholder="Commission %" title="Commission % you keep" oninput="buySplits[${i}].commission=this.value;updateBorrowHint(${i})">`:''}
+      </div>`;
     } else if(info.savedGift){
       const gifts=activeGiftCards();
       mid = gifts.length
@@ -2064,11 +2089,11 @@ function renderBuySplits(){
       mid=`<div style="color:var(--muted2);font-size:12px;align-self:center">Out of wallet</div>`;
     }
     return `<div class="split-row">
-    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';buySplits[${i}].cardId='';buySplits[${i}].giftId='';buySplits[${i}].deductPct='';renderBuySplits()">${opts}</select>
+    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';buySplits[${i}].cardId='';buySplits[${i}].giftId='';buySplits[${i}].deductPct='';buySplits[${i}].lenderId='';buySplits[${i}].lenderCardId='';buySplits[${i}].commission='';renderBuySplits()">${opts}</select>
     ${mid}
-    <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal()">
+    <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal();updateBorrowHint(${i})">
     <button class="li-x" onclick="buySplits.splice(${i},1);renderBuySplits()">✕</button>
-  </div>${(s.method==='card'||info.savedCard||info.savedGift)?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}${s.method==='cash'&&(+s.deductPct>0)?`<div class="li-hint">Cash discount ${(+s.deductPct)}% → pay <b style="color:var(--green)">${money((+s.amount||0)*(1-(+s.deductPct||0)/100))}</b> cash (saves ${money((+s.amount||0)*(+s.deductPct||0)/100)})</div>`:''}`;
+  </div>${(s.method==='card'||info.savedCard||info.savedGift)?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}${s.method==='cardborrow'?`<div class="li-hint" id="bbh_${i}">${borrowHintText(s)}</div>`:''}${s.method==='cash'&&(+s.deductPct>0)?`<div class="li-hint">Cash discount ${(+s.deductPct)}% → pay <b style="color:var(--green)">${money((+s.amount||0)*(1-(+s.deductPct||0)/100))}</b> cash (saves ${money((+s.amount||0)*(+s.deductPct||0)/100)})</div>`:''}`;
   }).join('');
   buyCalcTotal();
 }
@@ -2135,15 +2160,17 @@ function savePurchase(id){
   const rawSplits=buySplits.filter(s=>+s.amount>0);
   if(rawSplits.some(s=>s.method==='card' && (DB.cards&&DB.cards.length) && !s.cardId))return toast('Pick a card for each card payment',1);
   if(rawSplits.some(s=>payMethodInfo(s.method).savedGift && !s.giftId))return toast('Pick a gift card for each gift-card payment',1);
+  if(rawSplits.some(s=>s.method==='cardborrow' && !s.lenderId))return toast('Pick a lender for each borrowed-card payment',1);
+  if(rawSplits.some(s=>s.method==='cardborrow' && !s.lenderCardId))return toast('Pick which card for each borrowed-card payment',1);
   // methods that require a reference must have one (saved-card pick, gift-card pick, or free-text ref)
-  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); if(info.ref!=='mandatory')return false; return info.savedGift ? !s.giftId : (info.savedCard ? !s.cardId : !(s.ref||'').trim()); });
+  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); if(s.method==='cardborrow')return false; if(info.ref!=='mandatory')return false; return info.savedGift ? !s.giftId : (info.savedCard ? !s.cardId : !(s.ref||'').trim()); });
   if(missingRef){ const info=payMethodInfo(missingRef.method); return toast(`${info.label}: ${info.refLabel.replace(/ \((required|optional)\)/,'')} is required`,1); }
   // gift cards can't go below zero — block if any gift card is overspent
   const giftReq={}; rawSplits.forEach(s=>{ if(payMethodInfo(s.method).savedGift&&s.giftId)giftReq[s.giftId]=(giftReq[s.giftId]||0)+(+s.amount||0); });
   for(const gid in giftReq){ const g=giftById(gid); if(g){ const av=giftAvailForSplit(g); if(giftReq[gid]-av>1e-6) return toast(`${g.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
-  const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard;
-    return {method:s.method,cardId:linksCard?(s.cardId||''):'',giftId:info.savedGift?(s.giftId||''):'',ref:(linksCard||info.savedGift)?'':(s.ref||'').trim(),deductPct:s.method==='cash'?(+s.deductPct||0):0,amount:+s.amount}; });
+  const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard; const isBorrow=s.method==='cardborrow';
+    return {method:s.method,cardId:linksCard?(s.cardId||''):'',giftId:info.savedGift?(s.giftId||''):'',lenderId:isBorrow?(s.lenderId||''):'',lenderCardId:isBorrow?(s.lenderCardId||''):'',commission:isBorrow?(+s.commission||0):0,ref:(linksCard||info.savedGift||isBorrow)?'':(s.ref||'').trim(),deductPct:s.method==='cash'?(+s.deductPct||0):0,amount:+s.amount}; });
   // A card may be swiped past its limit ONLY if it's flagged "allow negative".
   // Cards not allowed are blocked; allowed cards go through but raise an immediate alert.
   const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+s.amount; });
@@ -2154,7 +2181,7 @@ function savePurchase(id){
     return toast(`${b.name}: only ${money(Math.max(0,b.av))} available — this card can't go over its limit. Reduce the amount, or enable over-limit for it in Credit Cards.`,1); }
   let paid=splits.reduce((a,s)=>a+s.amount,0); if(paid>tot+0.01)paid=tot;
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
-  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',deductPct:s.deductPct||0,payRef:s.ref||'',ref:'Initial'}));
+  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',lenderId:s.lenderId||'',lenderCardId:s.lenderCardId||'',commission:s.commission||0,deductPct:s.deductPct||0,payRef:s.ref||'',ref:'Initial'}));
   const data={date,supplier,items,discount,payment:methodTag,paid,payments};
   const negMsg=negWarn.length?(' · 🔴 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay immediately'):'';
   if(id){ // EDIT existing — confirm; workers route to admin approval
@@ -2169,7 +2196,8 @@ function savePurchase(id){
   DB.purchases.push({id:purchaseId,ref,byId:session.id,...data});
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } }
-    else if(s.giftId){ const g=giftById(s.giftId); if(g){ spendGift(g,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(g.name); } } });
+    else if(s.giftId){ const g=giftById(s.giftId); if(g){ spendGift(g,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(g.name); } }
+    else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,s.amount,s.commission,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); const l=lenderById(s.lenderId); charged.push('borrowed'+(l?' · '+l.name:'')); } });
   save();closeModal();renderPurchases();renderBell();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
   if(negWarn.length) setTimeout(()=>alertNegativeCards(),200);   // 🚨 immediate over-limit alert
@@ -2179,6 +2207,725 @@ function delPurchase(id){
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
   if(!isOwner()) return confirmBox('Send for approval?',`Deleting purchase <b>${esc(ref)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('purchase','delete',id,ref,null),'Send');
   confirmBox('Delete purchase?',`Delete <b>${esc(ref)}</b>? Inventory, cost, card balance & payments will recalculate. This cannot be undone.`,()=>{commitPurchaseDelete(id);save();renderPurchases();renderBell();toast('Purchase deleted');},'Delete');
+}
+
+/* =========================================================
+   CARD LENDERS  — borrowed-card financing ledger
+   ---------------------------------------------------------
+   People who lend you their credit cards. You use a card to pay a purchase
+   ("swipe"); you keep a commission % and owe the lender the NET (gross − commission).
+   Cash advances they give you add to what you owe; repayments reduce it.
+   Each lender keeps a running balance — exactly like the manual sheet.
+   A lender has many cards, each with its own default commission %.
+   ========================================================= */
+const LENDER_TX=[
+  {k:'opening', lab:'Opening',      ic:'📌', tag:'bank',   sign:+1},
+  {k:'swipe',   lab:'Card Swipe',   ic:'💳', tag:'card',   sign:+1},
+  {k:'advance', lab:'Cash Advance', ic:'💵', tag:'due',    sign:+1},
+  {k:'repay',   lab:'Repayment',    ic:'✅', tag:'ok',     sign:-1},
+  {k:'adjust',  lab:'Adjustment',   ic:'⚖', tag:'adjust', sign:+1}
+];
+function lenderById(id){ return (DB.lenders||[]).find(l=>l.id===id); }
+function activeLenders(){ return (DB.lenders||[]).filter(l=>l.status!=='inactive'); }
+function lenderCardById(l,cid){ return ((l&&l.cards)||[]).find(c=>c.id===cid); }
+function allLenderNames(){ return uniqSorted((DB.lenders||[]).map(l=>l.name)); }
+function lenderTxnDelta(t){ const m=LENDER_TX.find(x=>x.k===t.type); return (m?m.sign:1)*(+t.amount||0); }
+function lenderBalance(l){ return (l&&l.txns||[]).reduce((a,t)=>a+lenderTxnDelta(t),0); }
+function lenderCommission(l){ return (l&&l.txns||[]).reduce((a,t)=>a+(t.type==='swipe'?((+t.gross||0)-(+t.amount||0)):0),0); }
+function lenderNet_(gross,pct){ return Math.round((+gross||0)*(1-(+pct||0)/100)*100)/100; }
+/* create a swipe ledger line (used by manual entry AND by borrowed-card purchases) */
+function postLenderSwipe(lenderId,cardId,gross,commissionPct,date,note,srcPurchaseId){
+  const l=lenderById(lenderId); if(!l)return; if(!l.txns)l.txns=[];
+  const card=lenderCardById(l,cardId), c=+commissionPct||0;
+  l.txns.push({id:uid(),date:date||todayStr(),type:'swipe',cardId:cardId||'',cardLabel:card?card.label:'',gross:+gross||0,commission:c,amount:lenderNet_(gross,c),note:note||'',srcPurchaseId:srcPurchaseId||undefined});
+}
+function unlinkPurchaseFromLenders(pid){ (DB.lenders||[]).forEach(l=>{ if(l.txns)l.txns=l.txns.filter(t=>t.srcPurchaseId!==pid); }); }
+function renderLenderBadge(){ const b=$('#lenderBadge'); if(!b)return; const n=(DB.lenders||[]).filter(l=>lenderBalance(l)>0.005).length;
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+/* dashboard alert — money owed to each lender */
+function lenderAlertBanner(){
+  if(!canView('lenders')) return '';
+  const out=(DB.lenders||[]).map(l=>({l,b:lenderBalance(l)})).filter(x=>x.b>0.005).sort((a,b)=>b.b-a.b);
+  if(!out.length) return '';
+  const total=out.reduce((a,x)=>a+x.b,0);
+  const rows=out.slice(0,6).map(x=>`<div class="ucard-row">
+    <div class="ur-main"><b>${esc(x.l.name)}</b> &nbsp;<span class="badge-due">OWE ${money(x.b)}</span>${lenderCommission(x.l)>0?` &nbsp;<span style="color:var(--green);font-size:12px">comm ${money(lenderCommission(x.l))}</span>`:''}</div>
+    <button class="btn-sm btn-green" onclick="go('lenders');setTimeout(()=>{setLender('${x.l.id}');lenderTxnModal('${x.l.id}','repay');},80)">Repay</button>
+    <button class="btn-sm btn-ghost" onclick="go('lenders');setTimeout(()=>setLender('${x.l.id}'),60)">Open</button>
+  </div>`).join('');
+  return `<div class="urgent-banner" style="border-color:#a9791b;background:linear-gradient(180deg,rgba(245,179,1,.12),var(--panel));animation:none">
+    <div class="ub-head"><span style="font-size:20px">🤝</span> <b>${money(total)} owed to ${out.length} card lender${out.length>1?'s':''}</b> <span style="color:var(--muted);font-weight:600;font-size:12.5px">— tap Repay to settle</span></div>${rows}</div>`;
+}
+
+let _lenderSel='', _lenderEditId='', _lenderCardsEdit=[];
+views.lenders=function(){
+  return `
+  <div class="page-head"><div><h2>🤝 Card Lenders</h2><p>People who lend you their credit cards. Each swipe adds the net you owe (after your commission); cash advances add, repayments reduce — with a live running balance.</p></div>
+    <div class="row-actions"><button class="btn-sm" onclick="lenderModal()">＋ New Lender</button></div></div>
+  <div id="lenderWrap"></div>`;
+};
+views._after_lenders=renderLenders;
+function setLender(id){ _lenderSel=id; renderLenders(); }
+function renderLenders(){
+  const host=$('#lenderWrap'); if(!host)return;
+  renderLenderBadge();
+  const lenders=(DB.lenders||[]);
+  if(!lenders.length){ host.innerHTML=`<div class="panel">${emptyBox('🤝','No lenders yet','Add a person who lends you their credit cards. Then record swipes, your commission, cash advances & repayments here.')}</div>`; return; }
+  if(!_lenderSel||!lenderById(_lenderSel)) _lenderSel=lenders[0].id;
+  const sel=lenderById(_lenderSel), bal=lenderBalance(sel);
+  const totalOut=lenders.reduce((a,l)=>a+lenderBalance(l),0), totalComm=lenders.reduce((a,l)=>a+lenderCommission(l),0);
+  const chips=lenders.map(l=>{ const b=lenderBalance(l); return `<div class="stat ${l.id===_lenderSel?'gold':''}" style="cursor:pointer" onclick="setLender('${l.id}')">
+    <div class="label">${esc(l.name)}</div><div class="val" style="${b<0?'color:var(--green)':(b>0.005?'color:var(--amber)':'')}">${money(b)}</div>
+    <div class="foot">${(l.cards||[]).length} card(s) · comm ${money(lenderCommission(l))}</div></div>`;}).join('');
+  const rows=[...(sel.txns||[])].sort((a,b)=>(a.date<b.date?-1:a.date>b.date?1:0));
+  let run=0; const withRun=rows.map(t=>{ run+=lenderTxnDelta(t); return {t,run}; });
+  const body=[...withRun].reverse().map(x=>{ const t=x.t, meta=LENDER_TX.find(m=>m.k===t.type)||{lab:t.type,tag:'bank',ic:''}, delta=lenderTxnDelta(t);
+    const details = t.type==='swipe'
+      ? `${esc(t.cardLabel||'card')} · swiped ${money(t.gross)} @ ${t.commission||0}% → keep ${money((+t.gross||0)-(+t.amount||0))}${t.note?' · '+esc(t.note):''}`
+      : (esc(t.note||meta.lab)+(t.method?' · '+(t.method||'').toUpperCase():''));
+    return `<tr>
+      <td>${fmtDate(t.date)}</td>
+      <td><span class="tag ${meta.tag}">${meta.ic} ${meta.lab.toUpperCase()}</span></td>
+      <td style="white-space:normal">${details}</td>
+      <td class="num" style="color:var(--amber)">${delta>0?money(delta):''}</td>
+      <td class="num" style="color:var(--green)">${delta<0?money(-delta):''}</td>
+      <td class="num"><b>${money(x.run)}</b></td>
+      <td class="num">${t.srcPurchaseId?`<span class="rowlink" style="font-size:11px" onclick="purchaseDetail('${t.srcPurchaseId}')" title="From this purchase">purchase</span>`:(isOwner()?`<button class="mini-btn red" onclick="delLenderTxn('${sel.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">—</span>')}</td>
+    </tr>`;}).join('');
+  host.innerHTML=`
+    <div class="cards" style="margin-bottom:12px">
+      <div class="stat ${totalOut>0.005?'amber':(totalOut<-0.005?'green':'')}"><span class="ic">🤝</span><div class="label">Total Outstanding</div><div class="val">${money(totalOut)}</div><div class="foot">${lenders.length} lender(s)</div></div>
+      <div class="stat green"><span class="ic">🪙</span><div class="label">Commission Earned</div><div class="val">${money(totalComm)}</div><div class="foot">all-time · all lenders</div></div>
+    </div>
+    <div class="cat-head">👥 Lenders — tap to view</div>
+    <div class="cards" style="margin-bottom:14px">${chips}</div>
+    <div class="panel" style="padding:14px 16px">
+      <div class="page-head" style="margin-bottom:10px">
+        <div><h3 style="margin:0">${esc(sel.name)} ${sel.phone?`<a href="tel:${esc((sel.phone||'').replace(/\s+/g,''))}" style="font-size:13px;text-decoration:none" title="Call">📞</a>`:''}</h3>
+          <p class="psub" style="margin:3px 0 0">Outstanding <b style="color:${bal>0.005?'var(--amber)':(bal<-0.005?'var(--green)':'var(--text)')}">${money(bal)}</b> · commission earned <b style="color:var(--green)">${money(lenderCommission(sel))}</b>${sel.notes?' · '+esc(sel.notes):''}</p></div>
+        <div class="row-actions">
+          <button class="btn-sm btn-gold" onclick="lenderTxnModal('${sel.id}','swipe')">💳 Swipe</button>
+          <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','advance')">💵 Cash Advance</button>
+          <button class="btn-sm btn-green" onclick="lenderTxnModal('${sel.id}','repay')">✅ Repayment</button>
+          <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','adjust')">⚖ Adjust</button>
+          <button class="btn-sm btn-ghost" onclick="exportLenderExcel('${sel.id}')">⬇ Excel</button>
+          <button class="btn-sm btn-ghost" onclick="lenderModal('${sel.id}')">✎ Edit</button>
+        </div>
+      </div>
+      ${withRun.length?`<div class="table-wrap"><table style="min-width:780px">
+        <thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Owed +</th><th class="num">Paid −</th><th class="num">Balance</th><th></th></tr></thead>
+        <tbody>${body}</tbody></table></div>`:`<div style="padding:6px 0">${emptyBox('🧾','No entries yet','Record a swipe, cash advance or repayment for '+esc(sel.name)+'.')}</div>`}
+    </div>`;
+}
+/* ---- add / edit a lender (with its cards + opening balance) ---- */
+function lenderModal(id){
+  if(!requireOnline())return;
+  const l=id?lenderById(id):null; _lenderEditId=id||'';
+  _lenderCardsEdit = l? (l.cards||[]).map(c=>({id:c.id,label:c.label,commission:c.commission})) : [];
+  openModal(`${id?'Edit':'New'} Lender`,`
+    <div class="grid2">
+      <div class="field"><label>Lender Name *</label><input id="l_name" list="dl_lender" value="${esc(l?l.name:'')}" placeholder="e.g. Rajesh">${dataList('dl_lender',allLenderNames())}</div>
+      <div class="field"><label>Phone</label><input id="l_phone" inputmode="tel" value="${esc(l?l.phone||'':'')}" placeholder="optional"></div>
+    </div>
+    <div class="field"><label>Notes</label><input id="l_notes" value="${esc(l?l.notes||'':'')}" placeholder="optional"></div>
+    ${!id?`<div class="grid2">
+      <div class="field"><label>Opening Balance (${S().currency})</label><input id="l_open" type="number" step="any" value="0" placeholder="what you already owe now"></div>
+      <div class="field"><label>As of date</label><input id="l_opendate" type="date" value="${todayStr()}"></div>
+    </div><div class="li-hint" style="margin:-4px 2px 8px">Positive = you owe the lender (the usual case). Leave 0 to start fresh.</div>`:''}
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Cards — label + default commission %</label>
+    <div class="line-items"><div class="li-head" style="grid-template-columns:2.6fr 1fr 34px"><div>Card label</div><div>Comm %</div><div></div></div><div id="l_cards"></div></div>
+    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addLenderCardRow()">＋ Add card</button></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveLender('${id||''}')">Save Lender</button>`);
+  renderLenderCardRows();
+  setTimeout(()=>$('#l_name')?.focus(),30);
+}
+function renderLenderCardRows(){
+  const host=$('#l_cards'); if(!host)return;
+  if(!_lenderCardsEdit.length) _lenderCardsEdit=[{id:uid(),label:'',commission:''}];
+  host.innerHTML=_lenderCardsEdit.map((c,i)=>`<div class="li-row" style="grid-template-columns:2.6fr 1fr 34px">
+    <input value="${esc(c.label||'')}" placeholder="e.g. Rajesh FAB" oninput="_lenderCardsEdit[${i}].label=this.value">
+    <input type="number" min="0" max="100" step="any" value="${c.commission!=null&&c.commission!==''?c.commission:''}" placeholder="%" oninput="_lenderCardsEdit[${i}].commission=this.value">
+    <button class="li-x" onclick="_lenderCardsEdit.splice(${i},1);renderLenderCardRows()">✕</button>
+  </div>`).join('');
+}
+function addLenderCardRow(){ _lenderCardsEdit.push({id:uid(),label:'',commission:''}); renderLenderCardRows(); flashNewRow('#l_cards .li-row'); }
+function saveLender(id){
+  if(!requireOnline())return;
+  const name=$('#l_name').value.trim(); if(!name)return toast('Lender name is required',1);
+  const cards=_lenderCardsEdit.filter(c=>(c.label||'').trim()).map(c=>({id:c.id||uid(),label:c.label.trim(),commission:+c.commission||0}));
+  if(id){ const l=lenderById(id); if(!l)return; l.name=name; l.phone=$('#l_phone').value.trim(); l.notes=$('#l_notes').value.trim(); l.cards=cards;
+    logAct('edit','card lender',name,`${cards.length} card(s)`); save();closeModal();renderLenders();renderLenderBadge(); toast('Lender updated'); return; }
+  const l={id:uid(),name,phone:$('#l_phone').value.trim(),notes:$('#l_notes').value.trim(),status:'active',cards,txns:[]};
+  const open=+($('#l_open')?.value)||0; if(open!==0) l.txns.push({id:uid(),date:$('#l_opendate').value||todayStr(),type:'opening',amount:open,note:'Opening balance'});
+  DB.lenders.push(l); _lenderSel=l.id; save();closeModal();renderLenders();renderLenderBadge();
+  logAct('create','card lender',name,`opening ${money(open)} · ${cards.length} card(s)`);
+  toast('Lender "'+name+'" added');
+}
+/* ---- ledger entry modals: swipe / advance / repay / adjust ---- */
+function lenderTxnModal(lenderId,type){
+  if(!requireOnline())return;
+  const l=lenderById(lenderId); if(!l)return;
+  const meta=LENDER_TX.find(m=>m.k===type)||LENDER_TX[1];
+  let bodyHtml='';
+  if(type==='swipe'){
+    const cards=l.cards||[];
+    bodyHtml=`
+      <div class="field"><label>Card *</label><select id="lt_card" onchange="lenderSwipeCardPick()">
+        <option value="">— select card * —</option>
+        ${cards.map(c=>`<option value="${c.id}" data-c="${c.commission||0}">${esc(c.label)} (${c.commission||0}%)</option>`).join('')}
+      </select>${cards.length?'':'<div class="li-hint" style="color:var(--amber)">No cards yet — add one via ✎ Edit lender.</div>'}</div>
+      <div class="grid3">
+        <div class="field"><label>Amount swiped (${S().currency}) *</label><input id="lt_gross" type="number" min="0" step="any" oninput="lenderSwipeCalc()"></div>
+        <div class="field"><label>Commission %</label><input id="lt_comm" type="number" min="0" max="100" step="any" oninput="lenderSwipeCalc()"></div>
+        <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
+      </div>
+      <div class="totbox" id="lt_net"></div>
+      <div class="field"><label>Note</label><input id="lt_note" placeholder="optional (e.g. what it was for)"></div>`;
+  } else if(type==='advance'){
+    bodyHtml=`<div class="grid2">
+      <div class="field"><label>Cash advance (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any"></div>
+      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
+    </div><div class="field"><label>Note</label><input id="lt_note" placeholder="cash the lender gave you"></div>`;
+  } else if(type==='repay'){
+    const bal=+lenderBalance(l).toFixed(2);
+    bodyHtml=`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Current balance owed: <b style="color:var(--amber)">${money(bal)}</b></p>
+    <div class="grid3">
+      <div class="field"><label>Repayment (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any" value="${bal>0?bal:''}"></div>
+      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Method</label><select id="lt_method"><option value="cash">Cash</option><option value="bank">Bank Transfer</option><option value="cheque">Cheque</option><option value="card">Card</option></select></div>
+    </div><div class="field"><label>Note</label><input id="lt_note" placeholder="optional (e.g. receipt no.)"></div>`;
+  } else {
+    bodyHtml=`<div class="grid2">
+      <div class="field"><label>Adjustment (${S().currency}) — + increases, − decreases *</label><input id="lt_amt" type="number" step="any"></div>
+      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
+    </div><div class="field"><label>Reason</label><input id="lt_note" placeholder="why this adjustment"></div>`;
+  }
+  openModal(meta.ic+' '+meta.lab+' · '+esc(l.name), bodyHtml,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveLenderTxn('${lenderId}','${type}')">Save</button>`);
+  if(type==='swipe')lenderSwipeCalc();
+}
+function lenderSwipeCardPick(){ const sel=$('#lt_card'), opt=sel&&sel.selectedOptions[0], c=opt?(+opt.dataset.c||0):0, ci=$('#lt_comm'); if(ci&&!ci.value)ci.value=c; lenderSwipeCalc(); }
+function lenderSwipeCalc(){ const g=+($('#lt_gross')?.value||0), c=+($('#lt_comm')?.value||0), net=lenderNet_(g,c), comm=Math.round((g-net)*100)/100;
+  const box=$('#lt_net'); if(box)box.innerHTML=`
+    <div class="totrow"><span>Amount swiped</span><span>${money(g)}</span></div>
+    <div class="totrow"><span>Your commission (${c||0}%)</span><span style="color:var(--green)">${money(comm)}</span></div>
+    <div class="totrow grand"><span>You owe the lender</span><span>${money(net)}</span></div>`; }
+function saveLenderTxn(lenderId,type){
+  if(!requireOnline())return;
+  const l=lenderById(lenderId); if(!l)return; if(!l.txns)l.txns=[];
+  const date=$('#lt_date')?.value||todayStr(), note=($('#lt_note')?.value||'').trim();
+  if(type==='swipe'){
+    const cardId=$('#lt_card').value; if(!cardId)return toast('Pick a card',1);
+    const gross=+$('#lt_gross').value; if(!(gross>0))return toast('Enter the amount swiped',1);
+    const comm=Math.max(0,Math.min(100,+$('#lt_comm').value||0));
+    postLenderSwipe(lenderId,cardId,gross,comm,date,note||'Manual swipe','');
+  } else if(type==='advance'){
+    const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1);
+    l.txns.push({id:uid(),date,type:'advance',amount:amt,note});
+  } else if(type==='repay'){
+    const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1);
+    l.txns.push({id:uid(),date,type:'repay',amount:amt,method:$('#lt_method').value,note});
+  } else {
+    const amt=+$('#lt_amt').value; if(!amt)return toast('Enter an amount (+ or −)',1);
+    l.txns.push({id:uid(),date,type:'adjust',amount:amt,note});
+  }
+  const lab=(LENDER_TX.find(m=>m.k===type)||{lab:type}).lab;
+  logAct('edit','card lender',l.name,lab+(type==='swipe'?' '+money(+$('#lt_gross').value||0):(type!=='adjust'?' '+money(+$('#lt_amt').value||0):'')));
+  save();closeModal();renderLenders();renderLenderBadge();
+  toast(lab+' saved');
+}
+function delLenderTxn(lenderId,txnId){
+  if(!requireOnline())return; if(!isOwner())return toast('Only admin can delete ledger entries',1);
+  const l=lenderById(lenderId); if(!l)return; const t=(l.txns||[]).find(x=>x.id===txnId);
+  if(t&&t.srcPurchaseId)return toast('This swipe came from a purchase — edit or delete it in Purchases',1);
+  confirmBox('Delete entry?','Remove this ledger entry? The running balance will recalculate. This cannot be undone.',()=>{
+    l.txns=(l.txns||[]).filter(x=>x.id!==txnId); logAct('delete','card lender',l.name,'ledger entry removed'); save();renderLenders();renderLenderBadge(); toast('Entry deleted'); },'Delete');
+}
+function exportLenderExcel(id){
+  const l=lenderById(id); if(!l)return;
+  const rows=[['Date','Type','Card','Swiped','Comm %','Commission','Note','Owed +','Paid −','Balance']];
+  const sorted=[...(l.txns||[])].sort((a,b)=>(a.date<b.date?-1:a.date>b.date?1:0)); let run=0;
+  sorted.forEach(t=>{ run+=lenderTxnDelta(t); const meta=LENDER_TX.find(m=>m.k===t.type)||{lab:t.type}, delta=lenderTxnDelta(t);
+    rows.push([t.date,meta.lab,t.cardLabel||'',t.type==='swipe'?num2(t.gross):'',t.type==='swipe'?(t.commission||0):'',t.type==='swipe'?num2((+t.gross||0)-(+t.amount||0)):'',t.note||'',delta>0?num2(delta):'',delta<0?num2(-delta):'',num2(run)]); });
+  rows.push([]); rows.push(['','','','','','','TOTAL OWED','','',num2(lenderBalance(l))]);
+  rows.push(['','','','','','','COMMISSION EARNED','','',num2(lenderCommission(l))]);
+  exportExcel('lender_'+(l.name||'lender').replace(/\s+/g,'_')+'_'+todayStr()+'.xlsx',[{name:(l.name||'Lender').replace(/[\\/?*\[\]:]/g,' ').slice(0,28),rows}]);
+}
+/* ---- inline add during a purchase (borrowed-card payment) ---- */
+function buyBorrowLender(i,val){ if(val==='__new'){ quickAddLenderFromPurchase(i); return; } buySplits[i].lenderId=val; buySplits[i].lenderCardId=''; buySplits[i].commission=''; renderBuySplits(); }
+function buyBorrowCard(i,val){ if(val==='__new'){ quickAddLenderCardFromPurchase(i); return; } buySplits[i].lenderCardId=val;
+  const l=lenderById(buySplits[i].lenderId), c=lenderCardById(l,val); buySplits[i].commission=c?(c.commission||0):''; renderBuySplits(); }
+function quickAddLenderFromPurchase(i){
+  openModal('New Lender',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Quick-add a lender — saved and selected for this payment. Add more cards later in Card Lenders.</p>
+    <div class="field"><label>Lender Name *</label><input id="ql_name" list="dl_lender" placeholder="e.g. Rajesh">${dataList('dl_lender',allLenderNames())}</div>
+    <div class="grid2">
+      <div class="field"><label>Phone</label><input id="ql_phone" inputmode="tel" placeholder="optional"></div>
+      <div class="field"><label>First card label *</label><input id="ql_card" placeholder="e.g. Rajesh FAB"></div>
+    </div>
+    <div class="field"><label>That card's commission %</label><input id="ql_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
+     <button class="btn-sm" onclick="quickSaveLenderFromPurchase(${i})">Save Lender</button>`);
+  setTimeout(()=>$('#ql_name')?.focus(),30);
+}
+function quickSaveLenderFromPurchase(i){
+  if(!requireOnline())return;
+  const name=$('#ql_name').value.trim(); if(!name)return toast('Lender name is required',1);
+  const cl=$('#ql_card').value.trim(); if(!cl)return toast('Enter the first card label',1);
+  const comm=+$('#ql_comm').value||0, cid=uid();
+  const l={id:uid(),name,phone:$('#ql_phone').value.trim(),notes:'',status:'active',cards:[{id:cid,label:cl,commission:comm}],txns:[]};
+  DB.lenders.push(l); save(); renderLenderBadge();
+  buySplits[i].lenderId=l.id; buySplits[i].lenderCardId=cid; buySplits[i].commission=comm;
+  logAct('create','card lender',name,'added during purchase');
+  toast('Lender "'+name+'" added'); renderPurchaseModal();
+}
+function quickAddLenderCardFromPurchase(i){
+  const l=lenderById(buySplits[i].lenderId); if(!l)return toast('Pick a lender first',1);
+  openModal('Add Card · '+esc(l.name),`
+    <div class="field"><label>Card Label *</label><input id="qlc_label" placeholder="e.g. Rajesh FAB, Fahed ADIB"></div>
+    <div class="field"><label>Default Commission %</label><input id="qlc_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
+     <button class="btn-sm" onclick="quickSaveLenderCard(${i})">Save Card</button>`);
+  setTimeout(()=>$('#qlc_label')?.focus(),30);
+}
+function quickSaveLenderCard(i){
+  if(!requireOnline())return;
+  const l=lenderById(buySplits[i].lenderId); if(!l)return;
+  const label=$('#qlc_label').value.trim(); if(!label)return toast('Card label is required',1);
+  const comm=+$('#qlc_comm').value||0, cid=uid();
+  if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:cid,label,commission:comm}); save();
+  buySplits[i].lenderCardId=cid; buySplits[i].commission=comm;
+  toast('Card "'+label+'" added'); renderPurchaseModal();
+}
+
+/* =========================================================
+   ONLINE ORDERS / ONLINE PURCHASES
+   Orders placed on online platforms (Amazon, Noon, AliExpress, …) live here,
+   separate from ordinary purchases, and DO NOT affect stock or cost while in
+   transit. When status becomes "Delivered" the order converts into a real
+   purchase — that is when its goods enter inventory.
+   Payment is OPTIONAL at order time (some platforms charge up front, some on
+   delivery). Any prepayment uses the same cash/card/gift machinery as purchases
+   and is fully reversible: cancelling an order reverts its prepayment (cash back
+   to the wallet, card charge removed, gift balance restored). On delivery the
+   prepayment carries over to the new purchase as already-paid.
+   ========================================================= */
+const ONLINE_STATUS=[
+  {k:'ordered',  lab:'Ordered',   tag:'bank',    ic:'🧾'},
+  {k:'shipped',  lab:'Shipped',   tag:'partial', ic:'🚚'},
+  {k:'delivered',lab:'Delivered', tag:'ok',      ic:'📦'},
+  {k:'cancelled',lab:'Cancelled', tag:'due',     ic:'✕'}
+];
+function onlStatusInfo(k){ return ONLINE_STATUS.find(s=>s.k===k)||ONLINE_STATUS[0]; }
+function onlStatusTag(k){ const i=onlStatusInfo(k); return `<span class="tag ${i.tag}">${i.ic} ${i.lab.toUpperCase()}</span>`; }
+function onlItemsArr(o){ return (o&&o.items&&o.items.length)?o.items:[]; }
+function onlGross(o){ return onlItemsArr(o).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function onlDiscount(o){ const g=onlGross(o); return Math.min(g,Math.max(0,+o.discount||0)); }
+function onlTotal(o){ return Math.max(0,onlGross(o)-onlDiscount(o)); }
+function onlQty(o){ return onlItemsArr(o).reduce((a,it)=>a+(+it.qty||0),0); }
+function onlFirstName(o){ const its=onlItemsArr(o); const f=productById(its[0]?.productId); return f?f.name:'—'; }
+function allOnlinePlatforms(){ return uniqSorted((DB.online||[]).map(o=>o.platform)); }
+function pendingOnline(){ return (DB.online||[]).filter(o=>o.status==='ordered'||o.status==='shipped'); }
+function renderOnlineBadge(){ const b=$('#onlBadge'); if(!b)return; const n=pendingOnline().length;
+  if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
+/* dashboard alert — online orders still in transit, overdue ones flagged first */
+function onlineAlertBanner(){
+  if(!canView('online')) return '';
+  const pend=pendingOnline(); if(!pend.length) return '';
+  const today=todayStr();
+  const rank=o=>{ const od=o.expectedDate&&o.expectedDate<today; return od?0:(o.expectedDate?1:2); };
+  const list=[...pend].sort((a,b)=> rank(a)-rank(b) || ((a.expectedDate||'zzzz')<(b.expectedDate||'zzzz')?-1:1));
+  const overdue=list.filter(o=>o.expectedDate&&o.expectedDate<today).length;
+  const rows=list.slice(0,6).map(o=>{
+    const od=o.expectedDate&&o.expectedDate<today;
+    const eta=o.expectedDate?(od?`<span class="badge-due">OVERDUE · ${fmtDate(o.expectedDate)}</span>`:`<span style="color:var(--muted);font-size:12px">ETA ${fmtDate(o.expectedDate)}</span>`):`<span style="color:var(--muted2);font-size:12px">no ETA</span>`;
+    const paid=(+o.payAmt>0)?` · <span style="color:var(--green);font-size:12px">paid ${money(+o.payAmt)}</span>`:'';
+    return `<div class="ucard-row">
+      <div class="ur-main"><b>${esc(o.ref)}</b> · ${esc(o.platform||'—')} &nbsp;${onlStatusTag(o.status)} &nbsp;${eta}${paid}</div>
+      <button class="btn-sm btn-green" onclick="go('online');setTimeout(()=>deliverOnline('${o.id}'),60)">✓ Received</button>
+      <button class="btn-sm btn-ghost" onclick="go('online')">Open</button>
+    </div>`; }).join('');
+  const more=list.length>6?`<div style="margin-top:6px;font-size:12.5px;color:var(--muted)">+${list.length-6} more in Online Orders…</div>`:'';
+  const head=overdue>0?`${overdue} online order${overdue>1?'s':''} overdue · ${list.length} in transit`:`${list.length} online order${list.length>1?'s':''} in transit`;
+  return `<div class="urgent-banner" style="border-color:#2563eb;background:linear-gradient(180deg,var(--brandsoft),var(--panel));animation:none">
+    <div class="ub-head"><span style="font-size:20px">🛒</span> <b>${head}</b> <span style="color:var(--muted);font-weight:600;font-size:12.5px">— mark Received when they arrive to stock &amp; pay</span></div>${rows}${more}</div>`;
+}
+/* a payment-line object built from the order's optional prepayment fields (null when nothing prepaid) */
+function onlPayObj(o){ if(!o||!(+o.payAmt>0))return null;
+  return {method:o.payMethod||'cash',amount:+o.payAmt||0,cardId:o.payCardId||'',giftId:o.payGiftId||'',deductPct:+o.payDeductPct||0,payRef:o.payRef||'',ref:o.payRef||'',date:o.payDate||o.orderDate}; }
+/* apply the prepayment's wallet effect (card charge / gift spend). Cash is derived
+   in cashEntries() so it needs no action here. Tagged with the order id so it can be reverted. */
+function applyOnlinePay(o){ const pm=onlPayObj(o); if(!pm)return; const note='Online order '+(o.ref||'')+(o.platform?' · '+o.platform:''); const date=pm.date||o.orderDate||todayStr();
+  if(pm.method==='card'&&pm.cardId){ const c=cardById(pm.cardId); if(c)chargeCard(c,pm.amount,date,note,o.id); }
+  else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,pm.amount,date,note,o.id); } }
+/* undo the prepayment's wallet effect (used on cancel, edit re-sync, and delete). Cash reverts by
+   the order no longer being counted in cashEntries() once it is cancelled/edited. */
+function revertOnlinePay(o){ if(!o)return; unlinkPurchaseFromCards(o.id); unlinkPurchaseFromGifts(o.id); }
+
+views.online=function(){
+  return `
+  <div class="page-head"><div><h2>🛒 Online Orders</h2><p>Orders placed on online platforms. They stay out of inventory until you mark them <b>Delivered</b> — then they move into stock as a purchase. Payment can be recorded now or on delivery.</p></div>
+    <div class="row-actions"><button class="btn-sm" onclick="newOnline()">🛒 New Online Order</button></div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="onlSearch" placeholder="Search platform / supplier / product / tracking…" oninput="renderOnline()"></div>
+    <label class="chk"><input type="checkbox" id="onlHideDone" onchange="renderOnline()"> Hide delivered &amp; cancelled</label></div>
+  <div id="onlList"></div>`;
+};
+views._after_online=renderOnline;
+function renderOnline(){
+  const host=$('#onlList'); if(!host)return;
+  renderOnlineBadge();
+  const q=($('#onlSearch')?.value||'').toLowerCase();
+  const hideDone=$('#onlHideDone')?.checked;
+  const match=o=> onlItemsArr(o).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);})
+    || (o.platform||'').toLowerCase().includes(q) || (o.supplier||'').toLowerCase().includes(q) || (o.ref||'').toLowerCase().includes(q) || (o.tracking||'').toLowerCase().includes(q);
+  let rows=[...(DB.online||[])].sort((a,b)=>(a.orderDate<b.orderDate?1:a.orderDate>b.orderDate?-1:0)).filter(match);
+  if(hideDone) rows=rows.filter(o=>o.status!=='delivered'&&o.status!=='cancelled');
+  if(!(DB.online||[]).length){ host.innerHTML=`<div class="panel">${emptyBox('🛒','No online orders yet','Record an order you placed online. It waits here until it arrives, then moves into inventory.')}</div>`; return; }
+  if(!rows.length){ host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No online orders match your filter.')}</div>`; return; }
+  const today=todayStr();
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:900px">
+    <thead><tr><th>Ref</th><th>Ordered</th><th>Expected</th><th>Products</th><th class="num">Qty</th><th class="num">Est. total</th><th class="num">Paid</th><th>Platform</th><th>Status</th><th></th></tr></thead>
+    <tbody>${rows.map(o=>{ const its=onlItemsArr(o), more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';
+      const overdue=(o.status==='ordered'||o.status==='shipped')&&o.expectedDate&&o.expectedDate<today;
+      const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
+      const paid=(o.status!=='cancelled'&&+o.payAmt>0)?(+o.payAmt||0):0;
+      return `<tr>
+        <td><b class="rowlink" onclick="onlineDetail('${o.id}')" title="View order details">${esc(o.ref)}</b></td>
+        <td>${fmtDate(o.orderDate)}</td>
+        <td>${o.expectedDate?`${fmtDate(o.expectedDate)}${overdue?' <span class="tag due">overdue</span>':''}`:'—'}</td>
+        <td><div class="prodcell">${productStack(its)}<div><b style="color:${prodNameColor(productById(its[0]?.productId))}">${esc(onlFirstName(o))}</b>${more}</div></div></td>
+        <td class="num">${num(onlQty(o))}</td>
+        <td class="num"><b>${money(onlTotal(o))}</b></td>
+        <td class="num">${paid>0?`<span style="color:var(--green)">${money(paid)}</span>`:'<span style="color:var(--muted2)">—</span>'}</td>
+        <td>${esc(o.platform||'—')}</td>
+        <td>${onlStatusTag(o.status)}${linked?` <span class="rowlink" style="font-size:11.5px" onclick="purchaseDetail('${linked.id}')" title="View stocked purchase">→ ${esc(linked.ref)}</span>`:''}</td>
+        <td class="num" style="white-space:nowrap">${onlRowActions(o)}</td></tr>`;}).join('')}
+    </tbody></table></div>`;
+}
+function onlRowActions(o){
+  if(o.status==='delivered') return `<button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
+  if(o.status==='cancelled') return `<button class="mini-btn" onclick="reopenOnline('${o.id}')">Reopen</button> <button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
+  let b='';
+  if(o.status==='ordered') b+=`<button class="mini-btn gold" onclick="setOnlineStatus('${o.id}','shipped')">Mark shipped</button> `;
+  b+=`<button class="mini-btn" style="color:var(--green);border-color:#1f5136" onclick="deliverOnline('${o.id}')">✓ Delivered</button> `;
+  b+=`<button class="mini-btn" onclick="newOnline('${o.id}')">Edit</button> `;
+  b+=`<button class="mini-btn red" onclick="cancelOnline('${o.id}')">Cancel</button>`;
+  return b;
+}
+let onlItems=[], _onlEditId='';
+function newOnline(id){
+  if(!requireOnline())return;
+  const o=id?(DB.online||[]).find(x=>x.id===id):null;
+  if(o&&o.status==='delivered')return toast('Delivered orders are purchases now — edit them in Purchases',1);
+  _onlEditId=id||'';
+  onlItems = o? onlItemsArr(o).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:'',qty:1,rate:''}];
+  if(!onlItems.length)onlItems=[{productId:'',qty:1,rate:''}];
+  renderOnlineModal(o);
+}
+function renderOnlineModal(o){
+  const id=_onlEditId;
+  const payMethSel=(o&&o.payMethod)||'cash';
+  openModal(`${id?'Edit':'New'} Online Order`,`
+    <div class="grid2">
+      <div class="field"><label>Platform / Store *</label><input id="o_plat" list="dl_onlplat" value="${esc(o?o.platform||'':'')}" placeholder="e.g. Amazon.ae, Noon, AliExpress">${dataList('dl_onlplat',allOnlinePlatforms())}</div>
+      <div class="field"><label>Seller / Supplier</label><input id="o_sup" list="dl_sup" value="${esc(o?o.supplier||'':'')}" placeholder="optional">${dataList('dl_sup',allSuppliers())}</div>
+    </div>
+    <div class="grid3">
+      <div class="field"><label>Order Date *</label><input id="o_date" type="date" value="${o?o.orderDate:todayStr()}"></div>
+      <div class="field"><label>Expected Delivery</label><input id="o_exp" type="date" value="${o?(o.expectedDate||''):''}"></div>
+      <div class="field"><label>Tracking No.</label><input id="o_track" value="${esc(o?o.tracking||'':'')}" placeholder="optional"></div>
+    </div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
+    <div class="line-items"><div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Cost/unit</div><div>Amount</div><div></div></div><div id="o_rows"></div></div>
+    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addOnlRow()">＋ Add product</button><button class="mini-btn" onclick="onlNewProdToggle()">✨ New product</button></div>
+    <div id="o_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
+      <div class="grid3">
+        <div class="field"><label>Name *</label><input id="onp_name" placeholder="Product name"></div>
+        <div class="field"><label>Category</label><input id="onp_cat" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
+        <div class="field"><label>Colour</label><input id="onp_color" placeholder="optional"></div>
+      </div>
+      <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn gold" onclick="onlAddNewProduct()">Add to list</button><button class="mini-btn" onclick="onlNewProdToggle()">Close</button></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Discount (${S().currency})</label><input id="o_disc" type="number" min="0" step="any" value="${o?(+o.discount||0):0}" placeholder="0" oninput="onlCalcTotal()"></div>
+      <div class="field"><label>Notes</label><input id="o_notes" value="${esc(o?o.notes||'':'')}" placeholder="optional"></div>
+    </div>
+    <div class="totbox" id="o_tot"></div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:10px;display:block">💳 Payment now — optional (leave amount 0 to pay on delivery)</label>
+    <div class="grid3">
+      <div class="field"><label>Paid now (${S().currency})</label><input id="o_payamt" type="number" min="0" step="any" value="${o?(+o.payAmt||0):0}" placeholder="0" oninput="onlPayToggle()"></div>
+      <div class="field"><label>Method</label><select id="o_paymethod" onchange="onlPayToggle()">${PAY_METHODS.map(m=>`<option value="${m.k}" ${payMethSel===m.k?'selected':''}>${m.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Paid on</label><input id="o_paydate" type="date" value="${o?(o.payDate||todayStr()):todayStr()}"></div>
+    </div>
+    <div id="o_paypick"></div>
+    <div class="note" style="margin-top:10px">📦 This order does not change stock yet. Mark it <b>Delivered</b> when it reaches you and it becomes a purchase in inventory. Any amount paid now is carried over as already-paid; cancelling reverts it.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveOnline('${id||''}')">Save Order</button>`);
+  renderOnlRows();
+  onlPayToggle();
+}
+function onlProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
+  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}</option>`;}).join(''); }
+function renderOnlRows(){
+  const host=$('#o_rows'); if(!host)return; const eng=computeEngine();
+  host.innerHTML=onlItems.map((it,i)=>{ const last=it.productId?lastKnownRate(it.productId):0, st=it.productId?stockOf(it.productId,eng):0;
+    return `<div class="li-row">
+      <select class="rq" onchange="onlItems[${i}].productId=this.value;renderOnlRows()">${onlProdOpts(it.productId,eng)}</select>
+      <input class="rq" type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="onlItems[${i}].qty=+this.value;onlCalcTotal()">
+      <input class="rq" type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="onlItems[${i}].rate=+this.value;onlCalcTotal()">
+      <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
+      <button class="li-x" onclick="onlItems.splice(${i},1);renderOnlRows()">✕</button>
+    </div><div class="li-hint">${it.productId?`In stock <b style="color:var(--green)">${num(st)}</b>${last?` · last cost ${money(last)}`:''}`:'Search &amp; pick a product'}</div>`; }).join('');
+  onlCalcTotal();
+}
+function addOnlRow(){ onlItems.push({productId:'',qty:1,rate:''}); renderOnlRows(); flashNewRow('#o_rows .li-row'); }
+function onlNewProdToggle(){ const w=$('#o_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#onp_name')?.focus(),30); }
+function onlAddNewProduct(){
+  if(!requireOnline())return;
+  const name=$('#onp_name').value.trim(); if(!name)return toast('Enter a product name',1);
+  const color=$('#onp_color').value.trim();
+  const np={id:uid(),name,category:$('#onp_cat').value.trim(),unit:'pcs',sku:'',imageUrl:'',color,colorHex:color?guessHex(color):'',compPrices:[]};
+  DB.products.push(np); save();
+  onlItems.push({productId:np.id,qty:1,rate:''});
+  onlNewProdToggle(); renderOnlRows(); toast('Product "'+name+'" added');
+}
+function onlItemsTotal(){ return onlItems.reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0); }
+function onlCalcTotal(){
+  const gross=onlItemsTotal(), disc=Math.min(gross,Math.max(0,+($('#o_disc')?.value||0))), tot=Math.max(0,gross-disc);
+  const box=$('#o_tot'); if(box)box.innerHTML=`
+    <div class="totrow"><span>Items total</span><span>${money(gross)}</span></div>
+    ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div>`:''}
+    <div class="totrow grand"><span>Estimated total</span><span>${money(tot)}</span></div>`;
+  $$('#o_rows .li-row').forEach((row,i)=>{const amt=row.querySelector('input[disabled]');if(amt&&onlItems[i])amt.value=num((+onlItems[i].qty||0)*(+onlItems[i].rate||0));});
+}
+/* conditional prepayment picker (card / gift / cash-discount / reference) shown when an amount > 0 is entered */
+function onlPayToggle(){
+  const host=$('#o_paypick'); if(!host)return;
+  const amt=+($('#o_payamt')?.value||0), method=$('#o_paymethod')?.value||'cash', info=payMethodInfo(method);
+  if(!(amt>0)){ host.innerHTML=''; return; }
+  const o=_onlEditId?(DB.online||[]).find(x=>x.id===_onlEditId):null;
+  let html='';
+  if(method==='card'||info.savedCard){
+    const cards=activeCards(), cur=(o&&o.payCardId)||'';
+    html = cards.length
+      ? `<div class="field"><label>${info.savedCard?esc(info.refLabel):'Card *'}</label><select id="o_paycard"><option value="">— select card${method==='card'?' *':''} —</option>${cards.map(c=>`<option value="${c.id}" ${c.id===cur?'selected':''}>${esc(c.name)}${c.owner?' · '+esc(cardOwnerLabel(c)):''} · avail ${money(cardAvailable(c))}</option>`).join('')}</select></div>`
+      : `<div class="note" style="color:var(--amber)">No saved cards — add one in Credit Cards first.</div>`;
+  } else if(info.savedGift){
+    const gifts=activeGiftCards(), cur=(o&&o.payGiftId)||'';
+    html = gifts.length
+      ? `<div class="field"><label>Gift card *</label><select id="o_paygift"><option value="">— select gift card * —</option>${gifts.map(g=>`<option value="${g.id}" ${g.id===cur?'selected':''}>${esc(giftLabel(g))} · bal ${money(giftBalance(g))}</option>`).join('')}</select></div>`
+      : `<div class="note" style="color:var(--amber)">No gift cards — add one in Gift Cards first.</div>`;
+  } else if(method==='cash'){
+    const cur=(o&&o.payDeductPct)||'';
+    html=`<div class="field"><label>Cash discount % (optional)</label><input id="o_paydeduct" type="number" min="0" max="100" step="any" value="${cur!==''&&cur!=null?cur:''}" placeholder="0"></div>`;
+  } else if(info.ref){
+    const cur=(o&&o.payRef)||'';
+    html=`<div class="field"><label>${esc(info.refLabel)}</label><input id="o_payref" type="text" ${info.refKind==='tel'?'inputmode="tel"':''} value="${esc(cur)}" placeholder="${esc(info.refLabel)}"></div>`;
+  }
+  host.innerHTML=html;
+}
+function saveOnline(id){
+  if(!requireOnline())return;
+  const items=onlItems.filter(it=>it.productId&&(+it.qty>0)&&it.rate!==''&&(+it.rate>=0)).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}));
+  if(!items.length)return toast('Add at least one product with qty & cost',1);
+  const platform=$('#o_plat').value.trim(); if(!platform)return toast('Enter the platform / store',1);
+  const gross=items.reduce((a,it)=>a+it.qty*it.rate,0);
+  const discount=Math.min(gross,Math.max(0,+($('#o_disc').value||0)));
+  const tot=Math.max(0,gross-discount);
+  // optional prepayment
+  const payAmt=Math.max(0,+($('#o_payamt')?.value||0));
+  const payMethod=$('#o_paymethod')?.value||'cash', info=payMethodInfo(payMethod);
+  let payCardId='', payGiftId='', payDeductPct=0, payRef='';
+  if(payAmt>0){
+    if(payAmt>tot+0.01)return toast('Paid amount can’t exceed the order total '+money(tot),1);
+    if(payMethod==='card'||info.savedCard){ payCardId=$('#o_paycard')?.value||''; if(payMethod==='card'&&!payCardId)return toast('Pick a card for the card payment',1); }
+    if(info.savedGift){ payGiftId=$('#o_paygift')?.value||''; if(!payGiftId)return toast('Pick a gift card for the gift-card payment',1); }
+    if(payMethod==='cash'){ payDeductPct=Math.max(0,Math.min(100,+($('#o_paydeduct')?.value||0))); }
+    if(info.ref && !info.savedCard && !info.savedGift){ payRef=($('#o_payref')?.value||'').trim(); if(info.ref==='mandatory'&&!payRef)return toast(info.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
+  }
+  const payDate=$('#o_paydate')?.value||$('#o_date').value||todayStr();
+  const data={platform,supplier:$('#o_sup').value.trim(),orderDate:$('#o_date').value||todayStr(),expectedDate:$('#o_exp').value||'',tracking:$('#o_track').value.trim(),notes:$('#o_notes').value.trim(),items,discount,
+    payAmt,payMethod:payAmt>0?payMethod:'',payCardId,payGiftId,payDeductPct,payRef,payDate:payAmt>0?payDate:''};
+  if(id){
+    const rec=(DB.online||[]).find(x=>x.id===id); if(!rec)return; if(rec.status==='delivered')return toast('Delivered orders are purchases now',1);
+    revertOnlinePay(rec);            // undo the old prepayment's wallet effect
+    Object.assign(rec,data);
+    if(rec.status!=='cancelled') applyOnlinePay(rec);   // re-apply the new prepayment (a cancelled order stays reverted)
+    logAct('edit','online order',rec.ref,`Edited · ${items.length} item(s) · ${money(tot)}${payAmt>0?' · paid '+money(payAmt):''}`);
+    save();closeModal();renderOnline();renderBell();
+    toast('Online order updated'+(isOwner()?'':' · admin notified'));
+    return;
+  }
+  if(!Array.isArray(DB.online))DB.online=[];
+  if(!DB.counters.online)DB.counters.online=0;
+  DB.counters.online++; const ref='ONL-'+String(DB.counters.online).padStart(4,'0');
+  const o={id:uid(),ref,status:'ordered',byId:session.id,createdTs:todayStr(),purchaseId:'',...data};
+  DB.online.push(o);
+  applyOnlinePay(o);
+  logAct('create','online order',ref,`New · ${items.length} item(s) · ${platform} · ${money(tot)}${payAmt>0?' · paid '+money(payAmt):''}`);
+  save();closeModal();renderOnline();renderBell();
+  toast('Online order '+ref+' saved'+(payAmt>0?' · '+money(payAmt)+' paid':''));
+}
+function setOnlineStatus(id,status){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered')return;
+  o.status=status;
+  logAct('edit','online order',o.ref,'Status → '+status);
+  save();renderOnline();renderBell();
+  toast('Marked '+status+(isOwner()?'':' · admin notified'));
+}
+function cancelOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered'||o.status==='cancelled')return;
+  const pm=onlPayObj(o), paid=pm?pm.amount:0;
+  const how = paid<=0?'' : ` The ${money(paid)} already paid will be reverted — ${pm.method==='cash'?'added back to the cash wallet':pm.method==='card'?'the card charge is removed':payMethodInfo(pm.method).savedGift?'the gift-card balance is restored':'the payment is reversed'}.`;
+  confirmBox('Cancel this order?',`Mark online order <b>${esc(o.ref)}</b> as cancelled? It will not be added to inventory.`+how+(isOwner()?'':' The admin will be notified.'),()=>{
+    revertOnlinePay(o);
+    o.status='cancelled';
+    logAct('cancel','online order',o.ref,'Order cancelled'+(paid>0?' · reverted '+money(paid):''));
+    save();renderOnline();renderBell();
+    toast('Order cancelled'+(paid>0?' · '+money(paid)+' reverted':''));
+  },'Cancel order');
+}
+function reopenOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status!=='cancelled')return;
+  o.status='ordered';
+  applyOnlinePay(o);            // re-apply any prepayment that was reverted on cancel
+  const pm=onlPayObj(o);
+  logAct('edit','online order',o.ref,'Reopened → ordered'+(pm?' · re-applied '+money(pm.amount):''));
+  save();renderOnline();renderBell();
+  toast('Order reopened'+(pm?' · '+money(pm.amount)+' re-applied':''));
+}
+/* delivery opens a modal so the balance can be PAID AT DELIVERY (updating cards / cash),
+   then the order is stocked into inventory as a purchase carrying every payment. */
+function deliverOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered')return;
+  const items=onlItemsArr(o); if(!items.length)return toast('This order has no products to stock',1);
+  renderDeliverModal(o);
+}
+function renderDeliverModal(o){
+  const tot=onlTotal(o), pm=onlPayObj(o), prepaid=pm?Math.min(pm.amount,tot):0, bal=Math.max(0,tot-prepaid);
+  openModal('Mark Delivered · '+esc(o.ref),`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13.5px">Stocking the <b style="color:var(--text)">${esc(o.platform||'')}</b> order — ${onlItemsArr(o).length} item(s). This adds the goods to inventory as a purchase dated today.</p>
+    <div class="totbox">
+      <div class="totrow"><span>Order total</span><span>${money(tot)}</span></div>
+      ${prepaid>0?`<div class="totrow"><span>Already paid${pm?' · '+payMethodInfo(pm.method).label:''}</span><span style="color:var(--green)">− ${money(prepaid)}</span></div>`:''}
+      <div class="totrow grand"><span>Balance to pay</span><span>${money(bal)}</span></div>
+    </div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:10px;display:block">💳 Pay now on delivery — optional (leave 0 to stock unpaid and settle later in Purchases)</label>
+    <div class="grid3">
+      <div class="field"><label>Pay now (${S().currency})</label><input id="d_payamt" type="number" min="0" step="any" value="${(+bal.toFixed(2))}" oninput="deliverPayToggle()"></div>
+      <div class="field"><label>Method</label><select id="d_paymethod" onchange="deliverPayToggle()">${PAY_METHODS.map(m=>`<option value="${m.k}" ${m.k==='cash'?'selected':''}>${m.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Paid on</label><input id="d_paydate" type="date" value="${todayStr()}"></div>
+    </div>
+    <div id="d_paypick"></div>
+    <div class="note" style="margin-top:10px">📦 On delivery the stock enters inventory. Any amount paid here is charged straight to the chosen card / cash / gift card.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-green" onclick="confirmDeliver('${o.id}')">📦 Deliver &amp; Stock</button>`);
+  deliverPayToggle();
+}
+function deliverPayToggle(){
+  const host=$('#d_paypick'); if(!host)return;
+  const amt=+($('#d_payamt')?.value||0), method=$('#d_paymethod')?.value||'cash', info=payMethodInfo(method);
+  if(!(amt>0)){ host.innerHTML=''; return; }
+  let html='';
+  if(method==='card'||info.savedCard){
+    const cards=activeCards();
+    html=cards.length
+      ? `<div class="field"><label>${info.savedCard?esc(info.refLabel):'Card *'}</label><select id="d_paycard"><option value="">— select card${method==='card'?' *':''} —</option>${cards.map(c=>`<option value="${c.id}">${esc(c.name)}${c.owner?' · '+esc(cardOwnerLabel(c)):''} · avail ${money(cardAvailable(c))}</option>`).join('')}</select></div>`
+      : `<div class="note" style="color:var(--amber)">No saved cards — add one in Credit Cards first.</div>`;
+  } else if(info.savedGift){
+    const gifts=activeGiftCards();
+    html=gifts.length
+      ? `<div class="field"><label>Gift card *</label><select id="d_paygift"><option value="">— select gift card * —</option>${gifts.map(g=>`<option value="${g.id}">${esc(giftLabel(g))} · bal ${money(giftBalance(g))}</option>`).join('')}</select></div>`
+      : `<div class="note" style="color:var(--amber)">No gift cards — add one in Gift Cards first.</div>`;
+  } else if(method==='cash'){
+    html=`<div class="field"><label>Cash discount % (optional)</label><input id="d_paydeduct" type="number" min="0" max="100" step="any" placeholder="0"></div>`;
+  } else if(info.ref){
+    html=`<div class="field"><label>${esc(info.refLabel)}</label><input id="d_payref" type="text" ${info.refKind==='tel'?'inputmode="tel"':''} placeholder="${esc(info.refLabel)}"></div>`;
+  }
+  host.innerHTML=html;
+}
+function confirmDeliver(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status==='delivered')return;
+  const items=onlItemsArr(o); if(!items.length)return toast('This order has no products to stock',1);
+  const tot=onlTotal(o), pm=onlPayObj(o), prepaid=pm?Math.min(pm.amount,tot):0, bal=Math.max(0,tot-prepaid);
+  // payment collected at delivery (optional)
+  let dAmt=Math.max(0,+($('#d_payamt')?.value||0));
+  const dMethod=$('#d_paymethod')?.value||'cash', dInfo=payMethodInfo(dMethod);
+  let dCardId='',dGiftId='',dDeduct=0,dRef='';
+  if(dAmt>0){
+    if(dAmt>bal+0.01) dAmt=bal;                       // never collect more than the balance
+    if(dMethod==='card'||dInfo.savedCard){ dCardId=$('#d_paycard')?.value||''; if(dMethod==='card'&&!dCardId)return toast('Pick a card for the card payment',1); }
+    if(dInfo.savedGift){ dGiftId=$('#d_paygift')?.value||''; if(!dGiftId)return toast('Pick a gift card for the gift-card payment',1); }
+    if(dMethod==='cash'){ dDeduct=Math.max(0,Math.min(100,+($('#d_paydeduct')?.value||0))); }
+    if(dInfo.ref&&!dInfo.savedCard&&!dInfo.savedGift){ dRef=($('#d_payref')?.value||'').trim(); if(dInfo.ref==='mandatory'&&!dRef)return toast(dInfo.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
+  }
+  const today=todayStr(), dDate=$('#d_paydate')?.value||today;
+  revertOnlinePay(o);                                 // drop the order-tagged prepay charge; re-applied under the purchase
+  if(!DB.counters.purchase)DB.counters.purchase=0;
+  DB.counters.purchase++; const purchaseId=uid(), pref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
+  const supplier=o.platform+(o.supplier?(' · '+o.supplier):''), note='Purchase '+pref+' · '+supplier;
+  const payments=[]; let paid=0;
+  if(prepaid>0&&pm){ payments.push({id:uid(),date:pm.date||today,amount:prepaid,method:pm.method,cardId:pm.cardId||'',giftId:pm.giftId||'',deductPct:pm.deductPct||0,payRef:pm.payRef||'',ref:'Prepaid online'}); paid+=prepaid;
+    if(pm.method==='card'&&pm.cardId){ const c=cardById(pm.cardId); if(c)chargeCard(c,prepaid,pm.date||today,note,purchaseId); }
+    else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,prepaid,pm.date||today,note,purchaseId); } }
+  if(dAmt>0){ payments.push({id:uid(),date:dDate,amount:dAmt,method:dMethod,cardId:dCardId,giftId:dGiftId,deductPct:dDeduct,payRef:dRef,ref:'Paid on delivery'}); paid+=dAmt;
+    if(dMethod==='card'&&dCardId){ const c=cardById(dCardId); if(c)chargeCard(c,dAmt,dDate,note,purchaseId); }
+    else if(dInfo.savedGift&&dGiftId){ const g=giftById(dGiftId); if(g)spendGift(g,dAmt,dDate,note,purchaseId); } }
+  const payTag = payments.length===0?'cash':(payments.length===1?payments[0].method:'split');
+  DB.purchases.push({id:purchaseId,ref:pref,byId:session.id,date:today,supplier,items:items.map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})),discount:+o.discount||0,payment:payTag,paid,payments,fromOnline:o.id,onlineRef:o.ref});
+  o.status='delivered'; o.deliveredDate=today; o.purchaseId=purchaseId;
+  logAct('deliver','online order',o.ref,`Delivered → stocked as ${pref} · ${money(tot)} · paid ${money(paid)}`);
+  logAct('create','purchase',pref,`From online order ${o.ref} · ${items.length} item(s) · ${money(tot)}`);
+  save();closeModal();renderOnline();if(typeof renderPurchases==='function')renderPurchases();renderBell();renderOnlineBadge();
+  const balLeft=Math.max(0,tot-paid);
+  toast('📦 '+o.ref+' delivered — stocked as '+pref+(balLeft<=0.01?' (fully paid)':' · '+money(balLeft)+' balance in Purchases'));
+  const active=$('.nav-item.active')?.dataset.view; if(active==='dashboard')go('dashboard'); else if(active==='purchases')renderPurchases();
+}
+function delOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o)return;
+  const linked=o.purchaseId&&DB.purchases.some(p=>p.id===o.purchaseId);
+  const msg=(linked?`Delete online order <b>${esc(o.ref)}</b> AND the purchase it was stocked as? Inventory, cost &amp; payments will recalculate. `:`Delete online order <b>${esc(o.ref)}</b>? `)+'This cannot be undone.'+(isOwner()?'':' The admin will be notified.');
+  confirmBox('Delete online order?',msg,()=>{
+    if(linked) commitPurchaseDelete(o.purchaseId);   // reverses the purchase's card/gift charges too
+    else revertOnlinePay(o);                          // undelivered: undo any prepayment effect
+    DB.online=(DB.online||[]).filter(x=>x.id!==id);
+    logAct('delete','online order',o.ref,linked?'Deleted (also removed the stocked purchase)':'Deleted online order');
+    save();renderOnline();renderBell();
+    toast('Online order deleted'+(isOwner()?'':' · admin notified'));
+  },'Delete');
+}
+function onlineDetail(id){
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o)return;
+  const its=onlItemsArr(o);
+  const rows=its.map(it=>{const p=productById(it.productId);return `<tr><td>${esc(p?p.name:'—')}</td><td class="num">${num(it.qty)}</td><td class="num">${money(it.rate)}</td><td class="num">${money((+it.qty||0)*(+it.rate||0))}</td></tr>`;}).join('');
+  const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
+  const cell=(lab,val)=>`<div><div style="color:var(--muted);font-size:12px">${lab}</div><b>${val}</b></div>`;
+  const pm=onlPayObj(o); const reverted=o.status==='cancelled';
+  const payLine = pm ? `${payMethodTag(pm.method)} ${money(pm.amount)}${reverted?' <span class="tag due">reverted</span>':''}` : '<span style="color:var(--muted2)">Not paid yet</span>';
+  openModal('Online Order · '+esc(o.ref),`
+    <div class="grid3" style="gap:12px;margin-bottom:12px">
+      ${cell('Platform',esc(o.platform||'—'))}
+      <div><div style="color:var(--muted);font-size:12px">Status</div>${onlStatusTag(o.status)}</div>
+      ${cell('Ordered',fmtDate(o.orderDate))}
+      ${cell('Expected',o.expectedDate?fmtDate(o.expectedDate):'—')}
+      ${o.supplier?cell('Seller',esc(o.supplier)):''}
+      ${o.tracking?cell('Tracking',esc(o.tracking)):''}
+      <div><div style="color:var(--muted);font-size:12px">Payment</div><b>${payLine}</b></div>
+      ${o.status==='delivered'?cell('Delivered',fmtDate(o.deliveredDate||'')):''}
+      ${linked?`<div><div style="color:var(--muted);font-size:12px">Stocked as</div><b class="rowlink" onclick="closeModal();purchaseDetail('${linked.id}')">${esc(linked.ref)}</b></div>`:''}
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="3" class="num"><b>Estimated total${onlDiscount(o)>0?` (after ${money(onlDiscount(o))} discount)`:''}</b></td><td class="num"><b>${money(onlTotal(o))}</b></td></tr></tfoot></table></div>
+    ${o.notes?`<div class="note" style="margin-top:10px">📝 ${esc(o.notes)}</div>`:''}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>${(o.status!=='delivered'&&o.status!=='cancelled')?` <button class="btn-sm" onclick="closeModal();newOnline('${o.id}')">Edit</button> <button class="btn-sm btn-green" onclick="closeModal();deliverOnline('${o.id}')">✓ Mark Delivered</button>`:''}`);
 }
 
 /* =========================================================
@@ -2863,6 +3610,19 @@ function chargeCard(c,amount,date,note,srcPurchaseId){
 }
 function unlinkPurchaseFromCards(pid){ (DB.cards||[]).forEach(c=>{ if(c.txns) c.txns=c.txns.filter(t=>t.srcPurchaseId!==pid); }); }
 
+/* ========== ACTIVITY LOG ==========
+   Every EDIT and DELETE — by anyone, including the Owner — is appended here so
+   there is a permanent trail. Records: when, who, what action, on which record,
+   and a short human summary. Append-only (no clear button, by design). Attributed
+   to the acting user; approved worker changes carry the requester + approver. */
+let _logActor=null;   // set by approveReq so an approved change is attributed to the requester
+function logAct(action,entity,ref,detail){
+  if(!DB.activity)DB.activity=[];
+  const who=_logActor||{id:(session&&session.id)||'',name:(session&&session.name)||'—'};
+  DB.activity.push({id:uid(),ts:new Date().toISOString(),byId:who.id||'',byName:who.name||'—',via:who.via||'direct',action,entity,ref:ref||'',detail:detail||''});
+  if(DB.activity.length>10000) DB.activity=DB.activity.slice(-10000);
+}
+
 /* ========== EDIT/DELETE APPROVAL WORKFLOW ==========
    Workers' edits & deletes go to the admin/owner for approval.
    Applying an edit/delete also revokes/re-syncs the linked cash & card entries. */
@@ -2876,21 +3636,31 @@ function queueApproval(kind,action,targetId,ref,payload){
 /* apply an edited purchase's data to the record + re-sync card ledger */
 function commitPurchase(id,data){
   const rec=DB.purchases.find(x=>x.id===id); if(!rec)return;
+  const beforeT=purchaseTotal(rec);
   ['productId','qty','rate','cardId','cardRef'].forEach(k=>delete rec[k]);
   Object.assign(rec,data);
-  unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id);
+  unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id); unlinkPurchaseFromLenders(id);
   (data.payments||[]).forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c)chargeCard(c,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); }
-    else if(s.giftId){ const g=giftById(s.giftId); if(g)spendGift(g,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); } });
+    else if(s.giftId){ const g=giftById(s.giftId); if(g)spendGift(g,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); }
+    else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,s.amount,s.commission,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); } });
+  logAct('edit','purchase',rec.ref,`total ${money(beforeT)} → ${money(purchaseTotal(rec))} · paid ${money(rec.paid||0)}${rec.supplier?' · '+rec.supplier:''}`);
 }
-function commitSale(id,data){ const rec=DB.sales.find(x=>x.id===id); if(rec)Object.assign(rec,data); }
-function commitPurchaseDelete(id){ unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
-function commitSaleDelete(id){ unlinkSaleFromGifts(id); DB.sales=DB.sales.filter(s=>s.id!==id); }
+function commitSale(id,data){ const rec=DB.sales.find(x=>x.id===id); if(!rec)return; const beforeT=rec.total; Object.assign(rec,data);
+  logAct('edit','sale',rec.invoiceNo,`total ${money(beforeT)} → ${money(data.total)} · received ${money(data.paid||0)}${rec.customer?' · '+rec.customer:''}`); }
+function commitPurchaseDelete(id){ const rec=DB.purchases.find(p=>p.id===id);
+  if(rec)logAct('delete','purchase',rec.ref,`total ${money(purchaseTotal(rec))}, ${purchaseItems(rec).length} item(s)${rec.supplier?' · '+rec.supplier:''}`);
+  unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id); unlinkPurchaseFromLenders(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
+function commitSaleDelete(id){ const rec=DB.sales.find(s=>s.id===id);
+  if(rec)logAct('delete','sale',rec.invoiceNo,`total ${money(rec.total)}${rec.customer?' · '+rec.customer:''}`);
+  unlinkSaleFromGifts(id); DB.sales=DB.sales.filter(s=>s.id!==id); }
 function approveReq(id){
   if(!requireOnline())return;
   const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
   const apply=()=>{
+    _logActor={id:r.byId,name:r.byName,via:'approved by '+session.name};   // attribute to the requester
     if(r.action==='delete'){ r.kind==='purchase'?commitPurchaseDelete(r.targetId):commitSaleDelete(r.targetId); }
     else { r.kind==='purchase'?commitPurchase(r.targetId,r.payload):commitSale(r.targetId,r.payload); }
+    _logActor=null;
     r.status='approved'; r.decidedTs=todayStr(); r.decidedBy=session.name;
     save(); renderApprovals(); renderApprovalsBadge(); renderBell(); toast('Approved & applied');
   };
@@ -2921,6 +3691,57 @@ function renderApprovals(){
         : `<span class="tag ${r.status==='approved'?'ok':'due'}">${r.status.toUpperCase()}</span>`}</td></tr>`; };
   host.innerHTML=`<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>By</th><th>Request</th><th>Ref</th><th>Details</th><th></th></tr></thead><tbody>${all.map(row).join('')}</tbody></table></div>`;
 }
+
+/* ---- Activity Log (every edit & delete, including the owner) ---- */
+function fmtDateTime(iso){ if(!iso)return ''; const d=new Date(iso); if(isNaN(d))return esc(iso);
+  const p=n=>String(n).padStart(2,'0'); return fmtDate(isoDate(d))+' · '+p(d.getHours())+':'+p(d.getMinutes()); }
+let _actFilter='all';
+function setActFilter(v){ _actFilter=v; $$('#actTgl button').forEach(b=>b.classList.toggle('active',b.dataset.af===v)); renderActivity(); }
+views.activity=function(){
+  return `
+  <div class="page-head"><div><h2>🧾 Activity Log</h2><p>Every edit &amp; delete — by anyone, including the owner. Newest first. This log is permanent (append-only).</p></div>
+    <button class="btn-sm btn-ghost" onclick="exportActivityExcel()">⬇ Excel</button></div>
+  <div class="toolbar">
+    <div class="role-toggle" id="actTgl" style="margin:0;max-width:340px;flex:0 0 auto">
+      <button data-af="all" class="active" onclick="setActFilter('all')">All</button>
+      <button data-af="edit" onclick="setActFilter('edit')">✎ Edits</button>
+      <button data-af="delete" onclick="setActFilter('delete')">🗑 Deletes</button>
+    </div>
+    <div class="search"><span class="si">🔎</span><input id="actSearch" placeholder="Search user, type, ref or details…" oninput="renderActivity()"></div>
+  </div>
+  <div id="actStats" class="cards"></div>
+  <div id="actList"></div>`;
+};
+views._after_activity=()=>{ if(isOwner())renderActivity(); };
+function renderActivity(){
+  const host=$('#actList'); if(!host)return;
+  const q=($('#actSearch')?.value||'').toLowerCase().trim();
+  let all=[...(DB.activity||[])].sort((a,b)=> a.ts<b.ts?1:(a.ts>b.ts?-1:0));
+  if(_actFilter!=='all') all=all.filter(a=>a.action===_actFilter);
+  if(q) all=all.filter(a=>[a.byName,a.entity,a.ref,a.detail,a.action].some(v=>(v||'').toLowerCase().includes(q)));
+  const total=(DB.activity||[]).length, edits=(DB.activity||[]).filter(a=>a.action==='edit').length, dels=total-edits;
+  const cs=$('#actStats'); if(cs)cs.innerHTML=`
+    <div class="stat blue"><span class="ic">🧾</span><div class="label">Total entries</div><div class="val">${total}</div></div>
+    <div class="stat gold"><span class="ic">✎</span><div class="label">Edits</div><div class="val">${edits}</div></div>
+    <div class="stat red"><span class="ic">🗑</span><div class="label">Deletes</div><div class="val">${dels}</div></div>`;
+  if(!all.length){ host.innerHTML=`<div class="panel">${emptyBox('🧾',total?'No matches':'Nothing logged yet',total?'No entries match this filter/search.':'Edits and deletes will appear here as they happen.')}</div>`; return; }
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:720px">
+    <thead><tr><th>When</th><th>By</th><th>Action</th><th>Type</th><th>Ref</th><th>Details</th></tr></thead>
+    <tbody>${all.slice(0,500).map(a=>`<tr>
+      <td style="white-space:nowrap">${fmtDateTime(a.ts)}</td>
+      <td>${esc(a.byName||'—')}${a.via&&a.via!=='direct'?`<div style="color:var(--muted2);font-size:11px">${esc(a.via)}</div>`:''}</td>
+      <td><span class="tag ${a.action==='delete'?'due':'partial'}">${(a.action||'').toUpperCase()}</span></td>
+      <td style="white-space:nowrap">${esc(a.entity||'')}</td>
+      <td><b>${esc(a.ref||'')}</b></td>
+      <td style="white-space:normal">${esc(a.detail||'')}</td></tr>`).join('')}</tbody></table></div>
+    ${all.length>500?`<div class="li-hint" style="margin-top:8px">Showing the latest 500 of ${all.length} — narrow with search, or export to Excel for the full log.</div>`:''}`;
+}
+function exportActivityExcel(){
+  const rows=[['When','By','Via','Action','Type','Ref','Details']];
+  [...(DB.activity||[])].sort((a,b)=>a.ts<b.ts?1:-1).forEach(a=>rows.push([fmtDateTime(a.ts),a.byName||'',a.via||'',a.action||'',a.entity||'',a.ref||'',a.detail||'']));
+  exportExcel('activity_log_'+todayStr()+'.xlsx',[{name:'Activity Log',rows}]);
+}
+
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
 const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
@@ -2957,6 +3778,7 @@ function saveAdjust(id){
   if(Math.abs(delta)<0.005)return toast('No change — balance already that amount',1);
   if(!c.txns)c.txns=[];
   c.txns.push({id:uid(),date:$('#adj_date').value||todayStr(),type:'adjust',amount:delta,note:('Balance edited'+($('#adj_note').value.trim()?' · '+$('#adj_note').value.trim():''))});
+  logAct('edit','card balance',c.name,`available set to ${money(target)} (${delta>=0?'+':''}${money(delta)})`);
   save(); toast('Balance edited'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 
@@ -3240,6 +4062,7 @@ function saveCardTxn(id,type,txnId){
     t.amount=amt; t.date=date; t.note=note;
     if(type==='recharge'||type==='payment') t.fromCash=fromCash;
     t.editedBy=session.id; t.editedAt=todayStr();
+    logAct('edit','card entry',c.name,`${txnLabel(type)} ${money(amt)}`);
     save(); toast('Entry updated');
   }else{                                       // NEW
     c.txns.push({id:uid(),date,type,amount:amt,note,fromCash,byId:session.id});
@@ -3249,6 +4072,7 @@ function saveCardTxn(id,type,txnId){
 }
 function delCardTxn(cid,tid){ if(!requireOnline())return; const c=cardById(cid); if(!c)return;
   confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
+    const t=(c.txns||[]).find(x=>x.id===tid); logAct('delete','card entry',c.name,t?`${txnLabel(t.type)} ${money(t.amount)}`:'');
     c.txns=(c.txns||[]).filter(t=>t.id!==tid); save(); cardDetail(cid); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
   },'Delete'); }
 
@@ -3331,7 +4155,7 @@ function saveCard(id){
     allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
     paymentDay:day, dueMode, statementDay, dueDays };
-  if(id){ Object.assign(cardById(id),data); }
+  if(id){ Object.assign(cardById(id),data); logAct('edit','card',data.name,'card details updated'); }
   else{ const availRaw=$('#c_avail').value;   // opening outstanding is derived: Limit − Available (blank ⇒ nothing owed yet)
     data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : 0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
@@ -3340,6 +4164,7 @@ function delCard(id){
   if(!requireOnline())return;
   const linked=DB.purchases.some(p=>p.cardId===id||(p.payments||[]).some(pm=>pm.cardId===id));
   confirmBox('Delete card?', linked?'Some purchases are linked to this card. Those purchase records stay, but card tracking is removed. Continue?':'This removes the card and its whole ledger. Cannot be undone.',()=>{
+    const c=cardById(id); logAct('delete','card',c?c.name:'',c?`limit ${money(c.creditLimit||0)}${c.owner?' · '+c.owner:''}`:'');
     DB.cards=DB.cards.filter(c=>c.id!==id); save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card deleted');
   },'Delete');
 }
@@ -3655,12 +4480,13 @@ function saveGiftTxn(id,type,txnId){
     if(amt>avail+1e-6)return toast(`Only ${money(Math.max(0,avail))} left on this gift card`,1); }
   if(txnId){ const t=(g.txns||[]).find(x=>x.id===txnId); if(!t)return toast('Entry not found',1);
     if(t.srcPurchaseId||t.srcSaleId)return toast('This entry comes from a purchase/sale — edit it there',1);
-    t.amount=amt; t.date=date; t.note=note; save(); toast('Entry updated'); }
+    t.amount=amt; t.date=date; t.note=note; logAct('edit','gift entry',g.name,`${txnLabel(type)} ${money(amt)}`); save(); toast('Entry updated'); }
   else{ g.txns.push({id:uid(),date,type,amount:amt,note,byId:session.id}); save(); toast('Saved'); }
   giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
 }
 function delGiftTxn(gid,tid){ if(!requireOnline())return; const g=giftById(gid); if(!g)return;
   confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
+    const t=(g.txns||[]).find(x=>x.id===tid); logAct('delete','gift entry',g.name,t?`${txnLabel(t.type)} ${money(t.amount)}`:'');
     g.txns=(g.txns||[]).filter(t=>t.id!==tid); save(); giftDetail(gid); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
   },'Delete'); }
 function giftAdjustModal(id){
@@ -3680,6 +4506,7 @@ function saveGiftAdjust(id){
   const target=+$('#ga_target').value; const diff=Math.round((target-giftBalance(g))*100)/100;
   if(Math.abs(diff)<0.005)return toast('No change',1);
   if(!g.txns)g.txns=[]; g.txns.push({id:uid(),date:todayStr(),type:'adjust',amount:diff,note:'Balance corrected',byId:session.id});
+  logAct('edit','gift balance',g.name,`balance set to ${money(target)} (${diff>=0?'+':''}${money(diff)})`);
   save(); giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell(); toast('Balance edited');
 }
 function editGift(id){
@@ -3700,12 +4527,14 @@ function saveGift(id){
   if(!requireOnline())return; const g=giftById(id); if(!g)return;
   const name=$('#ge_name').value.trim(); if(!name)return toast('Gift card name is required',1);
   g.name=name; g.store=$('#ge_store').value.trim(); g.number=$('#ge_number').value.trim(); g.status=$('#ge_status').value; g.note=$('#ge_note').value.trim();
+  logAct('edit','gift card',name,`details updated · ${g.status}`);
   save(); giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell(); toast('Gift card saved');
 }
 function delGift(id){
   if(!requireOnline())return; const g=giftById(id); if(!g)return;
   const linked=DB.purchases.some(p=>(p.payments||[]).some(pm=>pm.giftId===id))||DB.sales.some(s=>(s.payments||[]).some(pm=>pm.giftId===id));
   confirmBox('Delete gift card?', linked?'Some purchases/sales used this gift card. Those records stay, but gift-card tracking is removed. Continue?':'This removes the gift card and its whole ledger. Cannot be undone.',()=>{
+    logAct('delete','gift card',g.name,`balance ${money(giftBalance(g))}${g.store?' · '+g.store:''}`);
     DB.giftcards=DB.giftcards.filter(x=>x.id!==id); save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell(); toast('Gift card deleted');
   },'Delete');
 }
@@ -3988,6 +4817,9 @@ function cashEntries(){
   (DB.cash||[]).forEach(m=>e.push({id:m.id,date:m.date||'',dir:m.dir,amount:+m.amount||0,cat:m.cat||'manual',desc:m.desc||'',who:m.who||'',recBy:m.byId||'',linkId:m.linkId||'',manual:true}));
   (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ const net=pmCashNet(pm); if(pm.method==='cash'&&net>0) e.push({date:pm.date||s.date,dir:'in',amount:net,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:s.collectedBy||s.byId||''}); }));
   (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ const net=pmCashNet(pm); if(pm.method==='cash'&&net>0) e.push({date:pm.date||p.date,dir:'out',amount:net,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:p.byId||''}); }));
+  /* online-order cash prepayments: counted only while the order is live (ordered/shipped).
+     Once delivered it becomes a real purchase (counted above); once cancelled the cash reverts by being dropped here. */
+  (DB.online||[]).forEach(o=>{ if(o.status==='delivered'||o.status==='cancelled')return; const pm=onlPayObj(o); const net=pmCashNet(pm); if(pm&&pm.method==='cash'&&net>0) e.push({date:pm.date||o.orderDate,dir:'out',amount:net,cat:'purchase',desc:'Online order '+(o.ref||'')+(o.platform?' · '+o.platform:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:o.byId||''}); });
   (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:t.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return e;
@@ -4170,6 +5002,7 @@ function saveCardCash(){
 }
 function delCashEntry(id){ if(!requireOnline())return; if(!isOwner())return toast('Only admin can delete cash entries',1); const ent=(DB.cash||[]).find(e=>e.id===id); const link=ent&&ent.linkId;
   confirmBox('Delete cash entry?', link?'This is a transfer — both sides will be removed. Continue?':'This removes the entry and recalculates the wallet.',()=>{
+    if(ent)logAct('delete','cash entry',ent.desc||ent.cat||'entry',`${ent.dir==='in'?'+':'−'}${money(ent.amount)}${ent.who?' · '+userName(ent.who):''}`);
     DB.cash=(DB.cash||[]).filter(e=> link? e.linkId!==link : e.id!==id); save(); renderCash(); toast('Entry deleted'); },'Delete'); }
 
 /* =========================================================
@@ -4816,14 +5649,14 @@ function saveUser(id){
   if(DB.users.some(u=>norm(u.phone)===norm(phone)&&u.id!==id))return toast('That phone number is already used',1);
   const perms = role==='owner'?ALL_VIEWS.slice():$$('.u_perm:checked').map(c=>c.value);
   if(role!=='owner'&&!perms.length)return toast('Give the worker at least one screen',1);
-  if(id){const u=DB.users.find(x=>x.id===id);Object.assign(u,{name,phone,pin,password:pin,role,perms});if(u.id===session.id){session=u;applyAccess();}}
+  if(id){const u=DB.users.find(x=>x.id===id);Object.assign(u,{name,phone,pin,password:pin,role,perms});logAct('edit','user',name,`role ${role}`);if(u.id===session.id){session=u;applyAccess();}}
   else DB.users.push({id:uid(),name,phone,pin,password:pin,role,perms,username:''});
   save();closeModal();renderUsers();toast('User saved');
 }
 function delUser(id){
   if(!requireOnline())return;
   if(DB.users.filter(u=>u.role==='owner').length<=1 && DB.users.find(u=>u.id===id).role==='owner')return toast('Cannot delete the only owner',1);
-  confirmBox('Delete user?','This login will be removed.',()=>{DB.users=DB.users.filter(u=>u.id!==id);save();renderUsers();toast('User deleted');});
+  confirmBox('Delete user?','This login will be removed.',()=>{const u=DB.users.find(x=>x.id===id);logAct('delete','user',u?u.name:'',u?('role '+u.role):'');DB.users=DB.users.filter(u=>u.id!==id);save();renderUsers();toast('User deleted');});
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
