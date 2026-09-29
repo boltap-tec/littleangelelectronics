@@ -496,6 +496,10 @@ body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 .empty .big{font-size:34px;margin-bottom:8px;opacity:.7}
 
 .prodcell{display:flex;align-items:center;gap:11px}
+/* Online Orders: show the product name in full — no 2-line clamp, and give the column room */
+#onlList table{min-width:960px}
+#onlList .prodcell>div{min-width:140px}
+#onlList .prodcell b,#onlList .prodcell>div>b{display:inline;-webkit-line-clamp:initial;max-height:none;max-width:none;overflow:visible;white-space:normal;overflow-wrap:break-word;word-break:normal}
 .thumb{position:relative;width:56px;height:56px;border-radius:13px;flex:0 0 auto;overflow:hidden;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#233457,#16233f);border:1px solid var(--line2);color:#aab8d8}
 .thumb img{width:100%;height:100%;object-fit:cover}
@@ -2682,15 +2686,16 @@ function onlineAlertBanner(){
 }
 /* a payment-line object built from the order's optional prepayment fields (null when nothing prepaid) */
 function onlPayObj(o){ if(!o||!(+o.payAmt>0))return null;
-  return {method:o.payMethod||'cash',amount:+o.payAmt||0,cardId:o.payCardId||'',giftId:o.payGiftId||'',deductPct:+o.payDeductPct||0,payRef:o.payRef||'',ref:o.payRef||'',date:o.payDate||o.orderDate}; }
-/* apply the prepayment's wallet effect (card charge / gift spend). Cash is derived
-   in cashEntries() so it needs no action here. Tagged with the order id so it can be reverted. */
+  return {method:o.payMethod||'cash',amount:+o.payAmt||0,cardId:o.payCardId||'',giftId:o.payGiftId||'',lenderId:o.payLenderId||'',lenderCardId:o.payLenderCardId||'',commission:+o.payCommission||0,deductPct:+o.payDeductPct||0,payRef:o.payRef||'',ref:o.payRef||'',date:o.payDate||o.orderDate}; }
+/* apply the prepayment's wallet effect (card charge / gift spend / borrowed-card swipe). Cash is
+   derived in cashEntries() so it needs no action here. Tagged with the order id so it can be reverted. */
 function applyOnlinePay(o){ const pm=onlPayObj(o); if(!pm)return; const note='Online order '+(o.ref||'')+(o.platform?' · '+o.platform:''); const date=pm.date||o.orderDate||todayStr();
   if(pm.method==='card'&&pm.cardId){ const c=cardById(pm.cardId); if(c)chargeCard(c,pm.amount,date,note,o.id); }
-  else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,pm.amount,date,note,o.id); } }
+  else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,pm.amount,date,note,o.id); }
+  else if(pm.method==='cardborrow'&&pm.lenderId){ postLenderSwipe(pm.lenderId,pm.lenderCardId,pm.amount,pm.commission,date,note,o.id); } }
 /* undo the prepayment's wallet effect (used on cancel, edit re-sync, and delete). Cash reverts by
    the order no longer being counted in cashEntries() once it is cancelled/edited. */
-function revertOnlinePay(o){ if(!o)return; unlinkPurchaseFromCards(o.id); unlinkPurchaseFromGifts(o.id); }
+function revertOnlinePay(o){ if(!o)return; unlinkPurchaseFromCards(o.id); unlinkPurchaseFromGifts(o.id); unlinkPurchaseFromLenders(o.id); }
 
 views.online=function(){
   return `
@@ -2752,9 +2757,13 @@ function newOnline(id){
   if(!onlItems.length)onlItems=[{productId:'',qty:1,rate:''}];
   renderOnlineModal(o);
 }
+let _onlPay={lenderId:'',lenderCardId:'',commission:''};
+function onlBorrowLenderPick(val){ if(val==='__new'){ toast('Add lenders in Card Lenders first',1); return; } _onlPay.lenderId=val; _onlPay.lenderCardId=''; _onlPay.commission=''; onlPayToggle(); }
+function onlBorrowCardPick(val){ _onlPay.lenderCardId=val; const l=lenderById(_onlPay.lenderId), c=lenderCardById(l,val); _onlPay.commission=c?(c.commission||0):''; onlPayToggle(); }
 function renderOnlineModal(o){
   const id=_onlEditId;
   const payMethSel=(o&&o.payMethod)||'cash';
+  _onlPay={lenderId:(o&&o.payLenderId)||'',lenderCardId:(o&&o.payLenderCardId)||'',commission:(o&&o.payCommission!=null?o.payCommission:'')};
   openModal(`${id?'Edit':'New'} Online Order`,`
     <div class="grid2">
       <div class="field"><label>Platform / Store *</label><input id="o_plat" list="dl_onlplat" value="${esc(o?o.platform||'':'')}" placeholder="e.g. Amazon.ae, Noon, AliExpress">${dataList('dl_onlplat',allOnlinePlatforms())}</div>
@@ -2845,6 +2854,15 @@ function onlPayToggle(){
     html = gifts.length
       ? `<div class="field"><label>Gift card *</label><select id="o_paygift"><option value="">— select gift card * —</option>${gifts.map(g=>`<option value="${g.id}" ${g.id===cur?'selected':''}>${esc(giftLabel(g))} · bal ${money(giftBalance(g))}</option>`).join('')}</select></div>`
       : `<div class="note" style="color:var(--amber)">No gift cards — add one in Gift Cards first.</div>`;
+  } else if(method==='cardborrow'){
+    const lenders=activeLenders(), l=_onlPay.lenderId?lenderById(_onlPay.lenderId):null, cards=l?(l.cards||[]):[];
+    html=`<div class="grid2">
+      <div class="field"><label>Lender *</label><select id="o_paylender" onchange="onlBorrowLenderPick(this.value)"><option value="">— select lender * —</option>${lenders.map(x=>`<option value="${x.id}" ${_onlPay.lenderId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+      ${l?`<div class="field"><label>Card *</label><select id="o_paylendercard" onchange="onlBorrowCardPick(this.value)"><option value="">— select card * —</option>${cards.map(c=>`<option value="${c.id}" ${_onlPay.lenderCardId===c.id?'selected':''}>${esc(c.label)} (${c.commission||0}%)</option>`).join('')}</select></div>`:''}
+    </div>
+    ${l?`<div class="field"><label>Commission %</label><input id="o_paycomm" type="number" min="0" max="100" step="any" value="${_onlPay.commission!==''&&_onlPay.commission!=null?_onlPay.commission:''}" oninput="_onlPay.commission=this.value" placeholder="e.g. 3.5"></div>
+      <div class="li-hint">You keep the commission; the net (after commission) is added to <b>${esc(l.name)}</b>'s lender balance.</div>`
+      :`${lenders.length?'':'<div class="note" style="color:var(--amber)">No lenders yet — add one in Card Lenders first.</div>'}`}`;
   } else if(method==='cash'){
     const cur=(o&&o.payDeductPct)||'';
     html=`<div class="field"><label>Cash discount % (optional)</label><input id="o_paydeduct" type="number" min="0" max="100" step="any" value="${cur!==''&&cur!=null?cur:''}" placeholder="0"></div>`;
@@ -2865,17 +2883,18 @@ function saveOnline(id){
   // optional prepayment
   const payAmt=Math.max(0,+($('#o_payamt')?.value||0));
   const payMethod=$('#o_paymethod')?.value||'cash', info=payMethodInfo(payMethod);
-  let payCardId='', payGiftId='', payDeductPct=0, payRef='';
+  let payCardId='', payGiftId='', payDeductPct=0, payRef='', payLenderId='', payLenderCardId='', payCommission=0;
   if(payAmt>0){
     if(payAmt>tot+0.01)return toast('Paid amount can’t exceed the order total '+money(tot),1);
     if(payMethod==='card'||info.savedCard){ payCardId=$('#o_paycard')?.value||''; if(payMethod==='card'&&!payCardId)return toast('Pick a card for the card payment',1); }
     if(info.savedGift){ payGiftId=$('#o_paygift')?.value||''; if(!payGiftId)return toast('Pick a gift card for the gift-card payment',1); }
+    if(payMethod==='cardborrow'){ payLenderId=_onlPay.lenderId||''; payLenderCardId=_onlPay.lenderCardId||''; payCommission=Math.max(0,Math.min(100,+_onlPay.commission||0)); if(!payLenderId)return toast('Pick a lender for the borrowed-card payment',1); if(!payLenderCardId)return toast('Pick which card for the borrowed-card payment',1); }
     if(payMethod==='cash'){ payDeductPct=Math.max(0,Math.min(100,+($('#o_paydeduct')?.value||0))); }
-    if(info.ref && !info.savedCard && !info.savedGift){ payRef=($('#o_payref')?.value||'').trim(); if(info.ref==='mandatory'&&!payRef)return toast(info.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
+    if(info.ref && !info.savedCard && !info.savedGift && payMethod!=='cardborrow'){ payRef=($('#o_payref')?.value||'').trim(); if(info.ref==='mandatory'&&!payRef)return toast(info.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
   }
   const payDate=$('#o_paydate')?.value||$('#o_date').value||todayStr();
   const data={platform,supplier:$('#o_sup').value.trim(),orderDate:$('#o_date').value||todayStr(),expectedDate:$('#o_exp').value||'',tracking:$('#o_track').value.trim(),notes:$('#o_notes').value.trim(),items,discount,
-    payAmt,payMethod:payAmt>0?payMethod:'',payCardId,payGiftId,payDeductPct,payRef,payDate:payAmt>0?payDate:''};
+    payAmt,payMethod:payAmt>0?payMethod:'',payCardId,payGiftId,payDeductPct,payRef,payLenderId,payLenderCardId,payCommission,payDate:payAmt>0?payDate:''};
   if(id){
     const rec=(DB.online||[]).find(x=>x.id===id); if(!rec)return; if(rec.status==='delivered')return toast('Delivered orders are purchases now',1);
     revertOnlinePay(rec);            // undo the old prepayment's wallet effect
@@ -2936,6 +2955,7 @@ function deliverOnline(id){
   renderDeliverModal(o);
 }
 function renderDeliverModal(o){
+  _delPay={lenderId:'',lenderCardId:'',commission:''};
   const tot=onlTotal(o), pm=onlPayObj(o), prepaid=pm?Math.min(pm.amount,tot):0, bal=Math.max(0,tot-prepaid);
   openModal('Mark Delivered · '+esc(o.ref),`
     <p style="margin:0 0 12px;color:var(--muted);font-size:13.5px">Stocking the <b style="color:var(--text)">${esc(o.platform||'')}</b> order — ${onlItemsArr(o).length} item(s). This adds the goods to inventory as a purchase dated today.</p>
@@ -2956,11 +2976,24 @@ function renderDeliverModal(o){
      <button class="btn-sm btn-green" onclick="confirmDeliver('${o.id}')">📦 Deliver &amp; Stock</button>`);
   deliverPayToggle();
 }
+let _delPay={lenderId:'',lenderCardId:'',commission:''};
+function delBorrowLenderPick(val){ _delPay.lenderId=val; _delPay.lenderCardId=''; _delPay.commission=''; deliverPayToggle(); }
+function delBorrowCardPick(val){ _delPay.lenderCardId=val; const l=lenderById(_delPay.lenderId), c=lenderCardById(l,val); _delPay.commission=c?(c.commission||0):''; deliverPayToggle(); }
 function deliverPayToggle(){
   const host=$('#d_paypick'); if(!host)return;
   const amt=+($('#d_payamt')?.value||0), method=$('#d_paymethod')?.value||'cash', info=payMethodInfo(method);
   if(!(amt>0)){ host.innerHTML=''; return; }
   let html='';
+  if(method==='cardborrow'){
+    const lenders=activeLenders(), l=_delPay.lenderId?lenderById(_delPay.lenderId):null, cards=l?(l.cards||[]):[];
+    html=`<div class="grid2">
+      <div class="field"><label>Lender *</label><select id="d_paylender" onchange="delBorrowLenderPick(this.value)"><option value="">— select lender * —</option>${lenders.map(x=>`<option value="${x.id}" ${_delPay.lenderId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+      ${l?`<div class="field"><label>Card *</label><select id="d_paylendercard" onchange="delBorrowCardPick(this.value)"><option value="">— select card * —</option>${cards.map(c=>`<option value="${c.id}" ${_delPay.lenderCardId===c.id?'selected':''}>${esc(c.label)} (${c.commission||0}%)</option>`).join('')}</select></div>`:''}
+    </div>
+    ${l?`<div class="field"><label>Commission %</label><input id="d_paycomm" type="number" min="0" max="100" step="any" value="${_delPay.commission!==''&&_delPay.commission!=null?_delPay.commission:''}" oninput="_delPay.commission=this.value" placeholder="e.g. 3.5"></div>
+      <div class="li-hint">You keep the commission; the net is added to <b>${esc(l.name)}</b>'s lender balance.</div>`:(lenders.length?'':'<div class="note" style="color:var(--amber)">No lenders yet — add one in Card Lenders first.</div>')}`;
+    host.innerHTML=html; return;
+  }
   if(method==='card'||info.savedCard){
     const cards=activeCards();
     html=cards.length
@@ -2986,13 +3019,14 @@ function confirmDeliver(id){
   // payment collected at delivery (optional)
   let dAmt=Math.max(0,+($('#d_payamt')?.value||0));
   const dMethod=$('#d_paymethod')?.value||'cash', dInfo=payMethodInfo(dMethod);
-  let dCardId='',dGiftId='',dDeduct=0,dRef='';
+  let dCardId='',dGiftId='',dDeduct=0,dRef='',dLenderId='',dLenderCardId='',dCommission=0;
   if(dAmt>0){
     if(dAmt>bal+0.01) dAmt=bal;                       // never collect more than the balance
     if(dMethod==='card'||dInfo.savedCard){ dCardId=$('#d_paycard')?.value||''; if(dMethod==='card'&&!dCardId)return toast('Pick a card for the card payment',1); }
     if(dInfo.savedGift){ dGiftId=$('#d_paygift')?.value||''; if(!dGiftId)return toast('Pick a gift card for the gift-card payment',1); }
+    if(dMethod==='cardborrow'){ dLenderId=_delPay.lenderId||''; dLenderCardId=_delPay.lenderCardId||''; dCommission=Math.max(0,Math.min(100,+_delPay.commission||0)); if(!dLenderId)return toast('Pick a lender for the borrowed-card payment',1); if(!dLenderCardId)return toast('Pick which card for the borrowed-card payment',1); }
     if(dMethod==='cash'){ dDeduct=Math.max(0,Math.min(100,+($('#d_paydeduct')?.value||0))); }
-    if(dInfo.ref&&!dInfo.savedCard&&!dInfo.savedGift){ dRef=($('#d_payref')?.value||'').trim(); if(dInfo.ref==='mandatory'&&!dRef)return toast(dInfo.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
+    if(dInfo.ref&&!dInfo.savedCard&&!dInfo.savedGift&&dMethod!=='cardborrow'){ dRef=($('#d_payref')?.value||'').trim(); if(dInfo.ref==='mandatory'&&!dRef)return toast(dInfo.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
   }
   const today=todayStr(), dDate=$('#d_paydate')?.value||today;
   revertOnlinePay(o);                                 // drop the order-tagged prepay charge; re-applied under the purchase
@@ -3000,12 +3034,14 @@ function confirmDeliver(id){
   DB.counters.purchase++; const purchaseId=uid(), pref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
   const supplier=o.platform+(o.supplier?(' · '+o.supplier):''), note='Purchase '+pref+' · '+supplier;
   const payments=[]; let paid=0;
-  if(prepaid>0&&pm){ payments.push({id:uid(),date:pm.date||today,amount:prepaid,method:pm.method,cardId:pm.cardId||'',giftId:pm.giftId||'',deductPct:pm.deductPct||0,payRef:pm.payRef||'',ref:'Prepaid online'}); paid+=prepaid;
+  if(prepaid>0&&pm){ payments.push({id:uid(),date:pm.date||today,amount:prepaid,method:pm.method,cardId:pm.cardId||'',giftId:pm.giftId||'',lenderId:pm.lenderId||'',lenderCardId:pm.lenderCardId||'',commission:pm.commission||0,deductPct:pm.deductPct||0,payRef:pm.payRef||'',ref:'Prepaid online'}); paid+=prepaid;
     if(pm.method==='card'&&pm.cardId){ const c=cardById(pm.cardId); if(c)chargeCard(c,prepaid,pm.date||today,note,purchaseId); }
-    else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,prepaid,pm.date||today,note,purchaseId); } }
-  if(dAmt>0){ payments.push({id:uid(),date:dDate,amount:dAmt,method:dMethod,cardId:dCardId,giftId:dGiftId,deductPct:dDeduct,payRef:dRef,ref:'Paid on delivery'}); paid+=dAmt;
+    else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,prepaid,pm.date||today,note,purchaseId); }
+    else if(pm.method==='cardborrow'&&pm.lenderId){ postLenderSwipe(pm.lenderId,pm.lenderCardId,prepaid,pm.commission,pm.date||today,note,purchaseId); } }
+  if(dAmt>0){ payments.push({id:uid(),date:dDate,amount:dAmt,method:dMethod,cardId:dCardId,giftId:dGiftId,lenderId:dLenderId,lenderCardId:dLenderCardId,commission:dCommission,deductPct:dDeduct,payRef:dRef,ref:'Paid on delivery'}); paid+=dAmt;
     if(dMethod==='card'&&dCardId){ const c=cardById(dCardId); if(c)chargeCard(c,dAmt,dDate,note,purchaseId); }
-    else if(dInfo.savedGift&&dGiftId){ const g=giftById(dGiftId); if(g)spendGift(g,dAmt,dDate,note,purchaseId); } }
+    else if(dInfo.savedGift&&dGiftId){ const g=giftById(dGiftId); if(g)spendGift(g,dAmt,dDate,note,purchaseId); }
+    else if(dMethod==='cardborrow'&&dLenderId){ postLenderSwipe(dLenderId,dLenderCardId,dAmt,dCommission,dDate,note,purchaseId); } }
   const payTag = payments.length===0?'cash':(payments.length===1?payments[0].method:'split');
   DB.purchases.push({id:purchaseId,ref:pref,byId:session.id,date:today,supplier,items:items.map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})),discount:+o.discount||0,payment:payTag,paid,payments,fromOnline:o.id,onlineRef:o.ref});
   o.status='delivered'; o.deliveredDate=today; o.purchaseId=purchaseId;
@@ -5911,7 +5947,7 @@ function devClearConfirm(){
    MODAL / CONFIRM
    ========================================================= */
 function openModal(title,body,foot){
-  $('#modalRoot').innerHTML=`<div class="modal-back" onclick="if(event.target===this)closeModal()">
+  $('#modalRoot').innerHTML=`<div class="modal-back" onmousedown="window._mdOnBack=(event.target===this)" onmouseup="if(event.target!==this)window._mdOnBack=false" onclick="if(event.target===this&&window._mdOnBack)closeModal()">
     <div class="modal"><div class="modal-head"><h3>${title}</h3><button class="close-x" onclick="closeModal()">×</button></div>
     <div class="modal-body">${body}</div><div class="modal-foot">${foot||''}</div></div></div>`;
   markRequired($('#modalRoot'));
