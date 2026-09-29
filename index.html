@@ -752,6 +752,10 @@ body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 body.light .tag.points{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
 .tag.gift{background:#3a2030;color:#ffb9d2;border:1px solid #8e2f57}
 body.light .tag.gift{background:#fde7f0;color:#b0295f;border-color:#f4c4d8}
+.tag.load{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
+body.light .tag.load{background:#e3f7ea;color:#1f8a4c;border-color:#b6e6c8}
+.tag.spend{background:var(--redsoft);color:#ffb2b2;border:1px solid #7a2530}
+body.light .tag.spend{background:#fde7e7;color:#c62b2b;border-color:#f4c4c4}
 .tag.adjust{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
 body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
 
@@ -943,9 +947,9 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 const KEY='lae_db_v1';
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
-const ALL_VIEWS=['dashboard','shop','purchases','sales','payments','cards','cashbook','inventory','products','compare','profit','settings'];
-const WORKER_DEFAULT=['shop','purchases','sales','cashbook'];
-const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',settings:'Settings'};
+const ALL_VIEWS=['dashboard','shop','purchases','sales','payments','cards','cardpref','giftcards','cashbook','inventory','products','compare','profit','settings'];
+const WORKER_DEFAULT=['shop','purchases','sales','cashbook','giftcards'];
+const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -960,8 +964,10 @@ const NAV_GROUPS=[
     {v:'sales',    ic:'🧾', lab:'Sales & Billing'},
     {v:'payments', ic:'💵', lab:'Payments'} ]},
   {tag:'Cash & Cards', ic:'💳', color:'#38bdf8', items:[
-    {v:'cashbook', ic:'🧰', lab:'Cash Book'},
-    {v:'cards',    ic:'💳', lab:'Credit Cards', owner:true} ]},
+    {v:'cashbook',  ic:'🧰', lab:'Cash Book'},
+    {v:'cards',     ic:'💳', lab:'Credit Cards', owner:true},
+    {v:'cardpref',  ic:'⭐', lab:'Card Preference', owner:true},
+    {v:'giftcards', ic:'🎁', lab:'Gift Cards'} ]},
   {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
     {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
     {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true} ]},
@@ -1050,7 +1056,7 @@ function mergeDB(base, local, remote, preferLocal){
   const out=_clone(local);
   const deleted=_mergeDeleted(local.deleted, remote.deleted);
   const isDead=id=> !!(deleted[id] && deleted[id].dead);
-  ['users','products','purchases','sales','cards','cash','approvals'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals'].forEach(k=>{
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
@@ -1172,7 +1178,7 @@ function seed(){
     users:[
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
-    products:[], purchases:[], sales:[], cards:[], cash:[],
+    products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[],
     deleted:{},                       // tombstones: id -> {t:timestamp, dead:bool} so deletes sync & stay deleted
     counters:{purchase:0,sale:0},
     settings:{
@@ -1204,7 +1210,7 @@ function _maintainTombstones(){
   if(!DB.deleted) DB.deleted={};
   const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
   const now=Date.now();
-  ['users','products','purchases','sales','cards','cash','approvals'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals'].forEach(k=>{
     const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
@@ -1232,8 +1238,15 @@ function _revertToPersisted(){
 }
 function save(){
   if(offlineBlocked()){ _revertToPersisted(); notifyOffline(); return false; }   // never persist an offline edit
+  (DB.giftcards||[]).forEach(syncGiftActive);   // fully-spent gift cards auto-retire
   _maintainTombstones(); localStorage.setItem(KEY,JSON.stringify(DB)); cloudPush(); return true;
 }
+/* Gift cards are single-use: once the balance hits zero they auto-retire
+   (inactive → hidden from payment lists). An edit that restores a balance we
+   auto-retired brings it back; a card the owner deactivated by hand is left alone. */
+function syncGiftActive(g){ if(!g)return; const bal=giftBalance(g);
+  if(bal<=0.005){ if(g.status!=='inactive'){ g.status='inactive'; g._autoRetired=true; } }
+  else if(g._autoRetired){ g.status='active'; delete g._autoRetired; } }
 /* show / hide the offline banner and reflect the current connection state */
 function updateOnlineUI(){
   const blocked=offlineBlocked(); let bar=document.getElementById('offlineBar');
@@ -1279,9 +1292,13 @@ function migrate(){
   });
   (DB.products||[]).forEach(p=>{ if(p.imageUrl===undefined)p.imageUrl=''; if(p.color===undefined){p.color='';p.colorHex='';} });
   if(!DB.cards)DB.cards=[];
+  if(!Array.isArray(DB.giftcards))DB.giftcards=[];
   if(!Array.isArray(DB.approvals))DB.approvals=[];
   if(!Array.isArray(DB.cash))DB.cash=[];
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
+  (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
+  // let existing workers who already have Purchases also see & use Gift Cards
+  if(!DB.settings._gcGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&u.perms.includes('purchases')&&!u.perms.includes('giftcards'))u.perms.push('giftcards'); }); DB.settings._gcGrant=true; }
   if(DB.settings.theme===undefined)DB.settings.theme='dark';
   if(DB.settings.sound===undefined)DB.settings.sound=true;
   if(DB.settings.avgWindowN===undefined)DB.settings.avgWindowN=0;
@@ -1546,7 +1563,7 @@ const PAY_METHODS=[
   {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'share_points',label:'Share Points',         tag:'points', ref:'optional',  refLabel:'Shareholder name (optional)', refKind:'text'},
-  {k:'gift',        label:'Gift Cards',           tag:'gift',   ref:'optional',  refLabel:'Gift card ref (optional)',    refKind:'text'},
+  {k:'gift',        label:'Gift Card',            tag:'gift',   ref:'mandatory', savedGift:true, refLabel:'Pick a gift card (required)'},
   {k:'platinum',    label:'Platinum Points',      tag:'points', ref:'mandatory', savedCard:true, refLabel:'Pick a saved card (required)'},
   {k:'diners',      label:'Diners Points',        tag:'points', ref:'mandatory', savedCard:true, refLabel:'Pick a saved card (required)'},
   {k:'happiness',   label:'Happiness Points',     tag:'points', ref:'optional',  refLabel:'Mobile number (optional)',    refKind:'tel'},
@@ -1556,6 +1573,10 @@ const PAY_BY_KEY=Object.fromEntries(PAY_METHODS.map(m=>[m.k,m]));
 function payMethodInfo(k){ return PAY_BY_KEY[k] || {k,label:(k==='bank'?'Bank':k==='cheque'?'Cheque':k==='split'?'Split':(k||'').toUpperCase()),tag:(k==='bank'||k==='cheque')?'bank':(k==='split'?'split':(k||''))}; }
 function normBuyMethod(m){ if(m==='credit')return 'card'; return PAY_BY_KEY[m]?m:'cash'; }
 function payMethodTag(m){ const i=payMethodInfo(m==='split'?'split':m); return `<span class="tag ${i.tag}">${(m==='split'?'SPLIT':i.label).toUpperCase()}</span>`; }
+/* net cash that actually moves for a payment line: a cash payment with a
+   deduction % pays that % less (a cash discount) — the doc is still settled by
+   the full `amount`, but only the net leaves/enters the wallet. */
+function pmCashNet(pm){ if(!pm||pm.method!=='cash')return +pm?.amount||0; return (+pm.amount||0)*(1-(+pm.deductPct||0)/100); }
 
 /* =========================================================
    AUTH
@@ -1733,7 +1754,8 @@ views.dashboard=function(){
     <div><h2>Welcome back, ${esc(session.name)} 👋</h2><p>Here's what's happening at Little Angel Electronics today.</p></div>
     <div class="row-actions">
       ${canView('sales')?`<button class="btn-sm" onclick="go('sales');setTimeout(newSale,50)">🧾 New Sale</button>`:''}
-      ${canView('purchases')?`<button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📥 New Purchase</button>`:''}
+      ${canView('purchases')?`<button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📦 New Product Purchase</button>`:''}
+      ${canView('giftcards')?`<button class="btn-sm btn-ghost" onclick="go('giftcards');setTimeout(purchaseGiftModal,50)">🎁 New Gift Card Purchase</button>`:''}
       ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('recharge')">💳 Card Recharge</button>`:''}
       ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('payment')">💵 Card Pay</button>`:''}
     </div>
@@ -1905,7 +1927,8 @@ views.purchases=function(){
   return `
   <div class="page-head"><div><h2>Purchases</h2><p>Stock bought from Carrefour & other suppliers — rate can differ each date. Track cash/card & credit.</p></div>
     <div class="row-actions"><button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
-    <button class="btn-sm" onclick="newPurchase()">＋ New Purchase</button></div></div>
+    <button class="btn-sm btn-ghost" onclick="purchaseGiftModal()">🎁 New Gift Card Purchase</button>
+    <button class="btn-sm" onclick="newPurchase()">📦 New Product Purchase</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search supplier / product..." oninput="renderPurchases()"></div></div>
   <div id="buyList"></div>`;
 };
@@ -1935,8 +1958,8 @@ function newPurchase(id,prefillPid){
   _buyEditId=id||'';
   buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||'',qty:1,rate:''}];
   if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
-  buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:normBuyMethod(pm.method),cardId:pm.cardId||'',ref:pm.payRef||'',amount:pm.amount}))
-    : [{method:'card',cardId:'',ref:'',amount:''}];
+  buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:normBuyMethod(pm.method),cardId:pm.cardId||'',giftId:pm.giftId||'',ref:pm.payRef||'',deductPct:pm.deductPct||'',amount:pm.amount}))
+    : [{method:'card',cardId:'',giftId:'',ref:'',amount:''}];
   renderPurchaseModal();
 }
 function renderPurchaseModal(){
@@ -2000,14 +2023,19 @@ function buyDiscount(){ return Math.min(buyItemsTotal(), Math.max(0, +($('#b_dis
 function buyNetTotal(){ return Math.max(0, buyItemsTotal()-buyDiscount()); }
 /* available on a card for THIS purchase (adds back this purchase's existing charges when editing) */
 function cardAvailForSplit(card){ let adj=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId) adj += (t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return cardAvailable(card)+adj; }
-function splitHintText(s){ const info=payMethodInfo(s.method); const c=s.cardId?cardById(s.cardId):null;
+function splitHintText(s){ const info=payMethodInfo(s.method);
+  if(info.savedGift){ const g=s.giftId?giftById(s.giftId):null;
+    if(!g)return '<span style="color:var(--muted2)">Select a gift card</span>';
+    const av=giftAvailForSplit(g), amt=+s.amount||0, over=amt-av;
+    return `Balance <b style="color:var(--text)">${money(av)}</b>${over>1e-6?` · <span style="color:var(--red)">🚫 exceeds balance by ${money(over)}</span>`:''}`; }
+  const c=s.cardId?cardById(s.cardId):null;
   if(info.savedCard){ return c ? `Points card <b style="color:var(--text)">${esc(cardLabel(c))}</b>` : '<span style="color:var(--muted2)">Select a saved card</span>'; }
   if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
   const av=cardAvailForSplit(c), amt=+s.amount||0, over=amt-av;
   const overMsg = over>1e-6 ? (cardAllowsNeg(c)
       ? ` · <span style="color:var(--red)">⚠ over limit by ${money(over)} — pay immediately</span>`
       : ` · <span style="color:var(--red)">🚫 exceeds limit by ${money(over)} — not allowed on this card</span>`) : '';
-  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% redeem`:''}${overMsg}`; }
+  return `Available <b style="color:var(--text)">${money(av)}</b>${c.discountPercent?` · earns ${c.discountPercent}% cashback`:''}${overMsg}`; }
 function updateSplitHints(){ buySplits.forEach((s,i)=>{ const el=$('#bsh_'+i); if(el)el.innerHTML=splitHintText(s); }); }
 function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=activeCards();
@@ -2017,6 +2045,11 @@ function renderBuySplits(){
     let mid;
     if(s.method==='card'){
       mid=`<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`;
+    } else if(info.savedGift){
+      const gifts=activeGiftCards();
+      mid = gifts.length
+        ? `<select onchange="buySplits[${i}].giftId=this.value;updateSplitHints()"><option value="">— select gift card * —</option>${gifts.map(g=>`<option value="${g.id}" ${s.giftId===g.id?'selected':''}>${esc(giftLabel(g))} · bal ${money(giftBalance(g))}</option>`).join('')}</select>`
+        : `<div style="color:var(--amber);font-size:11.5px;align-self:center">No gift cards — add one in Gift Cards *</div>`;
     } else if(info.savedCard){
       const req=info.ref==='mandatory', hasCards=cards.length>0;
       mid = hasCards
@@ -2025,19 +2058,21 @@ function renderBuySplits(){
     } else if(info.ref){
       const req=info.ref==='mandatory';
       mid=`<input type="text" ${info.refKind==='tel'?'inputmode="tel"':''} value="${esc(s.ref||'')}" placeholder="${esc(info.refLabel)}${req?' *':''}" oninput="buySplits[${i}].ref=this.value" style="${req&&!(s.ref||'').trim()?'border-color:var(--amber)':''}">`;
+    } else if(s.method==='cash'){
+      mid=`<input type="number" min="0" max="100" step="any" value="${s.deductPct!=null&&s.deductPct!==''?s.deductPct:''}" placeholder="Cash discount %" title="% deducted from the cash you pay" oninput="buySplits[${i}].deductPct=this.value;buyCalcTotal()">`;
     } else {
-      mid=`<div style="color:var(--muted2);font-size:12px;align-self:center">Cash out of wallet</div>`;
+      mid=`<div style="color:var(--muted2);font-size:12px;align-self:center">Out of wallet</div>`;
     }
     return `<div class="split-row">
-    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';buySplits[${i}].cardId='';renderBuySplits()">${opts}</select>
+    <select onchange="buySplits[${i}].method=this.value;buySplits[${i}].ref='';buySplits[${i}].cardId='';buySplits[${i}].giftId='';buySplits[${i}].deductPct='';renderBuySplits()">${opts}</select>
     ${mid}
     <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="buySplits[${i}].amount=this.value;buyCalcTotal()">
     <button class="li-x" onclick="buySplits.splice(${i},1);renderBuySplits()">✕</button>
-  </div>${(s.method==='card'||info.savedCard)?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}`;
+  </div>${(s.method==='card'||info.savedCard||info.savedGift)?`<div class="li-hint" id="bsh_${i}">${splitHintText(s)}</div>`:''}${s.method==='cash'&&(+s.deductPct>0)?`<div class="li-hint">Cash discount ${(+s.deductPct)}% → pay <b style="color:var(--green)">${money((+s.amount||0)*(1-(+s.deductPct||0)/100))}</b> cash (saves ${money((+s.amount||0)*(+s.deductPct||0)/100)})</div>`:''}`;
   }).join('');
   buyCalcTotal();
 }
-function addBuySplit(){ buySplits.push({method:'card',cardId:'',ref:'',amount:''}); renderBuySplits(); flashNewRow('#b_splits .split-row'); }
+function addBuySplit(){ buySplits.push({method:'card',cardId:'',ref:'',giftId:'',amount:''}); renderBuySplits(); flashNewRow('#b_splits .split-row'); }
 function buySplitCardPick(i,val){ if(val==='__new'){ quickAddCardFromPurchase(i); return; } buySplits[i].cardId=val; buyCalcTotal(); }
 function quickAddCardFromPurchase(i){
   openModal('Add Card',`
@@ -2050,10 +2085,10 @@ function quickAddCardFromPurchase(i){
     <div class="field"><label>Card Number</label><input id="qc_number" inputmode="numeric" placeholder="stored on device, shown masked (last 4)"></div>
     <div class="grid3">
       <div class="field"><label>Monthly Limit (${S().currency}) *</label><input id="qc_limit" type="number" min="0" step="any" placeholder="0.00"></div>
-      <div class="field"><label>Redeem Points (%)</label>${redeemSelect('qc_disc','qc_discOther',0)}</div>
+      <div class="field"><label>Cashback (%)</label>${redeemSelect('qc_disc','qc_discOther',0)}</div>
       <div class="field"><label>Payment Day (1–31)</label><input id="qc_day" type="number" min="1" max="31" value="1"></div>
     </div>
-    <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>
+    <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>
     <label class="chk" style="margin-top:2px"><input type="checkbox" id="qc_allowneg" style="width:16px;height:16px;accent-color:var(--brand)"> Allow this card to go over-limit (negative) — you'll be alerted to pay it immediately</label>`,
     `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
      <button class="btn-sm" onclick="quickSaveCard(${i})">Save Card</button>`);
@@ -2099,12 +2134,16 @@ function savePurchase(id){
   const tot=Math.max(0,gross-discount);
   const rawSplits=buySplits.filter(s=>+s.amount>0);
   if(rawSplits.some(s=>s.method==='card' && (DB.cards&&DB.cards.length) && !s.cardId))return toast('Pick a card for each card payment',1);
-  // methods that require a reference must have one (saved-card pick, or free-text ref)
-  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); if(info.ref!=='mandatory')return false; return info.savedCard ? !s.cardId : !(s.ref||'').trim(); });
+  if(rawSplits.some(s=>payMethodInfo(s.method).savedGift && !s.giftId))return toast('Pick a gift card for each gift-card payment',1);
+  // methods that require a reference must have one (saved-card pick, gift-card pick, or free-text ref)
+  const missingRef=rawSplits.find(s=>{ const info=payMethodInfo(s.method); if(info.ref!=='mandatory')return false; return info.savedGift ? !s.giftId : (info.savedCard ? !s.cardId : !(s.ref||'').trim()); });
   if(missingRef){ const info=payMethodInfo(missingRef.method); return toast(`${info.label}: ${info.refLabel.replace(/ \((required|optional)\)/,'')} is required`,1); }
+  // gift cards can't go below zero — block if any gift card is overspent
+  const giftReq={}; rawSplits.forEach(s=>{ if(payMethodInfo(s.method).savedGift&&s.giftId)giftReq[s.giftId]=(giftReq[s.giftId]||0)+(+s.amount||0); });
+  for(const gid in giftReq){ const g=giftById(gid); if(g){ const av=giftAvailForSplit(g); if(giftReq[gid]-av>1e-6) return toast(`${g.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
   const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard;
-    return {method:s.method,cardId:linksCard?(s.cardId||''):'',ref:linksCard?'':(s.ref||'').trim(),amount:+s.amount}; });
+    return {method:s.method,cardId:linksCard?(s.cardId||''):'',giftId:info.savedGift?(s.giftId||''):'',ref:(linksCard||info.savedGift)?'':(s.ref||'').trim(),deductPct:s.method==='cash'?(+s.deductPct||0):0,amount:+s.amount}; });
   // A card may be swiped past its limit ONLY if it's flagged "allow negative".
   // Cards not allowed are blocked; allowed cards go through but raise an immediate alert.
   const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+s.amount; });
@@ -2115,7 +2154,7 @@ function savePurchase(id){
     return toast(`${b.name}: only ${money(Math.max(0,b.av))} available — this card can't go over its limit. Reduce the amount, or enable over-limit for it in Credit Cards.`,1); }
   let paid=splits.reduce((a,s)=>a+s.amount,0); if(paid>tot+0.01)paid=tot;
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
-  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',payRef:s.ref||'',ref:'Initial'}));
+  const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',deductPct:s.deductPct||0,payRef:s.ref||'',ref:'Initial'}));
   const data={date,supplier,items,discount,payment:methodTag,paid,payments};
   const negMsg=negWarn.length?(' · 🔴 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay immediately'):'';
   if(id){ // EDIT existing — confirm; workers route to admin approval
@@ -2129,7 +2168,8 @@ function savePurchase(id){
   DB.counters.purchase++; const purchaseId=uid(), ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
   DB.purchases.push({id:purchaseId,ref,byId:session.id,...data});
   const charged=[];
-  splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } } });
+  splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } }
+    else if(s.giftId){ const g=giftById(s.giftId); if(g){ spendGift(g,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(g.name); } } });
   save();closeModal();renderPurchases();renderBell();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
   if(negWarn.length) setTimeout(()=>alertNegativeCards(),200);   // 🚨 immediate over-limit alert
@@ -2269,6 +2309,7 @@ function newSale(id,prefillPid){
     : (Array.isArray(prefillPid)&&prefillPid.length ? prefillPid.map(i=>({productId:i.productId,qty:+i.qty||1,rate:i.rate||''}))
        : [{productId:prefillPid||'',qty:1,rate:''}]);
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
+  const pm0=s&&s.payments&&s.payments[0]?s.payments[0]:null; _saleDeduct0=pm0?(pm0.deductPct||''):'';
   const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):'none';
   const collBy=s?(s.collectedBy||s.byId||session.id):session.id;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
@@ -2293,12 +2334,13 @@ function newSale(id,prefillPid){
         <option value="none" ${vmode==='none'?'selected':''}>Without VAT</option>
         <option value="exclusive" ${vmode==='exclusive'?'selected':''}>With VAT — added to price (excl.)</option>
         <option value="inclusive" ${vmode==='inclusive'?'selected':''}>With VAT — included in price (incl.)</option></select></div>
-      <div class="field"><label>Payment Method</label><select id="s_pay">
+      <div class="field"><label>Payment Method</label><select id="s_pay" onchange="saleMeta()">
         <option value="cash" ${pay==='cash'?'selected':''}>Cash</option>
         <option value="card" ${pay==='card'?'selected':''}>Credit / Debit Card</option>
         <option value="bank" ${pay==='bank'?'selected':''}>Bank Transfer</option>
         <option value="cheque" ${pay==='cheque'?'selected':''}>Cheque</option></select></div>
     </div>
+    <div id="s_paymeta"></div>
     <div class="grid2">
       <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="_salePaidTouched=false;saleCalc()"></div>
       <div class="field"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Enter less than total for a credit sale — the balance is tracked in Payments.</div></div>
@@ -2310,7 +2352,15 @@ function newSale(id,prefillPid){
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm btn-green" onclick="saveSale('${id||''}',false)">Save</button>
      <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Print Bill</button>`);
-  renderSaleRows();
+  renderSaleRows(); saleMeta();
+}
+let _saleDeduct0='';
+function saleMeta(){
+  const host=$('#s_paymeta'); if(!host)return; const m=$('#s_pay')?.value;
+  if(m==='cash'){
+    host.innerHTML=`<div class="field"><label>Cash discount (%) — optional</label><input id="s_deduct" type="number" min="0" max="100" step="any" value="${_saleDeduct0!==''&&_saleDeduct0!=null?_saleDeduct0:''}" placeholder="e.g. 6" oninput="saleCalc()"><div class="li-hint">The invoice is settled in full; only the discounted cash actually enters the wallet.</div></div>`;
+  } else host.innerHTML='';
+  saleCalc();
 }
 function saleProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
   return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join(''); }
@@ -2349,11 +2399,14 @@ function saleCalc(){
   if(paidEl && !_salePaidTouched) paidEl.value = +total.toFixed(2);   // auto-fill full until user edits
   let received=+((paidEl&&paidEl.value)||0); if(received>total)received=total;
   const bal=total-received;
+  const payM=$('#s_pay')?.value, ded=payM==='cash'?(+($('#s_deduct')?.value)||0):0;
+  const netCash=received*(1-ded/100);
   box.innerHTML=`<div class="totrow"><span>Subtotal</span><span>${money(sub)}</span></div>
     ${disc>0?`<div class="totrow"><span>Discount</span><span>− ${money(disc)}</span></div>`:''}
     ${mode!=='none'?`<div class="totrow"><span>VAT ${r}%${mode==='inclusive'?' (incl.)':''}</span><span>${money(vat)}</span></div>`:''}
     <div class="totrow grand"><span>Total</span><span>${money(total)}</span></div>
     <div class="totrow"><span>Received now</span><span>${money(received)}</span></div>
+    ${ded>0?`<div class="totrow"><span>Cash discount ${ded}%</span><span>− ${money(received-netCash)}</span></div><div class="totrow" style="color:var(--green)"><span>Net cash to wallet</span><span>${money(netCash)}</span></div>`:''}
     <div class="totrow" style="font-weight:800;color:${bal>0.01?'var(--red)':'var(--green)'}"><span>${bal>0.01?'Credit — to collect later':'Fully paid'}</span><span>${money(bal>0?bal:0)}</span></div>`;
   box._t={sub,disc,vat,total,net,mode};
   /* live per-row amount + stock warning */
@@ -2377,9 +2430,11 @@ function saveSale(id,print){
   const eng=computeEngine(), req={}; items.forEach(i=>req[i.productId]=(req[i.productId]||0)+(+i.qty||0));
   for(const pid in req){ const avail=saleAvail(pid,eng); if(req[pid]>avail+1e-9){ const pr=productById(pid); return toast(`Not enough stock for ${pr?pr.name:'item'} — available ${num(avail)}, needed ${num(req[pid])}`,1); } }
   const t=$('#s_tot')._t, method=$('#s_pay').value;
+  const deductPct=method==='cash'?(+($('#s_deduct')?.value)||0):0;
   const paidRaw=$('#s_paid').value;
   if(paidRaw==='')return toast('Enter the amount received (0 for a full-credit sale)',1);
   let paid=Math.max(0,+paidRaw); if(paid>t.total)paid=t.total;
+  const payMeta={}; if(deductPct>0)payMeta.deductPct=deductPct;
   const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
     custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),collectedBy:($('#s_collby')?.value||session.id),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
@@ -2387,14 +2442,14 @@ function saveSale(id,print){
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
   if(id){ // EDIT — confirm; workers route to admin approval
     const rec=DB.sales.find(x=>x.id===id); const inv=rec?rec.invoiceNo:'';
-    const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Updated'}]:[]};
+    const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Updated'}]:[]};
     if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('sale','edit',id,inv,data),'Send');
     return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.`,()=>{
       commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>printSale(id),120); },'Save');
   }
   // NEW sale
   DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
-  DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,ref:'Initial'}]:[]});
+  DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
   save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
   if(paid>=t.total-0.01 && t.total>0) confetti();   // 🎉 paid in full
   if(print)setTimeout(()=>printSale(nid),120);
@@ -2674,9 +2729,30 @@ function cardDiscountInMonth(c,m){ return (c.txns||[]).filter(t=>t.type==='disco
 function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date(); t.setHours(0,0,0,0);
   const mk=(y,m)=>new Date(y,m,Math.min(day,new Date(y,m+1,0).getDate()));
   let y=t.getFullYear(),m=t.getMonth(),d=mk(y,m); if(d<t){ if(++m>11){m=0;y++;} d=mk(y,m); } return d; }
+/* the day-of-month that a statement falls on, clamped to the month's length */
+function monthDay(y,m,day){ return new Date(y,m,Math.min(Math.min(31,Math.max(1,+day||1)),new Date(y,m+1,0).getDate())); }
+/* the card's upcoming payment DUE date. Two bases:
+   - 'statement': due = statement date + N grace days (UAE style — the number of
+     interest-free days decides the date; 21, 25, 31… all behave differently)
+   - otherwise (default): a fixed payment day each month (legacy behaviour) */
+function cardDueDate(c){
+  if(!c) return nextDue(1);
+  if(c.dueMode==='statement' && +c.statementDay>0){
+    const t=new Date(); t.setHours(0,0,0,0);
+    const off=Math.max(0,+c.dueDays||0); let best=null;
+    for(let k=-2;k<=2;k++){ const b=new Date(t.getFullYear(), t.getMonth()+k, 1);
+      const stmt=monthDay(b.getFullYear(), b.getMonth(), c.statementDay);
+      const due=new Date(stmt); due.setDate(due.getDate()+off);
+      if(due>=t && (!best || due<best)) best=due; }
+    if(best) return best;
+  }
+  return nextDue(c.paymentDay);
+}
+/* the statement date for the cycle that the given due date closes (for display) */
+function cardStatementFor(c,due){ if(!c||c.dueMode!=='statement')return null; const s=new Date(due); s.setDate(s.getDate()-Math.max(0,+c.dueDays||0)); return s; }
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
 /* due reminders: only UNPAID cards (outstanding>0), soonest due first; paid cards never show */
-function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
+function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=cardDueDate(c); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
   .filter(r=>r.out>0.005 && r.dleft<=10).sort((a,b)=>a.dleft-b.dleft); }
 function lowBalanceCards(){ return (DB.cards||[]).filter(c=>{ const al=+c.balanceLimitAlert||0; return al>0 && cardAvailable(c)<=al; }); }
 /* cards charged past their limit — the negative amount must be cleared before midnight */
@@ -2703,7 +2779,7 @@ function checkNegativeOnBoot(){ if(_negAlertShown)return; const neg=negativeCard
 
 /* ===== URGENT cards: negative balance OR due within 1 day ===== */
 function urgentCards(){
-  return (DB.cards||[]).map(c=>{ const due=nextDue(c.paymentDay), dleft=daysUntil(due), out=cardOutstanding(c), av=cardAvailable(c);
+  return (DB.cards||[]).map(c=>{ const due=cardDueDate(c), dleft=daysUntil(due), out=cardOutstanding(c), av=cardAvailable(c);
       return {c,due,dleft,out,av,neg:av<-0.005,dueSoon:(out>0.005 && dleft<=1)}; })
     .filter(x=>x.neg||x.dueSoon)
     .sort((a,b)=>(a.neg===b.neg?0:(a.neg?-1:1)) || a.dleft-b.dleft);
@@ -2785,7 +2861,7 @@ function chargeCard(c,amount,date,note,srcPurchaseId){
   const pct=+c.discountPercent||0;
   if(pct>0 && amount>0){ const cap=+c.maxDiscountMonthly||0, used=cardDiscountInMonth(c,ym(date));
     let disc=amount*pct/100; if(cap>0) disc=Math.min(disc,Math.max(0,cap-used)); disc=Math.round(disc*100)/100;
-    if(disc>0) c.txns.push({id:uid(),date,type:'discount',amount:disc,note:'Redeem '+pct+'%',srcPurchaseId}); }
+    if(disc>0) c.txns.push({id:uid(),date,type:'discount',amount:disc,note:'Cashback '+pct+'%',srcPurchaseId}); }
 }
 function unlinkPurchaseFromCards(pid){ (DB.cards||[]).forEach(c=>{ if(c.txns) c.txns=c.txns.filter(t=>t.srcPurchaseId!==pid); }); }
 
@@ -2804,12 +2880,13 @@ function commitPurchase(id,data){
   const rec=DB.purchases.find(x=>x.id===id); if(!rec)return;
   ['productId','qty','rate','cardId','cardRef'].forEach(k=>delete rec[k]);
   Object.assign(rec,data);
-  unlinkPurchaseFromCards(id);
-  (data.payments||[]).forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c)chargeCard(c,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); } });
+  unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id);
+  (data.payments||[]).forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c)chargeCard(c,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); }
+    else if(s.giftId){ const g=giftById(s.giftId); if(g)spendGift(g,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); } });
 }
 function commitSale(id,data){ const rec=DB.sales.find(x=>x.id===id); if(rec)Object.assign(rec,data); }
-function commitPurchaseDelete(id){ unlinkPurchaseFromCards(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
-function commitSaleDelete(id){ DB.sales=DB.sales.filter(s=>s.id!==id); }
+function commitPurchaseDelete(id){ unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
+function commitSaleDelete(id){ unlinkSaleFromGifts(id); DB.sales=DB.sales.filter(s=>s.id!==id); }
 function approveReq(id){
   if(!requireOnline())return;
   const r=(DB.approvals||[]).find(x=>x.id===id); if(!r||r.status!=='pending')return;
@@ -2847,9 +2924,9 @@ function renderApprovals(){
   host.innerHTML=`<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>By</th><th>Request</th><th>Ref</th><th>Details</th><th></th></tr></thead><tbody>${all.map(row).join('')}</tbody></table></div>`;
 }
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
-const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'REDEEM',adjust:'EDITED'};
+const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
-function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase');
+function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend');
   return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
 function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && ![1,2,3,4,5].includes(pct);
   return `<select id="${idSel}" onchange="redeemToggle('${idSel}','${idOther}')">
@@ -2961,12 +3038,12 @@ function cardPickResolve(idBase){
 function cardVisual(c){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
   const usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
-  const due=nextDue(c.paymentDay), dleft=daysUntil(due), warn=dleft<=3;
+  const due=cardDueDate(c), dleft=daysUntil(due), warn=dleft<=3;
   const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
   const l4=(c.number||'').replace(/\D/g,'').slice(-4);
   const holder=(c.owner&&c.owner.trim())?c.owner.trim():'';
   return `<div class="ccard" style="background:${cardGrad(c)};${cardActive(c)?'':'opacity:.6'}" onclick="cardDetail('${c.id}')">
-    ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% redeem</div>`:''}
+    ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% cashback</div>`:''}
     ${!cardActive(c)?`<div class="cc-pct" style="left:16px;right:auto;background:rgba(0,0,0,.35)">INACTIVE</div>`:''}
     <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}</div>
       ${(holder||l4)?`<div class="cc-holder">${holder?`👤 ${esc(holder)}`:''}${holder&&l4?' · ':''}${l4?`••${l4}`:''}</div>`:''}</div><div class="cc-chip"></div></div>
@@ -3017,11 +3094,11 @@ function renderCards(){
     <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${cards.length} card${cards.length===1?'':'s'}</div></div>
     <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
-    <div class="stat gold"><span class="ic">％</span><div class="label">Redeem · this month</div><div class="val">${money(tD)}</div></div>`:'';
+    <div class="stat gold"><span class="ic">％</span><div class="label">Cashback · this month</div><div class="val">${money(tD)}</div></div>`:'';
   if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
   if(_cardView==='credit'){
     // compact due-date & usage list — soonest due first (paid cards after)
-    const rows=[...cards].map(c=>{ const lim=+c.creditLimit||0,out=cardOutstanding(c),av=lim-out,use=lim>0?Math.min(100,Math.max(0,out/lim*100)):0,due=nextDue(c.paymentDay),dl=daysUntil(due);
+    const rows=[...cards].map(c=>{ const lim=+c.creditLimit||0,out=cardOutstanding(c),av=lim-out,use=lim>0?Math.min(100,Math.max(0,out/lim*100)):0,due=cardDueDate(c),dl=daysUntil(due);
       return {c,lim,out,av,use,due,dl}; })
       .sort((a,b)=> (b.out>0.005)-(a.out>0.005) || a.dl-b.dl );  // unpaid first, then soonest due
     host.innerHTML=`<div class="cat-head">💳 Cards by due date & usage <span class="cc">soonest due first</span> <span class="cc" style="color:var(--green)">available ${money(tA)}</span></div>
@@ -3072,7 +3149,7 @@ function ownerStatement(owner){
     <div class="grid3" style="margin-bottom:14px">
       <div class="stat red"><div class="label">You Owe (${cards.length} card${cards.length===1?'':'s'})</div><div class="val">${money(tO)}</div></div>
       <div class="stat blue"><div class="label">Total Limit</div><div class="val">${money(tL)}</div></div>
-      <div class="stat gold"><div class="label">Redeem · this month</div><div class="val">${money(tD)}</div></div>
+      <div class="stat gold"><div class="label">Cashback · this month</div><div class="val">${money(tD)}</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:14px">${cards.map(c=>`<button class="mini-btn" onclick="cardDetail('${c.id}')">${esc(cardShort(c))} · owe ${money(cardOutstanding(c))}</button>`).join('')}</div>
     <div style="font-weight:700;font-size:13px;margin-bottom:8px">Combined ledger</div>
@@ -3097,13 +3174,13 @@ function cardDetail(id){
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
     <div class="grid3" style="margin-bottom:16px">
       <div class="stat green"><div class="label">Available</div><div class="val">${money(avail)}</div><div class="foot">of ${money(limit)} limit</div></div>
-      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">pay by day ${c.paymentDay}</div></div>
-      <div class="stat gold"><div class="label">Redeem · this month</div><div class="val">${money(discUsed)}</div><div class="foot">${c.discountPercent||0}% · ${cap>0?'cap '+money(cap):'no cap'}</div></div>
+      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">due ${fmtDate(isoDate(cardDueDate(c)))}${c.dueMode==='statement'?` · stmt ${c.statementDay}+${+c.dueDays||0}d`:''}</div></div>
+      <div class="stat gold"><div class="label">Cashback · pending cycle</div><div class="val">${money(discUsed)}</div><div class="foot">${c.discountPercent||0}% · ${cap>0?'cap '+money(cap):'no cap'} · posts on statement</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:16px">
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','payment')">＋ Payment</button>
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
-      <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Redeem</button>
+      <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Cashback</button>
       <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','purchase')">− Manual charge</button>
       ${isOwner()?`<button class="btn-sm btn-ghost" onclick="adjustBalanceModal('${c.id}')">✎ Edit balance</button>`:''}
     </div>
@@ -3130,10 +3207,10 @@ function cardTxnModal(id,type,txnId){
   const base = edit ? (avail - sign*(+edit.amount||0)) : avail;   // available without this entry
   const preAmt = edit ? (+edit.amount||0) : 0;
   _ctBase=base; _ctSign=sign; _ctNeg=!!c.allowNegative;
-  const word={recharge:'recharge',payment:'payment',discount:'redeem',purchase:'charge'}[type]||'entry';
-  const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Redeem Points',purchase:'Manual Charge'};
-  const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Redeem points / cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
-  const dueDate=nextDue(c.paymentDay);
+  const word={recharge:'recharge',payment:'payment',discount:'cashback',purchase:'charge'}[type]||'entry';
+  const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge'};
+  const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
+  const dueDate=cardDueDate(c);
   openModal((edit?'Edit ':'')+(titles[type]||'Card entry'),`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
     ${type==='payment'?`<div class="totbox" style="margin-bottom:12px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div><div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div></div>`:''}
@@ -3180,8 +3257,22 @@ function delCardTxn(cid,tid){ if(!requireOnline())return; const c=cardById(cid);
 /* ---- add / edit card (master data) ---- */
 let _cardTheme='indigo';
 function pickCardTheme(k){ _cardTheme=k; $$('#c_themes .sw').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); }
+/* show the right day inputs for the chosen due-date basis + preview the next due date */
+function cardDueModeToggle(){
+  const mode=$('#c_duemode')?.value;
+  const fx=$('#c_duefixed'), st=$('#c_duestmt');
+  if(fx)fx.style.display=mode==='statement'?'none':'';
+  if(st)st.style.display=mode==='statement'?'':'none';
+  const pv=$('#c_duepreview'); if(!pv)return;
+  const tmp = mode==='statement'
+    ? {dueMode:'statement', statementDay:Math.min(31,Math.max(1,+$('#c_stmtday').value||1)), dueDays:Math.max(0,+$('#c_duedays').value||0)}
+    : {paymentDay:Math.min(31,Math.max(1,+$('#c_day').value||1))};
+  const due=cardDueDate(tmp), dl=daysUntil(due);
+  const pre = mode==='statement' ? `Statement day <b style="color:var(--text)">${tmp.statementDay}</b> + <b style="color:var(--text)">${tmp.dueDays}</b> days → ` : '';
+  pv.innerHTML = `${pre}Next payment due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${dl<=0?'today':dl+' day'+(dl===1?'':'s')+' away'}`;
+}
 function editCard(id){
-  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,status:'active'};
+  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:1,dueDays:21,status:'active'};
   _cardTheme=c.theme||'indigo';
   openModal(`${id?'Edit':'Add'} Card`,`
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
@@ -3198,11 +3289,24 @@ function editCard(id){
       <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00"></div>
       <div class="field"><label>Alert When Available Below (${S().currency})</label><input id="c_alert" type="number" min="0" step="any" value="${c.balanceLimitAlert}" placeholder="optional low-balance warning"></div>
     </div>
-    <div class="grid3">
-      <div class="field"><label>Redeem Points (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}</div>
-      <div class="field"><label>Max Redeem / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
-      <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}"></div>
+    <div class="grid2">
+      <div class="field"><label>Cashback (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}</div>
+      <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
     </div>
+    <div class="field"><label>Payment due date basis</label>
+      <select id="c_duemode" onchange="cardDueModeToggle()">
+        <option value="fixed" ${c.dueMode==='statement'?'':'selected'}>📅 Fixed payment day each month</option>
+        <option value="statement" ${c.dueMode==='statement'?'selected':''}>🧾 From statement date (statement day + grace days)</option>
+      </select>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">UAE cards give an interest-free grace period — the due date is the statement date plus a number of days (e.g. 21 or 25). Choose “From statement date” to let that decide the date automatically.</div></div>
+    <div class="grid2" id="c_duefixed">
+      <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}" oninput="cardDueModeToggle()"></div>
+    </div>
+    <div class="grid2" id="c_duestmt">
+      <div class="field"><label>Statement Day (1–31) *</label><input id="c_stmtday" type="number" min="1" max="31" value="${c.statementDay||1}" oninput="cardDueModeToggle()"></div>
+      <div class="field"><label>Due days after statement *</label><input id="c_duedays" type="number" min="0" max="60" value="${c.dueDays!=null&&c.dueDays!==''?c.dueDays:21}" placeholder="e.g. 21, 25" oninput="cardDueModeToggle()"></div>
+    </div>
+    <div class="li-hint" id="c_duepreview" style="margin:-4px 0 10px"></div>
     <div class="field"><label>Status</label><select id="c_status"><option value="active" ${c.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${c.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
     <div class="field"><label>Over-limit (negative) swiping</label>
       <select id="c_allowneg">
@@ -3215,16 +3319,20 @@ function editCard(id){
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Your current spendable balance (Limit − whatever you already owe). It updates automatically as you buy &amp; pay — leave blank if nothing is owed yet.</div></div>`}`,
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
-  pickCardTheme(_cardTheme);
+  pickCardTheme(_cardTheme); cardDueModeToggle();
 }
 function saveCard(id){
   if(!requireOnline())return;
   const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
+  const dueMode=$('#c_duemode').value==='statement'?'statement':'fixed';
+  const statementDay=Math.min(31,Math.max(1,+$('#c_stmtday').value||1)), dueDays=Math.max(0,+$('#c_duedays').value||0);
+  if(dueMode==='statement' && !(+$('#c_duedays').value>=0 && $('#c_duedays').value!==''))return toast('Enter the number of days after the statement date',1);
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
     allowNegative:$('#c_allowneg').value==='1',
-    discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0, paymentDay:day };
+    discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
+    paymentDay:day, dueMode, statementDay, dueDays };
   if(id){ Object.assign(cardById(id),data); }
   else{ const availRaw=$('#c_avail').value;   // opening outstanding is derived: Limit − Available (blank ⇒ nothing owed yet)
     data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : 0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
@@ -3235,6 +3343,325 @@ function delCard(id){
   const linked=DB.purchases.some(p=>p.cardId===id||(p.payments||[]).some(pm=>pm.cardId===id));
   confirmBox('Delete card?', linked?'Some purchases are linked to this card. Those purchase records stay, but card tracking is removed. Continue?':'This removes the card and its whole ledger. Cannot be undone.',()=>{
     DB.cards=DB.cards.filter(c=>c.id!==id); save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card deleted');
+  },'Delete');
+}
+
+/* =========================================================
+   CARD PREFERENCE  (which card to use next)
+   Ranks active cards by the cashback they'd earn on a spend, gated by the
+   available balance and the monthly cashback cap. Cashback in the UAE isn't
+   credited at the till — it posts in the statement cycle — so it's shown here
+   as "pending", with the date it will actually be credited (the statement /
+   due date). Purely advisory: nothing is charged from this screen.
+   ========================================================= */
+/* cashback still allowed this month before the monthly cap is hit (∞ = no cap) */
+function cashbackCapRemaining(c,m){ const cap=+c.maxDiscountMonthly||0; if(cap<=0)return Infinity; return Math.max(0, cap-cardDiscountInMonth(c,m)); }
+/* cashback a spend of `amount` would earn on this card, respecting the cap */
+function expectedCashback(c,amount,m){ const pct=+c.discountPercent||0; if(pct<=0||amount<=0)return 0;
+  return Math.min(amount*pct/100, cashbackCapRemaining(c,m||ym(todayStr()))); }
+/* cashback already accrued this cycle (pending until it posts on the statement) */
+function pendingCashback(c){ return cardDiscountInMonth(c,ym(todayStr())); }
+views.cardpref=function(){
+  return `
+  <div class="page-head"><div><h2>⭐ Card Preference</h2><p>Which card to use next — ranked by the cashback it earns, with enough balance to cover the spend. Cashback isn't given at the till; it posts in the statement cycle, so it's shown here as <b>pending</b> with its credit date.</p></div></div>
+  <div class="toolbar">
+    <div class="field" style="margin:0;min-width:220px"><label>Planned purchase amount (${S().currency})</label><input id="pref_amt" type="number" min="0" step="any" placeholder="e.g. 2000 — leave blank to rank by cashback %" oninput="renderCardPref()"></div>
+    <label class="chk" style="align-self:flex-end"><input type="checkbox" id="pref_fit" onchange="renderCardPref()"> Only cards with enough balance</label>
+  </div>
+  <div id="prefTop"></div>
+  <div id="prefList"></div>`;
+};
+views._after_cardpref=renderCardPref;
+function renderCardPref(){
+  const host=$('#prefList'); if(!host)return; const m=ym(todayStr());
+  const amount=Math.max(0,+($('#pref_amt')?.value)||0), onlyFit=!!$('#pref_fit')?.checked;
+  let cards=activeCards().map(c=>{
+    const av=cardAvailable(c), pct=+c.discountPercent||0, capRem=cashbackCapRemaining(c,m);
+    const fits = amount<=0 ? true : (av>=amount || cardAllowsNeg(c));
+    const cb = amount>0 ? expectedCashback(c,amount,m) : 0;
+    const due=cardDueDate(c), dl=daysUntil(due);
+    return {c,av,pct,capRem,fits,cb,due,dl,pending:pendingCashback(c)};
+  });
+  if(onlyFit) cards=cards.filter(x=>x.fits);
+  // rank: cards that fit first; then by cashback earned (amount) or cashback % ; then most available
+  cards.sort((a,b)=> (b.fits-a.fits) || (amount>0 ? (b.cb-a.cb) : (b.pct-a.pct)) || (b.av-a.av));
+  const top=$('#prefTop');
+  if(!cards.length){ if(top)top.innerHTML=''; host.innerHTML=`<div class="panel">${emptyBox('⭐','No cards to rank','Add active credit cards (with a cashback % and limit) to get a recommendation.')}</div>`; return; }
+  const best=cards[0];
+  const capTxt=x=> x.capRem===Infinity?'no monthly cap':(`AED cap left ${money(x.capRem)}`);
+  const creditWhen=x=> x.c.dueMode==='statement' ? `posts around statement day ${x.c.statementDay}` : `posts by the statement (due ${fmtDate(isoDate(x.due))})`;
+  if(top){
+    const okBadge = best.fits ? '' : `<span class="tag due" style="margin-left:8px">⚠ not enough balance</span>`;
+    top.innerHTML=`<div class="panel" style="border:1px solid var(--brand);background:linear-gradient(135deg,var(--brandsoft),transparent)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:22px">🏆</span><div style="font-weight:800;font-size:16px">Best card to use: ${esc(best.c.name)}${best.c.owner?` <span style="color:var(--muted);font-weight:600">· 👤 ${esc(best.c.owner)}</span>`:''}</div>${okBadge}</div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px">
+        <span>Available <b style="color:var(--text)">${money(best.av)}</b></span>
+        <span>Cashback <b style="color:var(--gold2)">${best.pct}%</b></span>
+        ${amount>0?`<span>Earns <b style="color:var(--green)">${money(best.cb)}</b> on ${money(amount)}</span>`:''}
+        <span>${capTxt(best)}</span>
+        <span>💳 ${creditWhen(best)}</span>
+      </div></div>`;
+  }
+  host.innerHTML=`<div class="cat-head">Ranked ${amount>0?`for ${money(amount)}`:'by cashback %'} <span class="cc">${cards.length} active card${cards.length===1?'':'s'}</span></div>
+    <div class="table-wrap"><table style="min-width:720px">
+    <thead><tr><th>#</th><th>Card</th><th class="num">Available</th><th class="num">Cashback</th>${amount>0?'<th class="num">Earns now</th>':''}<th class="num">Cap left</th><th class="num">Pending cashback</th><th>Cashback credited</th></tr></thead>
+    <tbody>${cards.map((x,i)=>`<tr style="${!x.fits?'opacity:.55':''}">
+      <td><b>${i===0&&x.fits?'🏆':(i+1)}</b></td>
+      <td><b>${esc(x.c.name)}</b>${x.c.owner?`<div style="color:var(--muted2);font-size:11.5px">👤 ${esc(x.c.owner)}</div>`:''}${!x.fits?'<div style="color:var(--red);font-size:11px">short of balance</div>':''}</td>
+      <td class="num" style="color:${x.av<0?'var(--red)':'var(--green)'};font-weight:700">${money(x.av)}</td>
+      <td class="num">${x.pct?`${x.pct}%`:'—'}</td>
+      ${amount>0?`<td class="num" style="color:var(--green);font-weight:700">${x.cb>0?money(x.cb):'—'}</td>`:''}
+      <td class="num">${x.capRem===Infinity?'∞':money(x.capRem)}</td>
+      <td class="num" style="color:var(--gold2)">${x.pending>0?money(x.pending):'—'}</td>
+      <td style="font-size:12px;color:var(--muted)">${x.c.dueMode==='statement'?`stmt day ${x.c.statementDay}`:`due ${fmtDate(isoDate(x.due))}`}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="li-hint" style="margin-top:10px">“Pending cashback” is what this card has earned in the current cycle — it posts to the card (and frees balance / offsets the bill) on the statement date, not at the checkout counter.</div>`;
+}
+
+/* =========================================================
+   GIFT CARDS  (stored-value cards bought at Carrefour / other stores)
+   A gift card is bought like a product (loads a balance), then used as a
+   payment method on purchases & sales — each use spends down its balance and
+   is kept in the card's payment history. Balance is derived from the ledger:
+     load / adjust(+)  → balance up      spend / adjust(−) → balance down
+   ========================================================= */
+const GIFT_STORES=['Carrefour','Lulu Hypermarket','Amazon','Noon','Sharaf DG','Emax','Apple','Other'];
+function giftById(id){ return (DB.giftcards||[]).find(g=>g.id===id); }
+function giftBalance(g){ if(!g)return 0; let b=+g.openingBalance||0;
+  (g.txns||[]).forEach(t=>{ const a=+t.amount||0; if(t.type==='load')b+=a; else if(t.type==='spend')b-=a; else if(t.type==='adjust')b+=a; }); return b; }
+function giftActive(g){ return g && g.status!=='inactive'; }
+function activeGiftCards(){ return (DB.giftcards||[]).filter(giftActive); }
+function giftLabel(g){ if(!g)return ''; const l4=(g.number||'').replace(/\D/g,'').slice(-4); const p=[g.name]; if(g.store)p.push(g.store); if(l4)p.push('••'+l4); return p.join(' · '); }
+function allGiftStores(){ return uniqSorted([...GIFT_STORES,...(DB.giftcards||[]).map(g=>g.store)]); }
+/* balance usable on THIS purchase (adds back this purchase's own spends when editing) */
+function giftAvailForSplit(g){ let adj=0; if(_buyEditId)(g.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId && t.type==='spend') adj+=(+t.amount||0); }); return giftBalance(g)+adj; }
+/* spend from a gift card (used as payment) + keep it in the card's history */
+function spendGift(g,amount,date,note,srcPurchaseId,srcSaleId){ if(!g)return; if(!g.txns)g.txns=[];
+  g.txns.push({id:uid(),date,type:'spend',amount:+amount||0,note:note||'Payment',srcPurchaseId:srcPurchaseId||undefined,srcSaleId:srcSaleId||undefined}); }
+function unlinkPurchaseFromGifts(pid){ (DB.giftcards||[]).forEach(g=>{ if(g.txns) g.txns=g.txns.filter(t=>t.srcPurchaseId!==pid); }); }
+function unlinkSaleFromGifts(sid){ (DB.giftcards||[]).forEach(g=>{ if(g.txns) g.txns=g.txns.filter(t=>t.srcSaleId!==sid); }); }
+
+function giftVisual(g){
+  const bal=giftBalance(g), l4=(g.number||'').replace(/\D/g,'').slice(-4);
+  const grad = giftActive(g) ? 'linear-gradient(135deg,#be185d,#7c3aed 55%,#f59e0b)' : 'linear-gradient(135deg,#4b5563,#374151)';
+  return `<div class="ccard" style="background:${grad};${giftActive(g)?'':'opacity:.6'}" onclick="giftDetail('${g.id}')">
+    <div class="cc-pct">🎁 GIFT</div>
+    ${!giftActive(g)?`<div class="cc-pct" style="left:16px;right:auto;background:rgba(0,0,0,.35)">INACTIVE</div>`:''}
+    <div class="cc-top"><div><div class="cc-name">${esc(g.name)}</div><div class="cc-bank">${esc(g.store||'Gift Card')}</div>
+      ${l4?`<div class="cc-holder">ending ${l4}</div>`:''}</div><div class="cc-chip"></div></div>
+    <div>
+      <div class="cc-num" style="letter-spacing:1.5px">${g.number?esc(g.number):'—'}</div>
+      <div class="cc-foot">
+        <div><div style="opacity:.85">Balance</div><div class="cc-avail">${money(bal)}</div></div>
+        <div style="text-align:right"><div style="opacity:.85;margin-bottom:2px">${esc(g.store||'')}</div><span class="cc-due">${g.date?fmtDate(g.date):''}</span></div>
+      </div>
+    </div></div>`;
+}
+function giftCell(g){ return `<div>${giftVisual(g)}
+  <div class="row-actions" style="margin-top:9px;justify-content:center">
+    <button class="mini-btn gold" onclick="event.stopPropagation();giftTxnModal('${g.id}','spend')">− Use</button>
+    ${isOwner()?`<button class="mini-btn" onclick="event.stopPropagation();giftAdjustModal('${g.id}')">✎ Balance</button>`:''}
+    <button class="mini-btn" onclick="event.stopPropagation();giftDetail('${g.id}')">Details</button>
+  </div></div>`; }
+
+views.giftcards=function(){
+  return `
+  <div class="page-head"><div><h2>🎁 Gift Cards</h2><p>Store gift cards (Carrefour &amp; others) bought like a product. Use them as a payment method on purchases &amp; sales — each use is deducted from the balance and kept in the card's history.</p></div>
+    <button class="btn-sm" onclick="purchaseGiftModal()">＋ Purchase Gift Card</button></div>
+  <div class="toolbar">
+    <div class="search"><span class="si">🔎</span><input id="giftSearch" placeholder="Search name, store or number..." oninput="renderGiftCards()"></div>
+  </div>
+  <div id="giftStats" class="cards"></div>
+  <div id="giftWrap"></div>`;
+};
+views._after_giftcards=renderGiftCards;
+function renderGiftCards(){
+  const host=$('#giftWrap'); if(!host)return;
+  const all=DB.giftcards||[];
+  const q=($('#giftSearch')?.value||'').toLowerCase().trim();
+  const gifts=q? all.filter(g=>[g.name,g.store,g.number].some(v=>(v||'').toLowerCase().includes(q))) : all;
+  let tBal=0,tLoad=0; gifts.forEach(g=>{ tBal+=giftBalance(g); (g.txns||[]).forEach(t=>{ if(t.type==='load')tLoad+=+t.amount||0; }); });
+  const cs=$('#giftStats'); if(cs)cs.innerHTML=gifts.length?`
+    <div class="stat green"><span class="ic">🎁</span><div class="label">Total Balance</div><div class="val">${money(tBal)}</div><div class="foot">${gifts.length} card${gifts.length===1?'':'s'}</div></div>
+    <div class="stat blue"><span class="ic">💰</span><div class="label">Total Loaded</div><div class="val">${money(tLoad)}</div></div>
+    <div class="stat gold"><span class="ic">🛍️</span><div class="label">Spent</div><div class="val">${money(Math.max(0,tLoad-tBal))}</div></div>`:'';
+  if(!gifts.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No gift cards match your search.'):emptyBox('🎁','No gift cards yet','Purchase a Carrefour or other store gift card — then use it to pay for stock or sales.')}</div>`; return; }
+  const act=gifts.filter(giftActive), inact=gifts.filter(g=>!giftActive(g));
+  const sec=(title,arr,color)=>arr.length?`<div class="cat-head">${title} <span class="cc" style="color:${color}">${arr.length} card${arr.length===1?'':'s'}</span></div><div class="ccgrid">${arr.map(giftCell).join('')}</div>`:'';
+  host.innerHTML=(sec('🟢 Active',act,'var(--green)')+sec('⚪ Inactive',inact,'var(--muted)'));
+}
+
+/* ---- purchase (buy) a gift card — like buying a product; loads its balance ---- */
+function purchaseGiftModal(){
+  const cards=activeCards();
+  openModal('Purchase Gift Card',`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Buy a store gift card. The face value is loaded as its opening balance, and how you paid for it is recorded (cash out of the wallet, or charged to a credit card so you still earn its cashback).</p>
+    <div class="grid2">
+      <div class="field"><label>Store *</label><input id="g_store" list="dl_giftstore" placeholder="e.g. Carrefour">${dataList('dl_giftstore',allGiftStores())}</div>
+      <div class="field"><label>Gift Card Name / Label *</label><input id="g_name" placeholder="e.g. Carrefour Gift Card"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Card Number (optional)</label><input id="g_number" inputmode="numeric" placeholder="shown in full on the card so you can redeem it"></div>
+      <div class="field"><label>Date</label><input id="g_date" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="field"><label>Amount Loaded (${S().currency}) *</label><input id="g_amt" type="number" min="0" step="any" placeholder="face value of the gift card" oninput="giftBuyCalc()"></div>
+    <div class="field"><label>Paid For With</label>
+      <select id="g_paidby" onchange="giftBuyCalc()">
+        <option value="cash">💵 Cash (out of the cash wallet)</option>
+        ${cards.map(c=>`<option value="card:${c.id}">💳 ${esc(cardLabel(c))} · avail ${money(cardAvailable(c))}</option>`).join('')}
+        <option value="none">— Not tracked (already owned / gifted)</option>
+      </select></div>
+    <div id="g_buyhint" class="li-hint" style="margin-bottom:12px"></div>
+    <div class="field"><label>Note (optional)</label><input id="g_note" placeholder="e.g. receipt no."></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveGiftPurchase()">Purchase</button>`);
+  setTimeout(()=>{$('#g_store')?.focus();giftBuyCalc();},30);
+}
+function giftBuyCalc(){
+  const el=$('#g_buyhint'); if(!el)return; const amt=+($('#g_amt')?.value||0), pb=$('#g_paidby')?.value||'cash';
+  if(pb==='cash') el.innerHTML=amt>0?`Pays <b style="color:var(--text)">${money(amt)}</b> cash from ${esc(session.name)}'s wallet, loads <b style="color:var(--green)">${money(amt)}</b> onto the gift card.`:'Cash leaves the wallet; the balance is loaded onto the card.';
+  else if(pb.startsWith('card:')){ const c=cardById(pb.slice(5)); const av=c?cardAvailable(c):0; const over=amt-av;
+    el.innerHTML=`Charges <b style="color:var(--text)">${money(amt)}</b> to ${esc(c?c.name:'card')} (avail ${money(av)})${c&&c.discountPercent?` · earns ${c.discountPercent}% cashback`:''}${over>1e-6?` · <span style="color:var(--red)">⚠ exceeds available by ${money(over)}</span>`:''}`; }
+  else el.innerHTML='Just records the gift card & its balance — no cash or card is charged.';
+}
+function saveGiftPurchase(){
+  if(!requireOnline())return;
+  const store=$('#g_store').value.trim(), name=$('#g_name').value.trim();
+  if(!name)return toast('Enter a gift card name',1);
+  const amt=+$('#g_amt').value; if(!(amt>0))return toast('Enter the amount loaded',1);
+  const date=$('#g_date').value||todayStr(), number=$('#g_number').value.trim(), note=$('#g_note').value.trim();
+  const pb=$('#g_paidby').value;
+  if(pb.startsWith('card:')){ const c=cardById(pb.slice(5)); if(c){ const over=amt-cardAvailable(c);
+    if(over>1e-6 && !cardAllowsNeg(c)) return toast(`${c.name}: only ${money(Math.max(0,cardAvailable(c)))} available — reduce the amount or enable over-limit for it.`,1); } }
+  const gid=uid();
+  const g={id:gid,name,store,number,status:'active',date,note,openingBalance:0,byId:session.id,
+    txns:[{id:uid(),date,type:'load',amount:amt,note:'Purchased'+(store?' at '+store:'')}]};
+  DB.giftcards.push(g);
+  // record how it was paid for
+  if(pb==='cash'){ if(!Array.isArray(DB.cash))DB.cash=[];
+    DB.cash.push({id:uid(),date,dir:'out',amount:amt,cat:'giftbuy',desc:'Gift card · '+name+(store?' ('+store+')':''),who:session.id,byId:session.id,linkId:gid}); }
+  else if(pb.startsWith('card:')){ const c=cardById(pb.slice(5)); if(c)chargeCard(c,amt,date,'Gift card · '+name+(store?' ('+store+')':''),'gift:'+gid); }
+  save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
+  toast('Gift card purchased · '+money(amt)+' loaded'); confetti();
+}
+
+/* ---- gift card detail + payment/usage history ---- */
+function giftDetail(id){
+  const g=giftById(id); if(!g)return; const bal=giftBalance(g);
+  let loaded=0,spent=0; (g.txns||[]).forEach(t=>{ if(t.type==='load')loaded+=+t.amount||0; else if(t.type==='spend')spent+=+t.amount||0; });
+  const txns=[...(g.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
+  const rows=txns.length? txns.map(t=>{ const linked=t.srcPurchaseId||t.srcSaleId; return `<tr>
+      <td>${fmtDate(t.date)}</td>
+      <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
+      <td>${esc(t.note||'')}</td>
+      ${txnAmtCell(t)}
+      <td class="num" style="white-space:nowrap">${!linked?`<button class="mini-btn" title="Edit entry" onclick="giftTxnModal('${g.id}','${t.type}','${t.id}')">✎</button> <button class="mini-btn red" title="Delete entry" onclick="delGiftTxn('${g.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`; }).join('')
+    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
+  openModal(esc(g.name),`
+    <div style="max-width:360px;margin:0 auto 18px">${giftVisual(g)}</div>
+    <div class="grid3" style="margin-bottom:16px">
+      <div class="stat green"><div class="label">Balance</div><div class="val">${money(bal)}</div><div class="foot">available to spend</div></div>
+      <div class="stat blue"><div class="label">Loaded</div><div class="val">${money(loaded)}</div></div>
+      <div class="stat gold"><div class="label">Spent</div><div class="val">${money(spent)}</div></div>
+    </div>
+    <div class="row-actions" style="margin-bottom:16px">
+      <button class="btn-sm btn-gold" onclick="giftTxnModal('${g.id}','spend')">− Use / Spend</button>
+      ${isOwner()?`<button class="btn-sm btn-ghost" onclick="giftAdjustModal('${g.id}')">✎ Edit balance</button>`:''}
+    </div>
+    <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    `<button class="btn-sm btn-red" onclick="delGift('${g.id}')">Delete</button>
+     <button class="btn-sm btn-ghost" onclick="editGift('${g.id}')">Edit</button>
+     <button class="btn-sm" onclick="closeModal()">Close</button>`);
+}
+let _gtBase=0,_gtSign=1;
+function gtCalcAfter(){ const el=$('#gt_after'); if(!el)return; const amt=+($('#gt_amt')?.value)||0; const after=_gtBase+_gtSign*amt;
+  el.textContent=money(after); el.style.color=after<-0.005?'var(--red)':'var(--green)';
+  const w=$('#gt_warn'); if(w)w.style.display=(after<-0.005&&_gtSign<0)?'block':'none'; }
+function giftTxnModal(id,type,txnId){
+  const g=giftById(id); if(!g)return;
+  const edit = txnId ? (g.txns||[]).find(t=>t.id===txnId) : null;
+  const bal=giftBalance(g); const sign = type==='spend' ? -1 : 1;
+  const base = edit ? (bal - sign*(+edit.amount||0)) : bal;
+  _gtBase=base; _gtSign=sign;
+  const titles={load:'Top-up Gift Card',spend:'Use / Spend Gift Card'};
+  const hints={load:'Add funds to this gift card (a reload at the store).',spend:'Record a spend that used this gift card — deducts from the balance.'};
+  openModal((edit?'Edit ':'')+(titles[type]||'Gift card entry'),`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
+    <div class="totbox" style="margin-bottom:14px">
+      <div class="totrow"><span>Balance ${edit?'before this entry':'now'}</span><span>${money(base)}</span></div>
+      <div class="totrow" style="font-weight:800"><span>After this ${type==='spend'?'spend':'top-up'}</span><span id="gt_after" style="color:var(--green)">${money(base+sign*(edit?(+edit.amount||0):0))}</span></div>
+      <div id="gt_warn" style="display:none;color:var(--red);font-size:12px;margin-top:6px">⚠ This would take the balance below zero.</div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="gt_amt" type="number" min="0" step="any" placeholder="0.00" value="${edit?(+edit.amount||0):''}" oninput="gtCalcAfter()"></div>
+      <div class="field"><label>Date</label><input id="gt_date" type="date" value="${edit?esc(edit.date||todayStr()):todayStr()}"></div>
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="gt_note" placeholder="e.g. store / receipt no." value="${edit?esc(edit.note||''):''}"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="giftDetail('${id}')">Back</button>
+     <button class="btn-sm" onclick="saveGiftTxn('${id}','${type}'${edit?`,'${txnId}'`:''})">${edit?'Update':'Save'}</button>`);
+  setTimeout(()=>{$('#gt_amt')?.focus();gtCalcAfter();},30);
+}
+function saveGiftTxn(id,type,txnId){
+  if(!requireOnline())return;
+  const g=giftById(id); if(!g)return; const amt=+$('#gt_amt').value; if(!(amt>0))return toast('Enter a valid amount',1);
+  if(!g.txns)g.txns=[];
+  const date=$('#gt_date').value||todayStr(), note=$('#gt_note').value.trim();
+  if(type==='spend'){ const avail=giftBalance(g)+(txnId?((g.txns.find(t=>t.id===txnId)||{}).amount||0):0);
+    if(amt>avail+1e-6)return toast(`Only ${money(Math.max(0,avail))} left on this gift card`,1); }
+  if(txnId){ const t=(g.txns||[]).find(x=>x.id===txnId); if(!t)return toast('Entry not found',1);
+    if(t.srcPurchaseId||t.srcSaleId)return toast('This entry comes from a purchase/sale — edit it there',1);
+    t.amount=amt; t.date=date; t.note=note; save(); toast('Entry updated'); }
+  else{ g.txns.push({id:uid(),date,type,amount:amt,note,byId:session.id}); save(); toast('Saved'); }
+  giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
+}
+function delGiftTxn(gid,tid){ if(!requireOnline())return; const g=giftById(gid); if(!g)return;
+  confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
+    g.txns=(g.txns||[]).filter(t=>t.id!==tid); save(); giftDetail(gid); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
+  },'Delete'); }
+function giftAdjustModal(id){
+  const g=giftById(id); if(!g)return; const bal=giftBalance(g);
+  openModal('Edit Balance · '+esc(g.name),`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Owner correction. Set the gift card balance to the correct amount — the difference is logged as an <b>EDITED</b> entry.</p>
+    <div class="grid2">
+      <div class="field"><label>Current Balance</label><input value="${money(bal)}" disabled></div>
+      <div class="field"><label>Set Balance To (${S().currency}) *</label><input id="ga_target" type="number" step="any" value="${(+bal.toFixed(2))}"></div>
+    </div>`,
+    `<button class="btn-sm btn-ghost" onclick="giftDetail('${id}')">Back</button>
+     <button class="btn-sm" onclick="saveGiftAdjust('${id}')">Save</button>`);
+  setTimeout(()=>$('#ga_target')?.focus(),30);
+}
+function saveGiftAdjust(id){
+  if(!requireOnline())return; const g=giftById(id); if(!g)return;
+  const target=+$('#ga_target').value; const diff=Math.round((target-giftBalance(g))*100)/100;
+  if(Math.abs(diff)<0.005)return toast('No change',1);
+  if(!g.txns)g.txns=[]; g.txns.push({id:uid(),date:todayStr(),type:'adjust',amount:diff,note:'Balance corrected',byId:session.id});
+  save(); giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell(); toast('Balance edited');
+}
+function editGift(id){
+  const g=giftById(id); if(!g)return;
+  openModal('Edit Gift Card',`
+    <div class="grid2">
+      <div class="field"><label>Store</label><input id="ge_store" list="dl_giftstore" value="${esc(g.store||'')}">${dataList('dl_giftstore',allGiftStores())}</div>
+      <div class="field"><label>Gift Card Name *</label><input id="ge_name" value="${esc(g.name)}"></div>
+    </div>
+    <div class="field"><label>Card Number</label><input id="ge_number" value="${esc(g.number||'')}" inputmode="numeric" placeholder="shown in full on the card so you can redeem it"></div>
+    <div class="field"><label>Status</label><select id="ge_status"><option value="active" ${g.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${g.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
+    <div class="field"><label>Note</label><input id="ge_note" value="${esc(g.note||'')}"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="giftDetail('${id}')">Cancel</button>
+     <button class="btn-sm" onclick="saveGift('${id}')">Save</button>`);
+  setTimeout(()=>$('#ge_name')?.focus(),30);
+}
+function saveGift(id){
+  if(!requireOnline())return; const g=giftById(id); if(!g)return;
+  const name=$('#ge_name').value.trim(); if(!name)return toast('Gift card name is required',1);
+  g.name=name; g.store=$('#ge_store').value.trim(); g.number=$('#ge_number').value.trim(); g.status=$('#ge_status').value; g.note=$('#ge_note').value.trim();
+  save(); giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell(); toast('Gift card saved');
+}
+function delGift(id){
+  if(!requireOnline())return; const g=giftById(id); if(!g)return;
+  const linked=DB.purchases.some(p=>(p.payments||[]).some(pm=>pm.giftId===id))||DB.sales.some(s=>(s.payments||[]).some(pm=>pm.giftId===id));
+  confirmBox('Delete gift card?', linked?'Some purchases/sales used this gift card. Those records stay, but gift-card tracking is removed. Continue?':'This removes the gift card and its whole ledger. Cannot be undone.',()=>{
+    DB.giftcards=DB.giftcards.filter(x=>x.id!==id); save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell(); toast('Gift card deleted');
   },'Delete');
 }
 
@@ -3428,8 +3855,10 @@ function purchaseDetail(id){
   const gross=purchaseGross(p), disc=purchaseDiscount(p), tot=purchaseTotal(p), bal=tot-(p.paid||0);
   const rows=purchaseItems(p).map(it=>{const pr=productById(it.productId);return `<tr><td>${esc(pr?pr.name:'Item')}</td><td class="num">${num(it.qty)}</td><td class="num">${money(it.rate)}</td><td class="num">${money((+it.qty||0)*(+it.rate||0))}</td></tr>`;}).join('');
   const pays=(p.payments||[]);
-  const payTbl=pays.length?`<div class="table-wrap"><table style="min-width:360px"><thead><tr><th>Date</th><th>Method</th><th>Card</th><th class="num">Amount</th></tr></thead>
-    <tbody>${pays.map(pm=>{const c=pm.cardId?cardById(pm.cardId):null;return `<tr><td>${fmtDate(pm.date)}</td><td>${(pm.method||'cash').toUpperCase()}</td><td>${c?esc(cardLabel(c)):'—'}</td><td class="num">${money(pm.amount)}</td></tr>`;}).join('')}</tbody></table></div>`:'<div style="color:var(--muted2);font-size:12.5px">No payments recorded yet.</div>';
+  const payTbl=pays.length?`<div class="table-wrap"><table style="min-width:360px"><thead><tr><th>Date</th><th>Method</th><th>Card / Gift</th><th class="num">Amount</th></tr></thead>
+    <tbody>${pays.map(pm=>{const c=pm.cardId?cardById(pm.cardId):null; const g=pm.giftId?giftById(pm.giftId):null;
+      const ref = c?esc(cardLabel(c)):(g?('🎁 '+esc(giftLabel(g))):(+pm.deductPct>0?`${(+pm.deductPct)}% cash disc.`:'—'));
+      return `<tr><td>${fmtDate(pm.date)}</td><td>${(payMethodInfo(pm.method).label||pm.method||'cash').toUpperCase()}</td><td>${ref}</td><td class="num">${money(pm.amount)}</td></tr>`;}).join('')}</tbody></table></div>`:'<div style="color:var(--muted2);font-size:12.5px">No payments recorded yet.</div>';
   openModal('Purchase '+esc(p.ref),`
     <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
       ${miniStat('Date',fmtDate(p.date))}
@@ -3512,15 +3941,15 @@ function userName(id){ const u=(DB.users||[]).find(x=>x.id===id); return u?u.nam
 function cashEntries(){
   const e=[];
   (DB.cash||[]).forEach(m=>e.push({id:m.id,date:m.date||'',dir:m.dir,amount:+m.amount||0,cat:m.cat||'manual',desc:m.desc||'',who:m.who||'',recBy:m.byId||'',linkId:m.linkId||'',manual:true}));
-  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||s.date,dir:'in',amount:+pm.amount,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:''),who:s.collectedBy||s.byId||''}); }));
-  (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ if(pm.method==='cash'&&(+pm.amount)>0) e.push({date:pm.date||p.date,dir:'out',amount:+pm.amount,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:''),who:p.byId||''}); }));
+  (DB.sales||[]).forEach(s=>(s.payments||[]).forEach(pm=>{ const net=pmCashNet(pm); if(pm.method==='cash'&&net>0) e.push({date:pm.date||s.date,dir:'in',amount:net,cat:'sale',desc:'Sale '+(s.invoiceNo||'')+(s.customer?' · '+s.customer:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:s.collectedBy||s.byId||''}); }));
+  (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ const net=pmCashNet(pm); if(pm.method==='cash'&&net>0) e.push({date:pm.date||p.date,dir:'out',amount:net,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:p.byId||''}); }));
   (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:t.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return e;
 }
 function walletBalance(pid){ return cashEntries().filter(x=>x.who===pid).reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
 function cashBalance(){ return cashEntries().reduce((a,x)=>a+(x.dir==='in'?x.amount:-x.amount),0); }
-const CASH_TAG={sale:'ok',purchase:'card',card:'partial',expense:'due',opening:'bank',adjust:'adjust',cashin:'ok',cashout:'due',transfer:'split',manual:'bank'};
+const CASH_TAG={sale:'ok',purchase:'card',card:'partial',giftbuy:'gift',expense:'due',opening:'bank',adjust:'adjust',cashin:'ok',cashout:'due',transfer:'split',manual:'bank'};
 let _walletSel='';
 function setWallet(v){ _walletSel=v; renderCash(); }
 views.cashbook=function(){
@@ -4046,7 +4475,7 @@ async function pdfDay(dstr){ toast('Preparing PDF…',0); const r=await buildDay
 /* ---- Card Statement report ---- */
 function cardStatementPanel(c,inR,q){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
-  const due=nextDue(c.paymentDay), dl=daysUntil(due);
+  const due=cardDueDate(c), dl=daysUntil(due);
   const asc=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   let bal=+c.openingOutstanding||0; const rr=[];
   asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
@@ -4070,7 +4499,7 @@ function cardStatementPanel(c,inR,q){
         ${k('Usage',Math.round(usedPct)+'%')}
         ${k('Spend · period',money(spend))}
         ${k('Payments · period',money(pay))}
-        ${k('Redeem · period',money(redeem),'var(--gold2)')}
+        ${k('Cashback · period',money(redeem),'var(--gold2)')}
         ${k('Next due',fmtDate(isoDate(due))+' · '+(dl<=0?'today':dl+'d'), (dl<=3&&out>0.005)?'var(--red)':'')}
       </div>
     </div>
@@ -4107,7 +4536,7 @@ function renderCardReport(){
     <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${all.length} card${all.length===1?'':'s'}</div></div>
     <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
-    <div class="stat gold"><span class="ic">🛒</span><div class="label">Spend · period</div><div class="val">${money(tSpend)}</div><div class="foot">redeem ${money(tRedeem)} · paid ${money(tPay)}</div></div>`:'';
+    <div class="stat gold"><span class="ic">🛒</span><div class="label">Spend · period</div><div class="val">${money(tSpend)}</div><div class="foot">cashback ${money(tRedeem)} · paid ${money(tPay)}</div></div>`:'';
   const body=$('#crBody'); if(!body)return;
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see statements.')}</div>`; return; }
   const q=($('#crSearch')?.value||'').trim().toLowerCase();
@@ -4257,8 +4686,6 @@ views.settings=function(){
       <label class="btn-sm btn-ghost" style="cursor:pointer">⬆ Import Backup<input type="file" accept="application/json" style="display:none" onchange="importData(this)"></label>
       ${owner?`<button class="btn-sm btn-red" onclick="resetAll()">Reset All Data</button>`:''}
     </div>
-    ${owner?`<div class="note" style="margin-top:14px">☁ <b>Deleted data keeps coming back?</b> Delete what you want gone first, then press this to make <b>this device</b> the master copy — it clears leftover demo / old cards from the shared cloud so other devices sync to it.
-      <div style="margin-top:10px"><button class="btn-sm" onclick="resetCloud()">☁ Reset Cloud to This Device</button></div></div>`:''}
   </div>
   <!-- ===== DEV-ONLY: remove this whole panel before going live ===== -->
   ${owner?`<div class="panel" style="border-color:var(--red)">
@@ -4433,17 +4860,24 @@ function importData(input){
   }catch(e){toast('Invalid backup file',1);}};
   r.readAsText(f); input.value='';
 }
-function resetAll(){if(!requireOnline())return;confirmBox('Reset ALL data?','Deletes every product, purchase, sale & user. Cannot be undone.',()=>{localStorage.removeItem(KEY);try{localStorage.removeItem(KEY+'_base');}catch(e){}baseline=null;DB=seed();save();toast('All data reset');logout();},'Reset');}
-/* Make THIS device the master: tombstone anything already removed here, then force-overwrite
-   the shared cloud row so leftover demo / old cards are cleared for every device. */
-function resetCloud(){
+/* Reset All Data — password-gated (same password as the developer clear). */
+function resetAll(){
   if(!isOwner())return;
   if(!requireOnline())return;
-  confirmBox('Reset cloud to this device?','This makes THIS device’s current data the master copy and overwrites what’s stored online — removing any leftover demo products or old cards from the shared cloud. Other devices will sync to this the next time they reload. Continue?',()=>{
-    _maintainTombstones();
-    try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
-    cloudForcePush().then(ok=>{ toast(ok?'Cloud reset — this device is now the master copy':'Cloud offline — saved on this device only', ok?0:1); });
-  },'Overwrite Cloud');
+  openModal('Reset ALL Data',`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.6">Deletes every product, purchase, sale, card, cash entry &amp; user, and resets the app to a fresh empty state. <b style="color:var(--red)">This cannot be undone.</b></p>
+    <div class="field"><label>Password</label><input id="reset_pw" type="password" placeholder="Enter password" autocomplete="off" onkeydown="if(event.key==='Enter')resetAllConfirm()"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-red" onclick="resetAllConfirm()">Reset All Data</button>`);
+  setTimeout(()=>$('#reset_pw')?.focus(),30);
+}
+function resetAllConfirm(){
+  if(!requireOnline())return;
+  if(($('#reset_pw')?.value||'').trim()!=='Arul@1987'){ toast('Wrong password',1); return; }
+  localStorage.removeItem(KEY);
+  try{ localStorage.removeItem(KEY+'_base'); }catch(e){}
+  baseline=null; DB=seed(); save();
+  closeModal(); toast('All data reset'); logout();
 }
 
 /* ===== DEV-ONLY: password-gated "clear everything" — remove before going live ===== */
