@@ -2290,7 +2290,7 @@ function renderLenders(){
       <td class="num" style="color:var(--amber)">${delta>0?money(delta):''}</td>
       <td class="num" style="color:var(--green)">${delta<0?money(-delta):''}</td>
       <td class="num"><b>${money(x.run)}</b></td>
-      <td class="num">${t.srcPurchaseId?`<span class="rowlink" style="font-size:11px" onclick="purchaseDetail('${t.srcPurchaseId}')" title="From this purchase">purchase</span>`:(isOwner()?`<button class="mini-btn red" onclick="delLenderTxn('${sel.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">—</span>')}</td>
+      <td class="num" style="white-space:nowrap">${t.srcPurchaseId?`<span class="rowlink" style="font-size:11px" onclick="purchaseDetail('${t.srcPurchaseId}')" title="From this purchase">purchase</span>`:(isOwner()?`<button class="mini-btn" onclick="lenderTxnModal('${sel.id}','${t.type}','${t.id}')" title="Edit entry">✎</button> <button class="mini-btn red" onclick="delLenderTxn('${sel.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">—</span>')}</td>
     </tr>`;}).join('');
   host.innerHTML=`
     <div class="cards" style="margin-bottom:12px">
@@ -2308,7 +2308,8 @@ function renderLenders(){
           <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','advance')">💵 Cash Advance</button>
           <button class="btn-sm btn-green" onclick="lenderTxnModal('${sel.id}','repay')">✅ Repayment</button>
           <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','adjust')">⚖ Adjust</button>
-          <button class="btn-sm btn-ghost" onclick="exportLenderExcel('${sel.id}')">⬇ Excel</button>
+          <button class="btn-sm btn-ghost" onclick="lenderAddCard('${sel.id}')">＋ Card</button>
+          <button class="btn-sm btn-ghost" onclick="lenderStatementModal('${sel.id}')">📄 Statement</button>
           <button class="btn-sm btn-ghost" onclick="lenderModal('${sel.id}')">✎ Edit</button>
         </div>
       </div>
@@ -2363,47 +2364,52 @@ function saveLender(id){
   toast('Lender "'+name+'" added');
 }
 /* ---- ledger entry modals: swipe / advance / repay / adjust ---- */
-function lenderTxnModal(lenderId,type){
+/* Add/edit a ledger entry. txnId set = editing an existing manual entry (incl. its commission). */
+function lenderTxnModal(lenderId,type,txnId){
   if(!requireOnline())return;
   const l=lenderById(lenderId); if(!l)return;
+  const t=txnId?((l.txns||[]).find(x=>x.id===txnId)):null;
+  if(t&&t.srcPurchaseId)return toast('This swipe came from a purchase — edit it in Purchases (commission included)',1);
+  if(t)type=t.type;
   const meta=LENDER_TX.find(m=>m.k===type)||LENDER_TX[1];
+  const dv=t?(t.date||todayStr()):todayStr();
   let bodyHtml='';
   if(type==='swipe'){
     const cards=l.cards||[];
     bodyHtml=`
       <div class="field"><label>Card *</label><select id="lt_card" onchange="lenderSwipeCardPick()">
         <option value="">— select card * —</option>
-        ${cards.map(c=>`<option value="${c.id}" data-c="${c.commission||0}">${esc(c.label)} (${c.commission||0}%)</option>`).join('')}
-      </select>${cards.length?'':'<div class="li-hint" style="color:var(--amber)">No cards yet — add one via ✎ Edit lender.</div>'}</div>
+        ${cards.map(c=>`<option value="${c.id}" data-c="${c.commission||0}" ${t&&t.cardId===c.id?'selected':''}>${esc(c.label)} (${c.commission||0}%)</option>`).join('')}
+      </select>${cards.length?'':'<div class="li-hint" style="color:var(--amber)">No cards yet — add one via ＋ Card.</div>'}</div>
       <div class="grid3">
-        <div class="field"><label>Amount swiped (${S().currency}) *</label><input id="lt_gross" type="number" min="0" step="any" oninput="lenderSwipeCalc()"></div>
-        <div class="field"><label>Commission %</label><input id="lt_comm" type="number" min="0" max="100" step="any" oninput="lenderSwipeCalc()"></div>
-        <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
+        <div class="field"><label>Amount swiped (${S().currency}) *</label><input id="lt_gross" type="number" min="0" step="any" value="${t?(+t.gross||''):''}" oninput="lenderSwipeCalc()"></div>
+        <div class="field"><label>Commission %</label><input id="lt_comm" type="number" min="0" max="100" step="any" value="${t?(t.commission!=null?t.commission:''):''}" oninput="lenderSwipeCalc()"></div>
+        <div class="field"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
       </div>
       <div class="totbox" id="lt_net"></div>
-      <div class="field"><label>Note</label><input id="lt_note" placeholder="optional (e.g. what it was for)"></div>`;
+      <div class="field"><label>Note</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="optional (e.g. what it was for)"></div>`;
   } else if(type==='advance'){
     bodyHtml=`<div class="grid2">
-      <div class="field"><label>Cash advance (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any"></div>
-      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
-    </div><div class="field"><label>Note</label><input id="lt_note" placeholder="cash the lender gave you"></div>`;
+      <div class="field"><label>Cash advance (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any" value="${t?(+t.amount||''):''}"></div>
+      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
+    </div><div class="field"><label>Note</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="cash the lender gave you"></div>`;
   } else if(type==='repay'){
     const bal=+lenderBalance(l).toFixed(2);
-    bodyHtml=`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Current balance owed: <b style="color:var(--amber)">${money(bal)}</b></p>
+    bodyHtml=`${t?'':`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Current balance owed: <b style="color:var(--amber)">${money(bal)}</b></p>`}
     <div class="grid3">
-      <div class="field"><label>Repayment (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any" value="${bal>0?bal:''}"></div>
-      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
-      <div class="field"><label>Method</label><select id="lt_method"><option value="cash">Cash</option><option value="bank">Bank Transfer</option><option value="cheque">Cheque</option><option value="card">Card</option></select></div>
-    </div><div class="field"><label>Note</label><input id="lt_note" placeholder="optional (e.g. receipt no.)"></div>`;
+      <div class="field"><label>Repayment (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any" value="${t?(+t.amount||''):(bal>0?bal:'')}"></div>
+      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
+      <div class="field"><label>Method</label><select id="lt_method">${['cash','bank','cheque','card'].map(m=>`<option value="${m}" ${t&&t.method===m?'selected':''}>${m==='bank'?'Bank Transfer':m.charAt(0).toUpperCase()+m.slice(1)}</option>`).join('')}</select></div>
+    </div><div class="field"><label>Note</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="optional (e.g. receipt no.)"></div>`;
   } else {
     bodyHtml=`<div class="grid2">
-      <div class="field"><label>Adjustment (${S().currency}) — + increases, − decreases *</label><input id="lt_amt" type="number" step="any"></div>
-      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${todayStr()}"></div>
-    </div><div class="field"><label>Reason</label><input id="lt_note" placeholder="why this adjustment"></div>`;
+      <div class="field"><label>Adjustment (${S().currency}) — + increases, − decreases *</label><input id="lt_amt" type="number" step="any" value="${t?(+t.amount||''):''}"></div>
+      <div class="field"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
+    </div><div class="field"><label>Reason</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="why this adjustment"></div>`;
   }
-  openModal(meta.ic+' '+meta.lab+' · '+esc(l.name), bodyHtml,
+  openModal((t?'Edit ':'')+meta.ic+' '+meta.lab+' · '+esc(l.name), bodyHtml,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
-     <button class="btn-sm" onclick="saveLenderTxn('${lenderId}','${type}')">Save</button>`);
+     <button class="btn-sm" onclick="saveLenderTxn('${lenderId}','${type}','${txnId||''}')">${t?'Update':'Save'}</button>`);
   if(type==='swipe')lenderSwipeCalc();
 }
 function lenderSwipeCardPick(){ const sel=$('#lt_card'), opt=sel&&sel.selectedOptions[0], c=opt?(+opt.dataset.c||0):0, ci=$('#lt_comm'); if(ci&&!ci.value)ci.value=c; lenderSwipeCalc(); }
@@ -2412,29 +2418,31 @@ function lenderSwipeCalc(){ const g=+($('#lt_gross')?.value||0), c=+($('#lt_comm
     <div class="totrow"><span>Amount swiped</span><span>${money(g)}</span></div>
     <div class="totrow"><span>Your commission (${c||0}%)</span><span style="color:var(--green)">${money(comm)}</span></div>
     <div class="totrow grand"><span>You owe the lender</span><span>${money(net)}</span></div>`; }
-function saveLenderTxn(lenderId,type){
+function saveLenderTxn(lenderId,type,txnId){
   if(!requireOnline())return;
   const l=lenderById(lenderId); if(!l)return; if(!l.txns)l.txns=[];
+  const editing=txnId?((l.txns||[]).find(x=>x.id===txnId)):null;
+  if(editing&&editing.srcPurchaseId)return toast('This swipe came from a purchase — edit it in Purchases',1);
   const date=$('#lt_date')?.value||todayStr(), note=($('#lt_note')?.value||'').trim();
+  let rec;
   if(type==='swipe'){
     const cardId=$('#lt_card').value; if(!cardId)return toast('Pick a card',1);
     const gross=+$('#lt_gross').value; if(!(gross>0))return toast('Enter the amount swiped',1);
     const comm=Math.max(0,Math.min(100,+$('#lt_comm').value||0));
-    postLenderSwipe(lenderId,cardId,gross,comm,date,note||'Manual swipe','');
+    const card=lenderCardById(l,cardId);
+    rec={type:'swipe',cardId,cardLabel:card?card.label:'',gross,commission:comm,amount:lenderNet_(gross,comm),note:note||'Manual swipe'};
   } else if(type==='advance'){
-    const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1);
-    l.txns.push({id:uid(),date,type:'advance',amount:amt,note});
+    const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1); rec={type:'advance',amount:amt,note};
   } else if(type==='repay'){
-    const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1);
-    l.txns.push({id:uid(),date,type:'repay',amount:amt,method:$('#lt_method').value,note});
+    const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1); rec={type:'repay',amount:amt,method:$('#lt_method').value,note};
   } else {
-    const amt=+$('#lt_amt').value; if(!amt)return toast('Enter an amount (+ or −)',1);
-    l.txns.push({id:uid(),date,type:'adjust',amount:amt,note});
+    const amt=+$('#lt_amt').value; if(!amt)return toast('Enter an amount (+ or −)',1); rec={type:'adjust',amount:amt,note};
   }
   const lab=(LENDER_TX.find(m=>m.k===type)||{lab:type}).lab;
-  logAct('edit','card lender',l.name,lab+(type==='swipe'?' '+money(+$('#lt_gross').value||0):(type!=='adjust'?' '+money(+$('#lt_amt').value||0):'')));
+  if(editing){ Object.keys(rec).forEach(k=>editing[k]=rec[k]); editing.date=date; logAct('edit','card lender',l.name,lab+' updated');
+  } else { l.txns.push({id:uid(),date,...rec}); logAct('edit','card lender',l.name,lab+' '+money(rec.gross||rec.amount||0)); }
   save();closeModal();renderLenders();renderLenderBadge();
-  toast(lab+' saved');
+  toast(lab+(editing?' updated':' saved'));
 }
 function delLenderTxn(lenderId,txnId){
   if(!requireOnline())return; if(!isOwner())return toast('Only admin can delete ledger entries',1);
@@ -2443,15 +2451,135 @@ function delLenderTxn(lenderId,txnId){
   confirmBox('Delete entry?','Remove this ledger entry? The running balance will recalculate. This cannot be undone.',()=>{
     l.txns=(l.txns||[]).filter(x=>x.id!==txnId); logAct('delete','card lender',l.name,'ledger entry removed'); save();renderLenders();renderLenderBadge(); toast('Entry deleted'); },'Delete');
 }
-function exportLenderExcel(id){
+/* quick add a card directly to a lender (from the lender toolbar) */
+function lenderAddCard(id){
+  if(!requireOnline())return;
   const l=lenderById(id); if(!l)return;
-  const rows=[['Date','Type','Card','Swiped','Comm %','Commission','Note','Owed +','Paid −','Balance']];
-  const sorted=[...(l.txns||[])].sort((a,b)=>(a.date<b.date?-1:a.date>b.date?1:0)); let run=0;
-  sorted.forEach(t=>{ run+=lenderTxnDelta(t); const meta=LENDER_TX.find(m=>m.k===t.type)||{lab:t.type}, delta=lenderTxnDelta(t);
-    rows.push([t.date,meta.lab,t.cardLabel||'',t.type==='swipe'?num2(t.gross):'',t.type==='swipe'?(t.commission||0):'',t.type==='swipe'?num2((+t.gross||0)-(+t.amount||0)):'',t.note||'',delta>0?num2(delta):'',delta<0?num2(-delta):'',num2(run)]); });
-  rows.push([]); rows.push(['','','','','','','TOTAL OWED','','',num2(lenderBalance(l))]);
-  rows.push(['','','','','','','COMMISSION EARNED','','',num2(lenderCommission(l))]);
-  exportExcel('lender_'+(l.name||'lender').replace(/\s+/g,'_')+'_'+todayStr()+'.xlsx',[{name:(l.name||'Lender').replace(/[\\/?*\[\]:]/g,' ').slice(0,28),rows}]);
+  openModal('Add Card · '+esc(l.name),`
+    <div class="field"><label>Card Label *</label><input id="lac_label" placeholder="e.g. Rajesh FAB, Fahed ADIB"></div>
+    <div class="field"><label>Default Commission %</label><input id="lac_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>
+    <div class="li-hint" style="margin-top:6px">This becomes the default % when you swipe this card — you can still change it per swipe or per purchase.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveLenderAddCard('${id}')">Save Card</button>`);
+  setTimeout(()=>$('#lac_label')?.focus(),30);
+}
+function saveLenderAddCard(id){
+  if(!requireOnline())return;
+  const l=lenderById(id); if(!l)return;
+  const label=$('#lac_label').value.trim(); if(!label)return toast('Card label is required',1);
+  if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:uid(),label,commission:+$('#lac_comm').value||0});
+  logAct('edit','card lender',l.name,'added card '+label); save();closeModal();renderLenders(); toast('Card "'+label+'" added');
+}
+/* ---- statement (date range or all) → PDF & Excel, sheet-style ---- */
+function lenderStatementData(l,from,to){
+  const all=[...(l.txns||[])].sort((a,b)=>(a.date<b.date?-1:a.date>b.date?1:0));
+  let opening=0; const rows=[];
+  all.forEach(t=>{ const delta=lenderTxnDelta(t);
+    if(from && (t.date||'')<from){ opening+=delta; return; }
+    if(to && (t.date||'')>to) return;
+    rows.push({...t,delta,commAmt:(t.type==='swipe'?Math.round(((+t.gross||0)-(+t.amount||0))*100)/100:0)}); });
+  let run=opening; rows.forEach(r=>{ run+=r.delta; r.run=Math.round(run*100)/100; });
+  const totalOwed=rows.reduce((a,r)=>a+(r.delta>0?r.delta:0),0);
+  const totalPaid=rows.reduce((a,r)=>a+(r.delta<0?-r.delta:0),0);
+  const commission=rows.reduce((a,r)=>a+(r.commAmt||0),0);
+  return {opening:Math.round(opening*100)/100,rows,totalOwed:Math.round(totalOwed*100)/100,totalPaid:Math.round(totalPaid*100)/100,commission:Math.round(commission*100)/100,closing:Math.round(run*100)/100};
+}
+function lenderStatementModal(id){
+  const l=lenderById(id); if(!l)return;
+  openModal('Statement · '+esc(l.name),`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Choose a period, then download as PDF or Excel.</p>
+    <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="stmt_all" checked onchange="document.getElementById('stmt_range').style.display=this.checked?'none':''"> All time</label>
+    <div id="stmt_range" class="grid2" style="display:none">
+      <div class="field"><label>From</label><input id="stmt_from" type="date"></div>
+      <div class="field"><label>To</label><input id="stmt_to" type="date" value="${todayStr()}"></div>
+    </div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-ghost" onclick="lenderStatementExcel('${id}')">⬇ Excel</button>
+     <button class="btn-sm btn-gold" onclick="lenderStatementPDF('${id}')">📄 PDF</button>`);
+}
+function _stmtRange(){ if($('#stmt_all')?.checked)return {from:'',to:''}; return {from:$('#stmt_from')?.value||'',to:$('#stmt_to')?.value||''}; }
+function lenderStatementExcel(id){ const r=_stmtRange(); exportLenderExcel(id,r.from,r.to); }
+async function lenderStatementPDF(id){ const r=_stmtRange(); closeModal(); await buildLenderStatementPdf(id,r.from,r.to); }
+function exportLenderExcel(id,from,to){
+  const l=lenderById(id); if(!l)return; const d=lenderStatementData(l,from,to);
+  const period=(from||to)?`${from?fmtDate(from):'start'} to ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
+  const rows=[[(l.name||'')+' — Card Lender Statement'],['Period',period],[],
+    ['Date','Type','Card','Amount','Comm %','Commission','Note','Owed +','Paid −','Balance']];
+  rows.push(['','Opening balance','','','','','',d.opening>0?num2(d.opening):'',d.opening<0?num2(-d.opening):'',num2(d.opening)]);
+  d.rows.forEach(r=>{ const lab=(LENDER_TX.find(m=>m.k===r.type)||{lab:r.type}).lab;
+    rows.push([r.date,lab,r.cardLabel||'',r.type==='swipe'?num2(r.gross):'',r.type==='swipe'?(r.commission||0):'',r.commAmt?num2(r.commAmt):'',(r.note||'')+(r.method?' ('+r.method+')':''),r.delta>0?num2(r.delta):'',r.delta<0?num2(-r.delta):'',num2(r.run)]); });
+  rows.push([]);
+  rows.push(['','','','','','','TOTAL OWED (period)','',num2(d.totalOwed),'']);
+  rows.push(['','','','','','','TOTAL PAID (period)','',num2(d.totalPaid),'']);
+  rows.push(['','','','','','','COMMISSION EARNED','',num2(d.commission),'']);
+  rows.push(['','','','','','','CLOSING BALANCE','','',num2(d.closing)]);
+  exportExcel('statement_'+(l.name||'lender').replace(/\s+/g,'_')+'_'+(from||'all')+'_'+(to||todayStr())+'.xlsx',[{name:(l.name||'Lender').replace(/[\\/?*\[\]:]/g,' ').slice(0,28),rows}]);
+}
+function lenderStatementHtml(l,from,to){
+  const d=lenderStatementData(l,from,to);
+  const period=(from||to)?`${from?fmtDate(from):'Start'} — ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
+  const cell='padding:7px 9px;border:1px solid #e6e6e6', rt='text-align:right';
+  const body=d.rows.map(r=>{ const meta=LENDER_TX.find(m=>m.k===r.type)||{lab:r.type};
+    const desc=r.type==='swipe'?`${esc(r.cardLabel||'Card')}${r.note&&r.note!=='Manual swipe'?' · '+esc(r.note):''}`:(meta.lab+(r.note?' · '+esc(r.note):'')+(r.method?' ('+esc(r.method)+')':''));
+    return `<tr>
+      <td style="${cell}">${fmtDate(r.date)}</td>
+      <td style="${cell}">${desc}</td>
+      <td style="${cell};${rt}">${r.type==='swipe'?money(r.gross):''}</td>
+      <td style="${cell};${rt}">${r.type==='swipe'?(r.commission||0)+'%':''}</td>
+      <td style="${cell};${rt}">${r.delta>0?money(r.delta):''}</td>
+      <td style="${cell};${rt}">${r.delta<0?money(-r.delta):''}</td>
+      <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`;}).join('');
+  return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #a9791b;padding-bottom:12px;margin-bottom:14px">
+      <div><div style="font-size:19px;font-weight:800">${esc(S().company||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().address||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().phone||'')}${S().trn?(' · TRN '+esc(S().trn)):''}</div></div>
+      <div style="text-align:right"><div style="font-size:22px;font-weight:800;color:#a9791b">STATEMENT</div>
+        <div style="font-size:12px;color:#555">Generated ${fmtDate(todayStr())}</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <div><div style="font-size:11px;color:#888">CARD LENDER</div><div style="font-size:17px;font-weight:800">${esc(l.name)}</div>${l.phone?`<div style="font-size:12px;color:#555">${esc(l.phone)}</div>`:''}</div>
+      <div style="text-align:right"><div style="font-size:11px;color:#888">PERIOD</div><div style="font-size:14px;font-weight:700">${period}</div></div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#f4eeE0;color:#5a4a1e">
+        <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description</th>
+        <th style="${cell};${rt}">Amount</th><th style="${cell};${rt}">%</th>
+        <th style="${cell};${rt}">Owed +</th><th style="${cell};${rt}">Paid −</th><th style="${cell};${rt}">Balance</th></tr></thead>
+      <tbody>
+        <tr style="background:#faf7f0"><td style="${cell}" colspan="6"><b>Opening balance</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
+        ${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="7">No entries in this period</td></tr>`}
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <table style="border-collapse:collapse;font-size:13px;min-width:330px">
+        <tr><td style="padding:5px 10px;color:#555">Total owed (period)</td><td style="padding:5px 10px;text-align:right">${money(d.totalOwed)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#555">Total paid (period)</td><td style="padding:5px 10px;text-align:right">${money(d.totalPaid)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#2e7d32">Commission earned</td><td style="padding:5px 10px;text-align:right;color:#2e7d32">${money(d.commission)}</td></tr>
+        <tr style="border-top:2px solid #a9791b"><td style="padding:8px 10px;font-weight:800;font-size:15px">Closing balance</td><td style="padding:8px 10px;text-align:right;font-weight:800;font-size:15px">${money(d.closing)}</td></tr>
+      </table>
+    </div>
+    <div style="margin-top:22px;font-size:11px;color:#999;text-align:center">${esc(S().company||'')} · Card Lender Statement · Computer-generated.</div>
+  </div>`;
+}
+async function buildLenderStatementPdf(id,from,to){
+  const l=lenderById(id); if(!l)return;
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  toast('Preparing statement…',0);
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=`<div id="stmtArea">${lenderStatementHtml(l,from,to)}</div>`;
+  document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#stmtArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
+    const fn='statement_'+(l.name||'lender').replace(/[^\w.-]+/g,'_')+'_'+(from||'all')+'_'+(to||todayStr())+'.pdf';
+    const url=URL.createObjectURL(pdf.output('blob')); const a=document.createElement('a'); a.href=url; a.download=fn; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),5000);
+    toast('Statement ready — '+fn);
+  }catch(e){ toast('Could not build the statement PDF',1); }
+  finally{ document.body.removeChild(holder); }
 }
 /* ---- inline add during a purchase (borrowed-card payment) ---- */
 function buyBorrowLender(i,val){ if(val==='__new'){ quickAddLenderFromPurchase(i); return; } buySplits[i].lenderId=val; buySplits[i].lenderCardId=''; buySplits[i].commission=''; renderBuySplits(); }
