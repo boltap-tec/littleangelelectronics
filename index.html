@@ -1586,7 +1586,7 @@ function canView(v){ if(!session)return false; if(session.role==='owner')return 
    mandatory reference (card number / holder name / mobile) and don't touch the wallet. */
 const PAY_METHODS=[
   {k:'card',        label:'Credit Card',          tag:'card',   ref:null},
-  {k:'cardborrow',  label:'Credit Card (Borrowed)',tag:'card',  ref:'mandatory', refLabel:'Borrower name', refKind:'text'},
+  {k:'cardborrow',  label:'Credit Card by Vendor',tag:'card',  ref:'mandatory', refLabel:'Borrower name', refKind:'text'},
   {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'share_points',label:'Share Points',         tag:'points', ref:'optional',  refLabel:'Shareholder name (optional)', refKind:'text'},
@@ -2666,6 +2666,7 @@ function lenderStatementHtml(l,from,to){
   const cell='padding:7px 9px;border:1px solid #e6e6e6', rt='text-align:right';
   const body=d.rows.map(r=>{ const meta=LENDER_TX.find(m=>m.k===r.type)||{lab:r.type};
     const cardMove=(r.type==='swipe')||((r.type==='repay'||r.type==='recharge')&&r.method==='card');
+    const feeAmt=cardMove?Math.round(((+r.gross||0)-(+r.amount||0))*100)/100:0;
     const baseLab=(r.type==='repay'&&r.method==='cash')?'Cash returned':meta.lab;
     const desc=r.type==='swipe'
       ? `${esc(r.cardLabel||'Card')}${r.note&&r.note!=='Manual swipe'?' · '+esc(r.note):''}`
@@ -2675,6 +2676,7 @@ function lenderStatementHtml(l,from,to){
       <td style="${cell}">${desc}</td>
       <td style="${cell};${rt}">${cardMove?money(r.gross):''}</td>
       <td style="${cell};${rt}">${r.type==='swipe'?(r.commission||0)+'%':(cardMove?(r.deductPct||0)+'%':'')}</td>
+      <td style="${cell};${rt}">${cardMove&&feeAmt?money(feeAmt):''}</td>
       <td style="${cell};${rt}">${r.delta>0?money(r.delta):''}</td>
       <td style="${cell};${rt}">${r.delta<0?money(-r.delta):''}</td>
       <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`;}).join('');
@@ -2693,11 +2695,11 @@ function lenderStatementHtml(l,from,to){
     <table style="width:100%;border-collapse:collapse;font-size:12.5px">
       <thead><tr style="background:#f4eeE0;color:#5a4a1e">
         <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description</th>
-        <th style="${cell};${rt}">Amount</th><th style="${cell};${rt}">%</th>
+        <th style="${cell};${rt}">Purchase</th><th style="${cell};${rt}">Comm %</th><th style="${cell};${rt}">Comm</th>
         <th style="${cell};${rt}">Owed +</th><th style="${cell};${rt}">Paid −</th><th style="${cell};${rt}">Balance</th></tr></thead>
       <tbody>
-        <tr style="background:#faf7f0"><td style="${cell}" colspan="6"><b>Opening balance</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
-        ${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="7">No entries in this period</td></tr>`}
+        <tr style="background:#faf7f0"><td style="${cell}" colspan="7"><b>Opening balance</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
+        ${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="8">No entries in this period</td></tr>`}
       </tbody>
     </table>
     <div style="display:flex;justify-content:flex-end;margin-top:14px">
@@ -4974,8 +4976,22 @@ function delGift(id){
 function totalBought(pid){ let q=0; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{if(it.productId===pid)q+=+it.qty||0;})); return q; }
 function totalSold(pid){ let q=0; DB.sales.forEach(s=>s.items.forEach(it=>{if(it.productId===pid)q+=+it.qty||0;})); return q; }
 function lastBuyDate(pid){ let d=''; DB.purchases.forEach(p=>{ if((p.date||'')>d && purchaseItems(p).some(it=>it.productId===pid))d=p.date; }); return d; }
-let _invSort='recent';
+let _invSort='recent', _invShowCat=false;
 function setInvSort(v){ _invSort=v; renderInventory(); }
+function toggleInvCat(){ _invShowCat=!_invShowCat; renderInventory(); }
+/* category-wise totals (pieces + value) for in-stock items, with a grand total row */
+function invCatTotalsHtml(catAgg,totUnits,totVal){
+  const cats=Object.keys(catAgg).sort((a,b)=>a==='Uncategorised'?1:b==='Uncategorised'?-1:a.localeCompare(b));
+  if(!cats.length)return `<div class="panel" style="margin-bottom:14px;padding:12px 14px"><div class="li-hint">No in-stock items to total.</div></div>`;
+  const rows=cats.map(c=>{const a=catAgg[c];return `<tr><td>📂 ${esc(c)}</td><td class="num">${a.items}</td><td class="num"><b>${num(a.pcs)}</b></td><td class="num">${money(a.val)}</td></tr>`;}).join('');
+  const totItems=cats.reduce((s,c)=>s+catAgg[c].items,0);
+  return `<div class="panel" style="margin-bottom:14px;padding:12px 14px">
+    <div class="cat-head" style="margin:0 0 8px">📊 Category-wise totals</div>
+    <div class="table-wrap"><table><thead><tr><th>Category</th><th class="num">Items</th><th class="num">Pieces</th><th class="num">Value</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td>TOTAL</td><td class="num">${totItems}</td><td class="num">${num(totUnits)}</td><td class="num">${money(totVal)}</td></tr></tfoot>
+    </table></div></div>`;
+}
 function invRow(x){
   const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
   return `<tr>
@@ -5185,6 +5201,7 @@ function purchaseDetail(id){
 views.inventory=function(){
   return `
   <div class="page-head"><div><h2>Inventory</h2><p>Total purchased, sold & balance stock — with weighted-average cost. Buy or sell any item in one click.</p></div>
+    <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="toggleInvCat()">📊 Category Totals</button>
     <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="exportInventoryExcel()">⬇ Excel</button>
     <div class="field" style="margin:0;min-width:210px"><label>Sort by</label>
       <select id="invSort" onchange="setInvSort(this.value)">
@@ -5197,22 +5214,26 @@ views.inventory=function(){
       </select></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="invSearch" placeholder="Search product..." oninput="renderInventory()"></div></div>
   <div id="invCards" class="cards"></div>
+  <div id="invCatTotals"></div>
   <div id="invList"></div>`;
 };
 views._after_inventory=renderInventory;
 function renderInventory(){
   const eng=computeEngine();
   const q=($('#invSearch')?.value||'').toLowerCase();
-  let totVal=0,totUnits=0,low=0,out=0;
+  let totVal=0,totUnits=0,low=0,out=0; const catAgg={};
   const data=DB.products.map(p=>{const qty=stockOf(p.id,eng),avg=avgCostOf(p.id,eng);const val=(qty>0?qty:0)*avg;
-    if(qty>0){totUnits+=qty;totVal+=val;} if(qty<=0)out++; else if(qty<=S().lowStockLevel)low++;
+    if(qty>0){totUnits+=qty;totVal+=val; const cat=(p.category||'').trim()||'Uncategorised'; const a=catAgg[cat]||(catAgg[cat]={items:0,pcs:0,val:0}); a.items++; a.pcs+=qty; a.val+=val;}
+    if(qty<=0)out++; else if(qty<=S().lowStockLevel)low++;
     return {p,qty,avg,val,bought:totalBought(p.id),sold:totalSold(p.id),last:lastBuyDate(p.id)};})
     .filter(x=>x.p.name.toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q));
   const cc=$('#invCards'); if(cc)cc.innerHTML=`
     <div class="stat"><span class="ic">📦</span><div class="label">Inventory Value</div><div class="val">${money(totVal)}</div><div class="foot">${num(totUnits)} units</div></div>
+    <div class="stat"><span class="ic">🔢</span><div class="label">Total Pieces</div><div class="val">${num(totUnits)}</div><div class="foot">all in-stock items</div></div>
     <div class="stat gold"><span class="ic">🏷️</span><div class="label">Products</div><div class="val">${DB.products.length}</div></div>
     <div class="stat red"><span class="ic">⚠️</span><div class="label">Low Stock</div><div class="val">${low}</div><div class="foot">≤ ${S().lowStockLevel} units</div></div>
     <div class="stat"><span class="ic">🚫</span><div class="label">Out of Stock</div><div class="val">${out}</div></div>`;
+  const ct=$('#invCatTotals'); if(ct)ct.innerHTML=_invShowCat?invCatTotalsHtml(catAgg,totUnits,totVal):'';
   const host=$('#invList'); if(!host)return;
   if(!DB.products.length){host.innerHTML=`<div class="panel">${emptyBox('📦','No inventory','Add products & purchases to see stock.')}</div>`;return;}
   if(!data.length){host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match your search.')}</div>`;return;}
