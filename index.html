@@ -2281,7 +2281,7 @@ function lenderAlertBanner(){
 }
 
 let _lenderSel='', _lenderEditId='', _lenderCardsEdit=[];
-let _lenderTxLender='', _lenderRepaySplits=[], _lenderRechargeSplits=[];   // card-swipe splits for repay / recharge
+let _lenderTxLender='', _lenderRepaySplits=[], _lenderRechargeSplits=[], _lenderRepayComm='';   // card splits for repay (our cards) / recharge (vendor cards); repay commission on the total
 views.lenders=function(){
   return `
   <div class="page-head"><div><h2>🤝 Card Lenders</h2><p>People who lend you their credit cards. Each swipe adds the net you owe (after your commission); cash advances add, repayments reduce — with a live running balance.</p></div>
@@ -2307,7 +2307,7 @@ function renderLenders(){
     const details = t.type==='swipe'
       ? `${esc(t.cardLabel||'card')} · swiped ${money(t.gross)} @ ${t.commission||0}% → keep ${money((+t.gross||0)-(+t.amount||0))}${t.note?' · '+esc(t.note):''}`
       : ((t.type==='repay'||t.type==='recharge')&&t.method==='card'
-        ? `${t.type==='recharge'?'Recharge':'Repayment'} · ${esc(t.cardLabel||t.cardName||'card')} · charged ${money(t.gross||t.amount)}${t.deductPct?` (${t.deductPct}% fee)`:''} → credited ${money(t.amount)}${t.note?' · '+esc(t.note):''}`
+        ? `${t.type==='recharge'?'Recharge':'Repayment'} · ${esc(t.cardLabel||t.cardName||'card')} · charged ${money(t.gross||t.amount)}${t.deductPct?` (${t.deductPct}% comm)`:''} → credited ${money(t.amount)}${t.note?' · '+esc(t.note):''}`
         : (t.type==='repay'&&t.method==='cash'
           ? `Cash returned${t.note?' · '+esc(t.note):''}`
           : (esc(t.note||meta.lab)+(t.method?' · '+(t.method||'').toUpperCase():''))));
@@ -2342,6 +2342,14 @@ function renderLenders(){
           <button class="btn-sm btn-ghost" onclick="lenderModal('${sel.id}')">✎ Edit</button>
         </div>
       </div>
+      <div style="margin:2px 0 14px">
+        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">💳 Cards on this vendor (${(sel.cards||[]).length}) — commission is what we keep</div>
+        ${(sel.cards||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:8px">${(sel.cards||[]).map(c=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)">
+            <span><b>${esc(c.name||c.label||'Card')}</b>${c.last4?` <span style="color:var(--muted2)">••${esc(c.last4)}</span>`:''} <span style="color:var(--muted);font-size:12px">· ${(+c.commission||0)}% for us</span></span>
+            ${isOwner()?`<button class="mini-btn red" title="Remove card" onclick="lenderDelCard('${sel.id}','${c.id}')">✕</button>`:''}
+          </div>`).join('')}</div>`:`<div class="li-hint" style="color:var(--muted2)">No cards yet — use ＋ Card to add one.</div>`}
+      </div>
       ${withRun.length?`<div class="table-wrap"><table style="min-width:780px">
         <thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Owed +</th><th class="num">Paid −</th><th class="num">Balance</th><th></th></tr></thead>
         <tbody>${body}</tbody></table></div>`:`<div style="padding:6px 0">${emptyBox('🧾','No entries yet','Record a swipe, cash advance or repayment for '+esc(sel.name)+'.')}</div>`}
@@ -2365,9 +2373,9 @@ function lenderModal(id){
       <div class="field"><label>Opening Balance (${S().currency})</label><input id="l_open" type="number" step="any" value="0" placeholder="what you already owe now"></div>
       <div class="field"><label>As of date</label><input id="l_opendate" type="date" value="${todayStr()}"></div>
     </div><div class="li-hint" style="margin:-4px 2px 8px">Positive = you owe the lender (the usual case). Leave 0 to start fresh.</div>`:''}
-    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Cards — name & last-4 (required) · swipe commission %</label>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Cards — name & last-4 (required) · commission for us %</label>
     <div class="line-items"><div class="li-head" style="grid-template-columns:2fr 0.9fr 0.8fr 30px"><div class="rqh">Card name</div><div class="rqh">Last 4</div><div>Comm %</div><div></div></div><div id="l_cards"></div></div>
-    <div class="li-hint" style="margin:-2px 2px 8px">Comm % = your swipe commission for each swipe of this card.</div>
+    <div class="li-hint" style="margin:-2px 2px 8px">Comm % = commission for us — deducted when you use this card for a purchase; the remaining amount is added to the vendor's ledger (what you owe).</div>
     <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addLenderCardRow()">＋ Add card</button></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveLender('${id||''}')">Save Lender</button>`);
@@ -2412,12 +2420,12 @@ function lenderTxnModal(lenderId,type,txnId){
   const dv=t?(t.date||todayStr()):todayStr();
   let bodyHtml='';
   if(type==='swipe'){
-    const cards=l.cards||[];
+    const cards=activeCards();
     bodyHtml=`
-      <div class="field"><label>Card *</label><select id="lt_card" class="srch" onchange="lenderSwipeCardPick()">
+      <div class="field"><label>Card * (your card)</label><select id="lt_card" class="srch" onchange="lenderSwipeCalc()">
         <option value="">— select card * —</option>
-        ${cards.map(c=>`<option value="${c.id}" data-c="${c.commission||0}" ${t&&t.cardId===c.id?'selected':''}>${esc(lenderCardLabel(c))} (${c.commission||0}%)</option>`).join('')}
-      </select>${cards.length?'':'<div class="li-hint" style="color:var(--amber)">No cards yet — add one via ＋ Card.</div>'}</div>
+        ${cards.map(c=>`<option value="${c.id}" ${t&&t.cardId===c.id?'selected':''}>${esc(c.name)}${c.owner?' · '+esc(cardOwnerLabel(c)):''}</option>`).join('')}
+      </select>${cards.length?'':'<div class="li-hint" style="color:var(--amber)">No cards yet — add one in Credit Cards.</div>'}</div>
       <div class="grid3">
         <div class="field"><label>Amount swiped (${S().currency}) *</label><input id="lt_gross" type="number" min="0" step="any" value="${t?(+t.gross||''):''}" oninput="lenderSwipeCalc()"></div>
         <div class="field"><label>Commission %</label><input id="lt_comm" type="number" min="0" max="100" step="any" value="${t?(t.commission!=null?t.commission:''):''}" oninput="lenderSwipeCalc()"></div>
@@ -2435,8 +2443,9 @@ function lenderTxnModal(lenderId,type,txnId){
     const bal=+lenderBalance(l).toFixed(2);
     const isCard=!!(t&&t.method==='card');
     _lenderRepaySplits = (t&&t.method==='card')
-      ? [{cardId:t.cardId||'',amount:(t.gross!=null?+t.gross:(+t.amount||'')),feePct:(t.deductPct!=null?t.deductPct:'')}]
-      : [{cardId:'',amount:'',feePct:lenderFeeOf(l)}];
+      ? [{cardId:t.cardId||'',amount:(t.gross!=null?+t.gross:(+t.amount||''))}]
+      : [{cardId:'',amount:''}];
+    _lenderRepayComm = (t&&t.method==='card') ? (t.deductPct!=null?t.deductPct:lenderFeeOf(l)) : lenderFeeOf(l);
     const amtVal = t? (t.method!=='card'?(+t.amount||''):'') : (bal>0?bal:'');
     bodyHtml=`${t?'':`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Current balance owed: <b style="color:var(--amber)">${money(bal)}</b></p>`}
     <div class="grid2">
@@ -2457,9 +2466,9 @@ function lenderTxnModal(lenderId,type,txnId){
   } else if(type==='recharge'){
     _lenderTxLender=lenderId;
     _lenderRechargeSplits = t
-      ? [{cardId:t.cardId||'',amount:(t.gross!=null?+t.gross:(+t.amount||'')),feePct:(t.deductPct!=null?t.deductPct:'')}]
-      : [{cardId:'',amount:'',feePct:lenderFeeOf(l)}];
-    bodyHtml=`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Recharge the lender's card(s). The card fee is deducted, so the lender is credited the net — this reduces what you owe.</p>
+      ? [{cardId:t.cardId||'',amount:(t.gross!=null?+t.gross:(+t.amount||''))}]
+      : [{cardId:'',amount:''}];
+    bodyHtml=`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Recharge the lender's card(s). The full amount you load is credited to the lender — this reduces what you owe. (No fee — the card fee only applies when you repay by credit card.)</p>
     <div class="field" style="max-width:230px"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
     ${lenderSplitsBlock('recharge',!!t)}
     <div class="field"><label>Note</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="optional"></div>`;
@@ -2481,38 +2490,38 @@ function lenderRepayToggle(){ const m=$('#lt_method')?.value, cw=$('#lt_cashwrap
   if(m==='card')renderLenderSplits('repay'); else lenderRepayCalc(); }
 function lenderRepayCalc(){ const box=$('#lt_repaycalc'); if(!box)return; const amt=+($('#lt_amt')?.value||0);
   box.innerHTML=`<div class="totrow grand"><span>Credited to lender</span><span style="color:var(--green)">${money(amt)}</span></div>`; }
-/* ---- shared multi-card swipe editor for repay (by card) & recharge ---- */
+/* ---- shared multi-card editor: repay (your cards, one commission on the total) & recharge (vendor cards, no fee) ---- */
 function lenderSplitsBlock(mode,editing){
-  return `<div class="li-head" style="grid-template-columns:2fr 1fr 0.9fr 30px"><div class="rqh">Card</div><div class="rqh">Amount</div><div>Fee %</div><div></div></div>
+  const repay = mode==='repay';
+  return `<div class="li-head" style="grid-template-columns:2fr 1fr 30px"><div class="rqh">Card</div><div class="rqh">Amount</div><div></div></div>
     <div id="lsp_rows"></div>
-    ${editing?'':`<div class="row-actions" style="margin:6px 0"><button class="mini-btn" onclick="lenderSplitAdd('${mode}')">＋ Add card swipe</button></div>`}
+    ${editing?'':`<div class="row-actions" style="margin:6px 0"><button class="mini-btn" onclick="lenderSplitAdd('${mode}')">＋ Add card</button></div>`}
+    ${repay?`<div class="field" style="max-width:220px;margin:4px 0 2px"><label>Commission %</label><input id="lsp_comm" type="number" min="0" max="100" step="any" value="${_lenderRepayComm!==''&&_lenderRepayComm!=null?_lenderRepayComm:''}" placeholder="e.g. 2.3" oninput="_lenderRepayComm=this.value;lenderSplitCalc('repay')"></div>`:''}
     <div class="totbox" id="lsp_calc"></div>`;
 }
 function lenderSplitsArr(mode){ return mode==='recharge'?_lenderRechargeSplits:_lenderRepaySplits; }
 function renderLenderSplits(mode){
   const host=$('#lsp_rows'); if(!host)return; const l=lenderById(_lenderTxLender); if(!l)return;
-  const arr=lenderSplitsArr(mode); if(!arr.length)arr.push({cardId:'',amount:'',feePct:lenderFeeOf(l)});
-  const cards=l.cards||[];
-  host.innerHTML=arr.map((s,i)=>`<div class="li-row" style="grid-template-columns:2fr 1fr 0.9fr 30px">
-    <select class="rq srch" onchange="lenderSplitPickCard('${mode}',${i},this)"><option value="">— card * —</option>${cards.map(c=>`<option value="${c.id}" data-fee="${lenderFeeOf(l)}" ${c.id===s.cardId?'selected':''}>${esc(lenderCardLabel(c))}</option>`).join('')}</select>
+  const mine = mode==='repay';                                    // repay = your own cards; recharge = the vendor's cards
+  const cards = mine ? activeCards() : (l.cards||[]);
+  const arr=lenderSplitsArr(mode); if(!arr.length)arr.push({cardId:'',amount:''});
+  host.innerHTML=arr.map((s,i)=>`<div class="li-row" style="grid-template-columns:2fr 1fr 30px">
+    <select class="rq srch" onchange="lenderSplitsArr('${mode}')[${i}].cardId=this.value;lenderSplitCalc('${mode}')"><option value="">— card * —</option>${cards.map(c=>`<option value="${c.id}" ${c.id===s.cardId?'selected':''}>${mine?esc(c.name)+(c.owner?' · '+esc(cardOwnerLabel(c)):''):esc(lenderCardLabel(c))}</option>`).join('')}</select>
     <input class="rq" type="number" min="0" step="any" placeholder="Amount" value="${s.amount!==''&&s.amount!=null?s.amount:''}" oninput="lenderSplitsArr('${mode}')[${i}].amount=this.value;lenderSplitCalc('${mode}')">
-    <input type="number" min="0" max="100" step="any" placeholder="Fee %" value="${s.feePct!==''&&s.feePct!=null?s.feePct:''}" oninput="lenderSplitsArr('${mode}')[${i}].feePct=this.value;lenderSplitCalc('${mode}')">
     ${arr.length>1?`<button class="li-x" onclick="lenderSplitDel('${mode}',${i})">✕</button>`:'<span></span>'}
-  </div>`).join('')+(cards.length?'':'<div class="li-hint" style="color:var(--amber)">No cards yet — add one via ＋ Card.</div>');
+  </div>`).join('')+(cards.length?'':`<div class="li-hint" style="color:var(--amber)">${mine?'No cards yet — add one in Credit Cards.':'No cards yet — add one via ＋ Card.'}</div>`);
   lenderSplitCalc(mode);
 }
-function lenderSplitPickCard(mode,i,sel){ const arr=lenderSplitsArr(mode); arr[i].cardId=sel.value;
-  const opt=sel.selectedOptions[0], fee=opt?(+opt.dataset.fee||0):0;
-  if(arr[i].feePct===''||arr[i].feePct==null) arr[i].feePct=fee; renderLenderSplits(mode); }
-function lenderSplitAdd(mode){ const l=lenderById(_lenderTxLender); lenderSplitsArr(mode).push({cardId:'',amount:'',feePct:lenderFeeOf(l)}); renderLenderSplits(mode); flashNewRow('#lsp_rows .li-row'); }
+function lenderSplitAdd(mode){ lenderSplitsArr(mode).push({cardId:'',amount:''}); renderLenderSplits(mode); flashNewRow('#lsp_rows .li-row'); }
 function lenderSplitDel(mode,i){ lenderSplitsArr(mode).splice(i,1); renderLenderSplits(mode); }
+function lenderRepayCommPct(){ return Math.max(0,Math.min(100,+(_lenderRepayComm)||0)); }
 function lenderSplitCalc(mode){ const box=$('#lsp_calc'); if(!box)return; const arr=lenderSplitsArr(mode);
-  let gross=0,net=0; arr.forEach(s=>{ const a=+s.amount||0,f=Math.max(0,Math.min(100,+s.feePct||0)); gross+=a; net+=Math.round(a*(1-f/100)*100)/100; });
-  const fee=Math.round((gross-net)*100)/100;
+  let gross=0; arr.forEach(s=>gross+=(+s.amount||0)); gross=Math.round(gross*100)/100;
+  if(mode!=='repay'){ box.innerHTML=`<div class="totrow grand"><span>Credited to lender</span><span style="color:var(--green)">${money(gross)}</span></div>`; return; }
+  const comm=lenderRepayCommPct(), commAmt=Math.round(gross*comm/100*100)/100, net=Math.round((gross-commAmt)*100)/100;
   box.innerHTML=`<div class="totrow"><span>Total charged to card(s)</span><span>${money(gross)}</span></div>
-    <div class="totrow"><span>Card fee</span><span style="color:var(--red)">− ${money(fee)}</span></div>
+    <div class="totrow"><span>Commission (${comm}%)</span><span style="color:var(--red)">− ${money(commAmt)}</span></div>
     <div class="totrow grand"><span>Credited to lender</span><span style="color:var(--green)">${money(net)}</span></div>`; }
-function lenderSwipeCardPick(){ const sel=$('#lt_card'), opt=sel&&sel.selectedOptions[0], c=opt?(+opt.dataset.c||0):0, ci=$('#lt_comm'); if(ci&&!ci.value)ci.value=c; lenderSwipeCalc(); }
 function lenderSwipeCalc(){ const g=+($('#lt_gross')?.value||0), c=+($('#lt_comm')?.value||0), net=lenderNet_(g,c), comm=Math.round((g-net)*100)/100;
   const box=$('#lt_net'); if(box)box.innerHTML=`
     <div class="totrow"><span>Amount swiped</span><span>${money(g)}</span></div>
@@ -2526,14 +2535,15 @@ function saveLenderTxn(lenderId,type,txnId){
   const date=$('#lt_date')?.value||todayStr(), note=($('#lt_note')?.value||'').trim();
   const lab=(LENDER_TX.find(m=>m.k===type)||{lab:type}).lab;
   const repayByCard = type==='repay' && $('#lt_method') && $('#lt_method').value==='card';
-  // NEW multi-card repay / recharge → one ledger line per card swipe
+  // NEW multi-card repay / recharge → one ledger line per card
   if(!editing && (type==='recharge' || repayByCard)){
     const mode=type==='recharge'?'recharge':'repay';
     const rows=lenderSplitsArr(mode).filter(s=>s.cardId && (+s.amount>0));
-    if(!rows.length)return toast('Add at least one card swipe with an amount',1);
-    rows.forEach(s=>{ const card=lenderCardById(l,s.cardId), fee=Math.max(0,Math.min(100,+s.feePct||0)), gross=+s.amount||0, net=lenderNet_(gross,fee);
-      l.txns.push({id:uid(),date,type,method:'card',cardId:s.cardId,cardLabel:card?lenderCardLabel(card):'',gross,deductPct:fee,amount:net,note}); });
-    logAct('edit','card lender',l.name,lab+' · '+rows.length+' card swipe(s)');
+    if(!rows.length)return toast('Add at least one card with an amount',1);
+    const fee = mode==='repay' ? lenderRepayCommPct() : 0;               // repay: one commission on every line; recharge: none
+    rows.forEach(s=>{ const label=mode==='repay'?(cardById(s.cardId)?cardById(s.cardId).name:''):(lenderCardById(l,s.cardId)?lenderCardLabel(lenderCardById(l,s.cardId)):''), gross=+s.amount||0, net=lenderNet_(gross,fee);
+      l.txns.push({id:uid(),date,type,method:'card',cardId:s.cardId,cardLabel:label,gross,deductPct:fee,amount:net,note}); });
+    logAct('edit','card lender',l.name,lab+' · '+rows.length+' card(s)');
     save();closeModal();renderLenders();renderLenderBadge(); toast(lab+' saved'); return;
   }
   let rec;
@@ -2541,16 +2551,18 @@ function saveLenderTxn(lenderId,type,txnId){
     const cardId=$('#lt_card').value; if(!cardId)return toast('Pick a card',1);
     const gross=+$('#lt_gross').value; if(!(gross>0))return toast('Enter the amount swiped',1);
     const comm=Math.max(0,Math.min(100,+$('#lt_comm').value||0));
-    const card=lenderCardById(l,cardId);
-    rec={type:'swipe',cardId,cardLabel:card?lenderCardLabel(card):'',gross,commission:comm,amount:lenderNet_(gross,comm),note:note||'Manual swipe'};
+    const card=cardById(cardId);
+    rec={type:'swipe',cardId,cardLabel:card?card.name:'',gross,commission:comm,amount:lenderNet_(gross,comm),note:note||'Manual swipe'};
   } else if(type==='advance'){
     const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1); rec={type:'advance',amount:amt,note};
   } else if(type==='repay'||type==='recharge'){        // editing a single card line, or a cash repayment
     if(repayByCard || type==='recharge'){
-      const s=(lenderSplitsArr(type==='recharge'?'recharge':'repay').filter(x=>x.cardId&&(+x.amount>0)))[0];
-      if(!s)return toast('Add a card swipe with an amount',1);
-      const card=lenderCardById(l,s.cardId), fee=Math.max(0,Math.min(100,+s.feePct||0)), gross=+s.amount||0, net=lenderNet_(gross,fee);
-      rec={type,method:'card',amount:net,gross,deductPct:fee,cardId:s.cardId,cardLabel:card?lenderCardLabel(card):'',note};
+      const mode=type==='recharge'?'recharge':'repay';
+      const s=(lenderSplitsArr(mode).filter(x=>x.cardId&&(+x.amount>0)))[0];
+      if(!s)return toast('Add a card with an amount',1);
+      const fee=(mode==='repay'?lenderRepayCommPct():0), gross=+s.amount||0, net=lenderNet_(gross,fee);
+      const label=mode==='repay'?(cardById(s.cardId)?cardById(s.cardId).name:''):(lenderCardById(l,s.cardId)?lenderCardLabel(lenderCardById(l,s.cardId)):'');
+      rec={type,method:'card',amount:net,gross,deductPct:fee,cardId:s.cardId,cardLabel:label,note};
     } else { const amt=+$('#lt_amt').value; if(!(amt>0))return toast('Enter the amount',1); rec={type:'repay',method:'cash',amount:amt,note}; }
   } else {
     const amt=+$('#lt_amt').value; if(!amt)return toast('Enter an amount (+ or −)',1); rec={type:'adjust',amount:amt,note};
@@ -2558,8 +2570,7 @@ function saveLenderTxn(lenderId,type,txnId){
   let tid;
   if(editing){ tid=editing.id; ['gross','deductPct','cardId','cardName','cardLabel','commission','method'].forEach(k=>{ if(!(k in rec))delete editing[k]; }); Object.keys(rec).forEach(k=>editing[k]=rec[k]); editing.date=date; logAct('edit','card lender',l.name,lab+' updated');
   } else { tid=uid(); l.txns.push({id:tid,date,...rec}); logAct('edit','card lender',l.name,lab+' '+money(rec.gross||rec.amount||0)); }
-  if(type==='repay'){ unlinkPurchaseFromCards('lref:'+tid);                    // clear any legacy shop-card charge tied to this repayment
-    if(rec.method==='card'&&rec.cardId){ const c=cardById(rec.cardId); if(c)chargeCard(c,rec.gross,date,'Repayment to lender · '+l.name,'lref:'+tid); } }
+  if(type==='repay') unlinkPurchaseFromCards('lref:'+tid);   // repay-by-card only records against the vendor ledger; it does not charge the card
   save();closeModal();renderLenders();renderLenderBadge();
   toast(lab+(editing?' updated':' saved'));
 }
@@ -2580,8 +2591,8 @@ function lenderAddCard(id){
       <div class="field"><label>Card Name *</label><input id="lac_name" placeholder="e.g. Rajesh FAB, Fahed ADIB"></div>
       <div class="field"><label>Last 4 digits *</label><input id="lac_last4" inputmode="numeric" maxlength="4" placeholder="1234"></div>
     </div>
-    <div class="field"><label>Swipe Commission %</label><input id="lac_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>
-    <div class="li-hint" style="margin-top:6px">Commission = default % when you swipe this card (editable per swipe). The repay / recharge card fee is set on the lender.</div>`,
+    <div class="field"><label>Commission for us %</label><input id="lac_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>
+    <div class="li-hint" style="margin-top:6px">Commission for us = deducted when you use this card for a purchase; the remaining amount is added to the vendor's ledger (what you owe). Editable per use. Separate from the repay commission.</div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveLenderAddCard('${id}')">Save Card</button>`);
   setTimeout(()=>$('#lac_name')?.focus(),30);
@@ -2593,6 +2604,13 @@ function saveLenderAddCard(id){
   const last4=($('#lac_last4').value||'').trim(); if(!/^\d{4}$/.test(last4))return toast('Enter the 4-digit last-4 number',1);
   if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:uid(),name,last4,label:name,commission:+$('#lac_comm').value||0});
   logAct('edit','card lender',l.name,'added card '+name+' ••'+last4); save();closeModal();renderLenders(); toast('Card "'+name+'" added');
+}
+/* remove one card from a vendor (owner only) */
+function lenderDelCard(lenderId,cardId){
+  if(!requireOnline())return; if(!isOwner())return toast('Only admin can remove a card',1);
+  const l=lenderById(lenderId); if(!l)return; const c=lenderCardById(l,cardId); if(!c)return;
+  confirmBox('Remove card?',`Remove <b>${esc(c.name||c.label||'this card')}</b>${c.last4?' ••'+esc(c.last4):''} from ${esc(l.name)}? Past ledger entries keep their saved card name.`,()=>{
+    l.cards=(l.cards||[]).filter(x=>x.id!==cardId); logAct('edit','card lender',l.name,'removed card '+(c.name||c.label||'')); save();renderLenders(); toast('Card removed'); },'Remove');
 }
 /* ---- statement (date range or all) → PDF & Excel, sheet-style ---- */
 function lenderStatementData(l,from,to){
@@ -2751,7 +2769,7 @@ function quickAddLenderCardFromPurchase(i){
       <div class="field"><label>Card Name *</label><input id="qlc_name" placeholder="e.g. Rajesh FAB, Fahed ADIB"></div>
       <div class="field"><label>Last 4 *</label><input id="qlc_last4" inputmode="numeric" maxlength="4" placeholder="1234"></div>
     </div>
-    <div class="field"><label>Commission %</label><input id="qlc_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>`,
+    <div class="field"><label>Commission for us %</label><input id="qlc_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"><div class="li-hint" style="margin-top:6px">Deducted when you use this card for a purchase; the rest is added to the vendor's ledger.</div></div>`,
     `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
      <button class="btn-sm" onclick="quickSaveLenderCard(${i})">Save Card</button>`);
   setTimeout(()=>$('#qlc_name')?.focus(),30);
@@ -3331,7 +3349,7 @@ function renderSales(){
       <td class="num">${payStatus(s.total,s.paid)!=='paid'?`<button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button>`:''}
       <button class="mini-btn" onclick="pdfSale('${s.id}')" title="Save bill as PDF">📄 PDF</button>
       <button class="mini-btn" onclick="shareSale('${s.id}')" title="Share PDF to WhatsApp">📤 Share</button>
-      <button class="mini-btn" onclick="printSale('${s.id}')">🖨️ Bill</button>
+      <button class="mini-btn" onclick="openSalePdf('${s.id}')" title="Open bill as PDF">🧾 Bill</button>
       <button class="mini-btn" onclick="newSale('${s.id}')">Edit</button>
       <button class="mini-btn red" onclick="delSale('${s.id}')">Del</button></td></tr>`}).join('')}
     </tbody></table></div>`;
@@ -3395,7 +3413,7 @@ function newSale(id,prefillPid){
     <div class="totbox" id="s_tot"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm btn-green" onclick="saveSale('${id||''}',false)">Save</button>
-     <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Print Bill</button>`);
+     <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Open Bill</button>`);
   renderSaleRows(); saleMeta();
 }
 let _saleDeduct0='';
@@ -3493,14 +3511,14 @@ function saveSale(id,print){
     const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Updated'}]:[]};
     if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?${creditNote}`,()=>queueApproval('sale','edit',id,inv,data),'Send');
     return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.${creditNote}`,()=>{
-      commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>printSale(id),120); },'Save');
+      commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>openSalePdf(id),120); },'Save');
   }
   // NEW sale
   const commitNew=()=>{
     DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
     DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
     save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
-    if(print)setTimeout(()=>printSale(nid),120);
+    if(print)setTimeout(()=>openSalePdf(nid),120);
   };
   if(bal>0.01) return confirmBox('Credit sale — balance due',`Sold for <b>${money(t.total)}</b> but only <b>${money(paid)}</b> received now.<br>The balance <b style="color:var(--red)">${money(bal)}</b> will be tracked as credit in Payments.<br><br>Save this sale?`,commitNew,'Save Sale');
   commitNew();
@@ -3609,6 +3627,18 @@ async function buildSalePdf(id){
     toast('Could not build the PDF'+(String(e).includes('Tainted')||String(e).includes('SecurityError')?' — a logo/seal image blocks it; use a local upload':''),1);
     return null;
   }finally{ document.body.removeChild(holder); }
+}
+/* ---------- OPEN BILL: view the bill as a PDF (new tab; print from there if needed) ---------- */
+async function openSalePdf(id){
+  toast('Preparing PDF…',0);
+  const r=await buildSalePdf(id); if(!r)return;
+  const url=URL.createObjectURL(r.blob);
+  const w=window.open(url,'_blank');
+  if(!w){ // popup blocked — fall back to a download so the bill is never lost
+    const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+    toast('Popup blocked — bill saved as PDF ('+r.filename+')',0);
+  } else toast('Bill opened as PDF');
+  setTimeout(()=>URL.revokeObjectURL(url),60000);   // keep it alive long enough for the viewer to load
 }
 /* ---------- SHARE BILL: save the bill as a PDF file ---------- */
 async function pdfSale(id){
@@ -5118,7 +5148,7 @@ function saleDetail(id){
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
      <button class="btn-sm" onclick="pdfSale('${s.id}')">📄 PDF</button>
      <button class="btn-sm" onclick="shareSale('${s.id}')">📤 Share</button>
-     <button class="btn-sm" onclick="printSale('${s.id}')">🖨️ Bill</button>
+     <button class="btn-sm" onclick="openSalePdf('${s.id}')">🧾 Bill</button>
      ${bal>0.01&&canView('payments')?`<button class="btn-sm btn-green" onclick="closeModal();recordPay('sale','${s.id}')">Collect</button>`:''}
      ${canView('sales')?`<button class="btn-sm btn-gold" onclick="closeModal();newSale('${s.id}')">Edit</button>`:''}`);
 }
