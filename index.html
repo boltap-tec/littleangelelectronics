@@ -1316,7 +1316,8 @@ function migrate(){
   if(!DB.counters.online)DB.counters.online=0;
   if(!Array.isArray(DB.lenders))DB.lenders=[];
   (DB.lenders||[]).forEach(l=>{ if(!Array.isArray(l.cards))l.cards=[]; if(!Array.isArray(l.txns))l.txns=[]; if(l.status===undefined)l.status='active';
-    l.cards.forEach(c=>{ if(c.name===undefined)c.name=c.label||''; if(c.last4===undefined)c.last4=''; if(c.feePct===undefined)c.feePct=(DB.settings&&+DB.settings.lenderCardFeePct)||2.3; }); });
+    if(l.feePct===undefined){ const fc=(l.cards||[]).find(c=>c.feePct!=null&&c.feePct!==''); l.feePct=fc?(+fc.feePct||0):((DB.settings&&+DB.settings.lenderCardFeePct)||2.3); }   // fee moved from per-card to lender level
+    l.cards.forEach(c=>{ if(c.name===undefined)c.name=c.label||''; if(c.last4===undefined)c.last4=''; }); });
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
   (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
   // let existing workers who already have Purchases also see & use Gift Cards
@@ -2004,9 +2005,9 @@ function renderPurchaseModal(){
     <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addBuyRow()">＋ Add product</button><button class="mini-btn" onclick="buyNewProdToggle()">✨ New product</button></div>
     <div id="b_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
       <div class="grid3">
-        <div class="field"><label>Name *</label><input id="np_name" placeholder="Product name"></div>
-        <div class="field"><label>Category</label><input id="np_cat" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
-        <div class="field"><label>Colour</label><input id="np_color" placeholder="optional"></div>
+        <div class="field"><label>Name *</label><input id="np_name" autocomplete="off" placeholder="Product name"></div>
+        <div class="field"><label>Category</label><input id="np_cat" autocomplete="off" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
+        <div class="field"><label>Colour</label><input id="np_color" autocomplete="off" placeholder="optional"></div>
       </div>
       <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn gold" onclick="buyAddNewProduct()">Add to list</button><button class="mini-btn" onclick="buyNewProdToggle()">Close</button></div>
     </div>
@@ -2037,7 +2038,8 @@ function renderBuyRows(){
   buyCalcTotal();
 }
 function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); flashNewRow('#b_rows .li-row'); }
-function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#np_name')?.focus(),30); }
+function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; const show=w.style.display==='none'; w.style.display=show?'':'none';
+  if(show){ ['#np_name','#np_cat','#np_color'].forEach(s=>{const el=$(s);if(el)el.value='';}); setTimeout(()=>$('#np_name')?.focus(),30); } }
 function buyAddNewProduct(){
   if(!requireOnline())return;
   const name=$('#np_name').value.trim(); if(!name)return toast('Enter a product name',1);
@@ -2237,7 +2239,7 @@ function delPurchase(id){
 const LENDER_TX=[
   {k:'opening', lab:'Opening',             ic:'📌', tag:'bank',   sign:+1},
   {k:'swipe',   lab:'Card Swipe',          ic:'💳', tag:'card',   sign:+1},
-  {k:'advance', lab:'Cash Given by Lender',ic:'💵', tag:'due',    sign:+1},
+  {k:'advance', lab:'Cash Given by Vendor',ic:'💵', tag:'due',    sign:+1},
   {k:'repay',   lab:'Repayment',           ic:'✅', tag:'ok',     sign:-1},
   {k:'recharge',lab:'Card Recharge',       ic:'🔁', tag:'ok',     sign:-1},
   {k:'adjust',  lab:'Adjustment',          ic:'⚖', tag:'adjust', sign:+1}
@@ -2250,9 +2252,10 @@ function lenderTxnDelta(t){ const m=LENDER_TX.find(x=>x.k===t.type); return (m?m
 function lenderBalance(l){ return (l&&l.txns||[]).reduce((a,t)=>a+lenderTxnDelta(t),0); }
 function lenderCommission(l){ return (l&&l.txns||[]).reduce((a,t)=>a+(t.type==='swipe'?((+t.gross||0)-(+t.amount||0)):0),0); }
 function lenderNet_(gross,pct){ return Math.round((+gross||0)*(1-(+pct||0)/100)*100)/100; }
-/* a lender card's display label (name + last-4) and its default card-fee % for repay/recharge */
+/* a lender card's display label (name + last-4) */
 function lenderCardLabel(c){ if(!c)return ''; const nm=(c.name||c.label||'Card'); return c.last4?`${nm} ••${c.last4}`:nm; }
-function lenderCardFeeOf(c){ return (c&&c.feePct!=null&&c.feePct!=='')?(+c.feePct||0):(+S().lenderCardFeePct||0); }
+/* the lender's default card fee % — deducted when we swipe our card to repay / recharge them */
+function lenderFeeOf(l){ return (l&&l.feePct!=null&&l.feePct!=='')?(+l.feePct||0):(+S().lenderCardFeePct||0); }
 /* create a swipe ledger line (used by manual entry AND by borrowed-card purchases) */
 function postLenderSwipe(lenderId,cardId,gross,commissionPct,date,note,srcPurchaseId){
   const l=lenderById(lenderId); if(!l)return; if(!l.txns)l.txns=[];
@@ -2330,7 +2333,7 @@ function renderLenders(){
           <p class="psub" style="margin:3px 0 0">Outstanding <b style="color:${bal>0.005?'var(--amber)':(bal<-0.005?'var(--green)':'var(--text)')}">${money(bal)}</b> · commission earned <b style="color:var(--green)">${money(lenderCommission(sel))}</b>${sel.notes?' · '+esc(sel.notes):''}</p></div>
         <div class="row-actions">
           <button class="btn-sm btn-gold" onclick="lenderTxnModal('${sel.id}','swipe')">💳 Swipe</button>
-          <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','advance')">💵 Cash Given</button>
+          <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','advance')">💵 Cash Given by Vendor</button>
           <button class="btn-sm btn-green" onclick="lenderTxnModal('${sel.id}','repay')">✅ Repayment</button>
           <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','recharge')">🔁 Recharge Card</button>
           <button class="btn-sm btn-ghost" onclick="lenderTxnModal('${sel.id}','adjust')">⚖ Adjust</button>
@@ -2348,20 +2351,23 @@ function renderLenders(){
 function lenderModal(id){
   if(!requireOnline())return;
   const l=id?lenderById(id):null; _lenderEditId=id||'';
-  _lenderCardsEdit = l? (l.cards||[]).map(c=>({id:c.id,name:c.name||c.label||'',last4:c.last4||'',commission:c.commission,feePct:(c.feePct!=null?c.feePct:'')})) : [];
+  _lenderCardsEdit = l? (l.cards||[]).map(c=>({id:c.id,name:c.name||c.label||'',last4:c.last4||'',commission:c.commission})) : [];
   openModal(`${id?'Edit':'New'} Lender`,`
     <div class="grid2">
       <div class="field"><label>Lender Name *</label><input id="l_name" list="dl_lender" value="${esc(l?l.name:'')}" placeholder="e.g. Rajesh">${dataList('dl_lender',allLenderNames())}</div>
       <div class="field"><label>Phone</label><input id="l_phone" inputmode="tel" value="${esc(l?l.phone||'':'')}" placeholder="optional"></div>
     </div>
-    <div class="field"><label>Notes</label><input id="l_notes" value="${esc(l?l.notes||'':'')}" placeholder="optional"></div>
+    <div class="grid2">
+      <div class="field"><label>Notes</label><input id="l_notes" value="${esc(l?l.notes||'':'')}" placeholder="optional"></div>
+      <div class="field"><label>Card Fee % (repay / recharge)</label><input id="l_fee" type="number" min="0" max="100" step="any" value="${l&&l.feePct!=null&&l.feePct!==''?l.feePct:(+S().lenderCardFeePct||0)}" placeholder="e.g. 2.3"><div class="li-hint" style="margin-top:4px">Deducted from the lender's credit when you swipe your card to repay or recharge them. Editable per payment.</div></div>
+    </div>
     ${!id?`<div class="grid2">
       <div class="field"><label>Opening Balance (${S().currency})</label><input id="l_open" type="number" step="any" value="0" placeholder="what you already owe now"></div>
       <div class="field"><label>As of date</label><input id="l_opendate" type="date" value="${todayStr()}"></div>
     </div><div class="li-hint" style="margin:-4px 2px 8px">Positive = you owe the lender (the usual case). Leave 0 to start fresh.</div>`:''}
-    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Cards — name & last-4 (required) · swipe commission % · card fee %</label>
-    <div class="line-items"><div class="li-head" style="grid-template-columns:2fr 0.9fr 0.8fr 0.8fr 30px"><div class="rqh">Card name</div><div class="rqh">Last 4</div><div>Comm %</div><div>Fee %</div><div></div></div><div id="l_cards"></div></div>
-    <div class="li-hint" style="margin:-2px 2px 8px">Comm % = your swipe commission · Fee % = card fee deducted when repaying / recharging this card.</div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Cards — name & last-4 (required) · swipe commission %</label>
+    <div class="line-items"><div class="li-head" style="grid-template-columns:2fr 0.9fr 0.8fr 30px"><div class="rqh">Card name</div><div class="rqh">Last 4</div><div>Comm %</div><div></div></div><div id="l_cards"></div></div>
+    <div class="li-hint" style="margin:-2px 2px 8px">Comm % = your swipe commission for each swipe of this card.</div>
     <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addLenderCardRow()">＋ Add card</button></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveLender('${id||''}')">Save Lender</button>`);
@@ -2370,25 +2376,25 @@ function lenderModal(id){
 }
 function renderLenderCardRows(){
   const host=$('#l_cards'); if(!host)return;
-  if(!_lenderCardsEdit.length) _lenderCardsEdit=[{id:uid(),name:'',last4:'',commission:'',feePct:''}];
-  host.innerHTML=_lenderCardsEdit.map((c,i)=>`<div class="li-row" style="grid-template-columns:2fr 0.9fr 0.8fr 0.8fr 30px">
+  if(!_lenderCardsEdit.length) _lenderCardsEdit=[{id:uid(),name:'',last4:'',commission:''}];
+  host.innerHTML=_lenderCardsEdit.map((c,i)=>`<div class="li-row" style="grid-template-columns:2fr 0.9fr 0.8fr 30px">
     <input class="rq" value="${esc(c.name||'')}" placeholder="e.g. Rajesh FAB" oninput="_lenderCardsEdit[${i}].name=this.value">
     <input class="rq" inputmode="numeric" maxlength="4" value="${esc(c.last4||'')}" placeholder="1234" oninput="_lenderCardsEdit[${i}].last4=this.value.replace(/[^0-9]/g,'').slice(0,4);this.value=_lenderCardsEdit[${i}].last4">
     <input type="number" min="0" max="100" step="any" value="${c.commission!=null&&c.commission!==''?c.commission:''}" placeholder="%" oninput="_lenderCardsEdit[${i}].commission=this.value">
-    <input type="number" min="0" max="100" step="any" value="${c.feePct!=null&&c.feePct!==''?c.feePct:''}" placeholder="%" oninput="_lenderCardsEdit[${i}].feePct=this.value">
     <button class="li-x" onclick="_lenderCardsEdit.splice(${i},1);renderLenderCardRows()">✕</button>
   </div>`).join('');
 }
-function addLenderCardRow(){ _lenderCardsEdit.push({id:uid(),name:'',last4:'',commission:'',feePct:''}); renderLenderCardRows(); flashNewRow('#l_cards .li-row'); }
+function addLenderCardRow(){ _lenderCardsEdit.push({id:uid(),name:'',last4:'',commission:''}); renderLenderCardRows(); flashNewRow('#l_cards .li-row'); }
 function saveLender(id){
   if(!requireOnline())return;
   const name=$('#l_name').value.trim(); if(!name)return toast('Lender name is required',1);
   const dirty=_lenderCardsEdit.filter(c=>(c.name||'').trim()||(c.last4||'').trim());
   for(const c of dirty){ if(!(c.name||'').trim())return toast('Each card needs a name',1); if(!/^\d{4}$/.test((c.last4||'').trim()))return toast('Each card needs a 4-digit last-4 number',1); }
-  const cards=dirty.map(c=>({id:c.id||uid(),name:c.name.trim(),last4:c.last4.trim(),label:c.name.trim(),commission:+c.commission||0,feePct:c.feePct!==''&&c.feePct!=null?(+c.feePct||0):(+S().lenderCardFeePct||0)}));
-  if(id){ const l=lenderById(id); if(!l)return; l.name=name; l.phone=$('#l_phone').value.trim(); l.notes=$('#l_notes').value.trim(); l.cards=cards;
+  const cards=dirty.map(c=>({id:c.id||uid(),name:c.name.trim(),last4:c.last4.trim(),label:c.name.trim(),commission:+c.commission||0}));
+  const feeEl=$('#l_fee'); const fee=(feeEl&&feeEl.value!=='')?Math.max(0,Math.min(100,+feeEl.value||0)):(+S().lenderCardFeePct||0);
+  if(id){ const l=lenderById(id); if(!l)return; l.name=name; l.phone=$('#l_phone').value.trim(); l.notes=$('#l_notes').value.trim(); l.feePct=fee; l.cards=cards;
     logAct('edit','card lender',name,`${cards.length} card(s)`); save();closeModal();renderLenders();renderLenderBadge(); toast('Lender updated'); return; }
-  const l={id:uid(),name,phone:$('#l_phone').value.trim(),notes:$('#l_notes').value.trim(),status:'active',cards,txns:[]};
+  const l={id:uid(),name,phone:$('#l_phone').value.trim(),notes:$('#l_notes').value.trim(),feePct:fee,status:'active',cards,txns:[]};
   const open=+($('#l_open')?.value)||0; if(open!==0) l.txns.push({id:uid(),date:$('#l_opendate').value||todayStr(),type:'opening',amount:open,note:'Opening balance'});
   DB.lenders.push(l); _lenderSel=l.id; save();closeModal();renderLenders();renderLenderBadge();
   logAct('create','card lender',name,`opening ${money(open)} · ${cards.length} card(s)`);
@@ -2423,14 +2429,14 @@ function lenderTxnModal(lenderId,type,txnId){
     bodyHtml=`<div class="grid2">
       <div class="field"><label>Cash advance (${S().currency}) *</label><input id="lt_amt" type="number" min="0" step="any" value="${t?(+t.amount||''):''}"></div>
       <div class="field"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
-    </div><div class="field"><label>Note</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="cash the lender gave you"></div>`;
+    </div><div class="field"><label>Note</label><input id="lt_note" value="${t?esc(t.note||''):''}" placeholder="cash the vendor gave you"></div>`;
   } else if(type==='repay'){
     _lenderTxLender=lenderId;
     const bal=+lenderBalance(l).toFixed(2);
     const isCard=!!(t&&t.method==='card');
     _lenderRepaySplits = (t&&t.method==='card')
       ? [{cardId:t.cardId||'',amount:(t.gross!=null?+t.gross:(+t.amount||'')),feePct:(t.deductPct!=null?t.deductPct:'')}]
-      : [{cardId:'',amount:'',feePct:''}];
+      : [{cardId:'',amount:'',feePct:lenderFeeOf(l)}];
     const amtVal = t? (t.method!=='card'?(+t.amount||''):'') : (bal>0?bal:'');
     bodyHtml=`${t?'':`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Current balance owed: <b style="color:var(--amber)">${money(bal)}</b></p>`}
     <div class="grid2">
@@ -2452,7 +2458,7 @@ function lenderTxnModal(lenderId,type,txnId){
     _lenderTxLender=lenderId;
     _lenderRechargeSplits = t
       ? [{cardId:t.cardId||'',amount:(t.gross!=null?+t.gross:(+t.amount||'')),feePct:(t.deductPct!=null?t.deductPct:'')}]
-      : [{cardId:'',amount:'',feePct:''}];
+      : [{cardId:'',amount:'',feePct:lenderFeeOf(l)}];
     bodyHtml=`<p style="margin:0 0 12px;color:var(--muted);font-size:13px">Recharge the lender's card(s). The card fee is deducted, so the lender is credited the net — this reduces what you owe.</p>
     <div class="field" style="max-width:230px"><label>Date</label><input id="lt_date" type="date" value="${dv}"></div>
     ${lenderSplitsBlock('recharge',!!t)}
@@ -2485,10 +2491,10 @@ function lenderSplitsBlock(mode,editing){
 function lenderSplitsArr(mode){ return mode==='recharge'?_lenderRechargeSplits:_lenderRepaySplits; }
 function renderLenderSplits(mode){
   const host=$('#lsp_rows'); if(!host)return; const l=lenderById(_lenderTxLender); if(!l)return;
-  const arr=lenderSplitsArr(mode); if(!arr.length)arr.push({cardId:'',amount:'',feePct:''});
+  const arr=lenderSplitsArr(mode); if(!arr.length)arr.push({cardId:'',amount:'',feePct:lenderFeeOf(l)});
   const cards=l.cards||[];
   host.innerHTML=arr.map((s,i)=>`<div class="li-row" style="grid-template-columns:2fr 1fr 0.9fr 30px">
-    <select class="rq srch" onchange="lenderSplitPickCard('${mode}',${i},this)"><option value="">— card * —</option>${cards.map(c=>`<option value="${c.id}" data-fee="${lenderCardFeeOf(c)}" ${c.id===s.cardId?'selected':''}>${esc(lenderCardLabel(c))}</option>`).join('')}</select>
+    <select class="rq srch" onchange="lenderSplitPickCard('${mode}',${i},this)"><option value="">— card * —</option>${cards.map(c=>`<option value="${c.id}" data-fee="${lenderFeeOf(l)}" ${c.id===s.cardId?'selected':''}>${esc(lenderCardLabel(c))}</option>`).join('')}</select>
     <input class="rq" type="number" min="0" step="any" placeholder="Amount" value="${s.amount!==''&&s.amount!=null?s.amount:''}" oninput="lenderSplitsArr('${mode}')[${i}].amount=this.value;lenderSplitCalc('${mode}')">
     <input type="number" min="0" max="100" step="any" placeholder="Fee %" value="${s.feePct!==''&&s.feePct!=null?s.feePct:''}" oninput="lenderSplitsArr('${mode}')[${i}].feePct=this.value;lenderSplitCalc('${mode}')">
     ${arr.length>1?`<button class="li-x" onclick="lenderSplitDel('${mode}',${i})">✕</button>`:'<span></span>'}
@@ -2498,7 +2504,7 @@ function renderLenderSplits(mode){
 function lenderSplitPickCard(mode,i,sel){ const arr=lenderSplitsArr(mode); arr[i].cardId=sel.value;
   const opt=sel.selectedOptions[0], fee=opt?(+opt.dataset.fee||0):0;
   if(arr[i].feePct===''||arr[i].feePct==null) arr[i].feePct=fee; renderLenderSplits(mode); }
-function lenderSplitAdd(mode){ lenderSplitsArr(mode).push({cardId:'',amount:'',feePct:''}); renderLenderSplits(mode); flashNewRow('#lsp_rows .li-row'); }
+function lenderSplitAdd(mode){ const l=lenderById(_lenderTxLender); lenderSplitsArr(mode).push({cardId:'',amount:'',feePct:lenderFeeOf(l)}); renderLenderSplits(mode); flashNewRow('#lsp_rows .li-row'); }
 function lenderSplitDel(mode,i){ lenderSplitsArr(mode).splice(i,1); renderLenderSplits(mode); }
 function lenderSplitCalc(mode){ const box=$('#lsp_calc'); if(!box)return; const arr=lenderSplitsArr(mode);
   let gross=0,net=0; arr.forEach(s=>{ const a=+s.amount||0,f=Math.max(0,Math.min(100,+s.feePct||0)); gross+=a; net+=Math.round(a*(1-f/100)*100)/100; });
@@ -2574,11 +2580,8 @@ function lenderAddCard(id){
       <div class="field"><label>Card Name *</label><input id="lac_name" placeholder="e.g. Rajesh FAB, Fahed ADIB"></div>
       <div class="field"><label>Last 4 digits *</label><input id="lac_last4" inputmode="numeric" maxlength="4" placeholder="1234"></div>
     </div>
-    <div class="grid2">
-      <div class="field"><label>Swipe Commission %</label><input id="lac_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>
-      <div class="field"><label>Card Fee % (repay/recharge)</label><input id="lac_fee" type="number" min="0" max="100" step="any" placeholder="e.g. 2.3"></div>
-    </div>
-    <div class="li-hint" style="margin-top:6px">Commission = default % when you swipe this card · Fee = deducted from the lender's credit when you repay or recharge this card. Both editable per entry.</div>`,
+    <div class="field"><label>Swipe Commission %</label><input id="lac_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>
+    <div class="li-hint" style="margin-top:6px">Commission = default % when you swipe this card (editable per swipe). The repay / recharge card fee is set on the lender.</div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveLenderAddCard('${id}')">Save Card</button>`);
   setTimeout(()=>$('#lac_name')?.focus(),30);
@@ -2588,8 +2591,7 @@ function saveLenderAddCard(id){
   const l=lenderById(id); if(!l)return;
   const name=$('#lac_name').value.trim(); if(!name)return toast('Card name is required',1);
   const last4=($('#lac_last4').value||'').trim(); if(!/^\d{4}$/.test(last4))return toast('Enter the 4-digit last-4 number',1);
-  const fee=$('#lac_fee').value!==''?(+$('#lac_fee').value||0):(+S().lenderCardFeePct||0);
-  if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:uid(),name,last4,label:name,commission:+$('#lac_comm').value||0,feePct:fee});
+  if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:uid(),name,last4,label:name,commission:+$('#lac_comm').value||0});
   logAct('edit','card lender',l.name,'added card '+name+' ••'+last4); save();closeModal();renderLenders(); toast('Card "'+name+'" added');
 }
 /* ---- statement (date range or all) → PDF & Excel, sheet-style ---- */
@@ -2736,7 +2738,7 @@ function quickSaveLenderFromPurchase(i){
   const cl=$('#ql_card').value.trim(); if(!cl)return toast('Enter the first card name',1);
   const last4=($('#ql_last4').value||'').trim(); if(!/^\d{4}$/.test(last4))return toast('Enter the card last-4 digits',1);
   const comm=+$('#ql_comm').value||0, cid=uid();
-  const l={id:uid(),name,phone:$('#ql_phone').value.trim(),notes:'',status:'active',cards:[{id:cid,name:cl,last4,label:cl,commission:comm,feePct:+S().lenderCardFeePct||0}],txns:[]};
+  const l={id:uid(),name,phone:$('#ql_phone').value.trim(),notes:'',feePct:+S().lenderCardFeePct||0,status:'active',cards:[{id:cid,name:cl,last4,label:cl,commission:comm}],txns:[]};
   DB.lenders.push(l); save(); renderLenderBadge();
   buySplits[i].lenderId=l.id; buySplits[i].lenderCardId=cid; buySplits[i].commission=comm;
   logAct('create','card lender',name,'added during purchase');
@@ -2749,10 +2751,7 @@ function quickAddLenderCardFromPurchase(i){
       <div class="field"><label>Card Name *</label><input id="qlc_name" placeholder="e.g. Rajesh FAB, Fahed ADIB"></div>
       <div class="field"><label>Last 4 *</label><input id="qlc_last4" inputmode="numeric" maxlength="4" placeholder="1234"></div>
     </div>
-    <div class="grid2">
-      <div class="field"><label>Commission %</label><input id="qlc_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>
-      <div class="field"><label>Card Fee %</label><input id="qlc_fee" type="number" min="0" max="100" step="any" placeholder="e.g. 2.3"></div>
-    </div>`,
+    <div class="field"><label>Commission %</label><input id="qlc_comm" type="number" min="0" max="100" step="any" placeholder="e.g. 3.5"></div>`,
     `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
      <button class="btn-sm" onclick="quickSaveLenderCard(${i})">Save Card</button>`);
   setTimeout(()=>$('#qlc_name')?.focus(),30);
@@ -2762,10 +2761,10 @@ function quickSaveLenderCard(i){
   const l=lenderById(buySplits[i].lenderId); if(!l)return;
   const name=$('#qlc_name').value.trim(); if(!name)return toast('Card name is required',1);
   const last4=($('#qlc_last4').value||'').trim(); if(!/^\d{4}$/.test(last4))return toast('Enter the card last-4 digits',1);
-  const comm=+$('#qlc_comm').value||0, fee=$('#qlc_fee').value!==''?(+$('#qlc_fee').value||0):(+S().lenderCardFeePct||0), cid=uid();
-  if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:cid,name,last4,label:name,commission:comm,feePct:fee}); save();
+  const comm=+$('#qlc_comm').value||0, cid=uid();
+  if(!Array.isArray(l.cards))l.cards=[]; l.cards.push({id:cid,name,last4,label:name,commission:comm}); save();
   buySplits[i].lenderCardId=cid; buySplits[i].commission=comm;
-  toast('Card "'+label+'" added'); renderPurchaseModal();
+  toast('Card "'+name+'" added'); renderPurchaseModal();
 }
 
 /* =========================================================
@@ -2915,9 +2914,9 @@ function renderOnlineModal(o){
     <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addOnlRow()">＋ Add product</button><button class="mini-btn" onclick="onlNewProdToggle()">✨ New product</button></div>
     <div id="o_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
       <div class="grid3">
-        <div class="field"><label>Name *</label><input id="onp_name" placeholder="Product name"></div>
-        <div class="field"><label>Category</label><input id="onp_cat" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
-        <div class="field"><label>Colour</label><input id="onp_color" placeholder="optional"></div>
+        <div class="field"><label>Name *</label><input id="onp_name" autocomplete="off" placeholder="Product name"></div>
+        <div class="field"><label>Category</label><input id="onp_cat" autocomplete="off" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
+        <div class="field"><label>Colour</label><input id="onp_color" autocomplete="off" placeholder="optional"></div>
       </div>
       <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn gold" onclick="onlAddNewProduct()">Add to list</button><button class="mini-btn" onclick="onlNewProdToggle()">Close</button></div>
     </div>
@@ -2954,7 +2953,8 @@ function renderOnlRows(){
   onlCalcTotal();
 }
 function addOnlRow(){ onlItems.push({productId:'',qty:1,rate:''}); renderOnlRows(); flashNewRow('#o_rows .li-row'); }
-function onlNewProdToggle(){ const w=$('#o_newprod'); if(!w)return; w.style.display=w.style.display==='none'?'':'none'; if(w.style.display!=='none')setTimeout(()=>$('#onp_name')?.focus(),30); }
+function onlNewProdToggle(){ const w=$('#o_newprod'); if(!w)return; const show=w.style.display==='none'; w.style.display=show?'':'none';
+  if(show){ ['#onp_name','#onp_cat','#onp_color'].forEach(s=>{const el=$(s);if(el)el.value='';}); setTimeout(()=>$('#onp_name')?.focus(),30); } }
 function onlAddNewProduct(){
   if(!requireOnline())return;
   const name=$('#onp_name').value.trim(); if(!name)return toast('Enter a product name',1);
@@ -3375,8 +3375,9 @@ function newSale(id,prefillPid){
       <div id="s_rows"></div>
     </div>
     <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button>
-    <div class="grid2" style="margin-top:14px">
-      <div class="field"><label>VAT Mode</label><select id="s_vatmode" onchange="_salePaidTouched=false;saleCalc()">
+    <div class="field" style="margin-top:14px"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received — put 0 if paid later" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Mandatory. Put <b>0</b> (or a part amount) if the customer pays later — the balance is tracked as credit in Payments.</div></div>
+    <div class="grid2">
+      <div class="field"><label>VAT Mode</label><select id="s_vatmode" onchange="saleCalc()">
         <option value="none" ${vmode==='none'?'selected':''}>Without VAT</option>
         <option value="exclusive" ${vmode==='exclusive'?'selected':''}>With VAT — added to price (excl.)</option>
         <option value="inclusive" ${vmode==='inclusive'?'selected':''}>With VAT — included in price (incl.)</option></select></div>
@@ -3387,10 +3388,7 @@ function newSale(id,prefillPid){
         <option value="cheque" ${pay==='cheque'?'selected':''}>Cheque</option></select></div>
     </div>
     <div id="s_paymeta"></div>
-    <div class="grid2">
-      <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="_salePaidTouched=false;saleCalc()"></div>
-      <div class="field"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Enter less than total for a credit sale — the balance is tracked in Payments.</div></div>
-    </div>
+    <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="saleCalc()"></div>
     <div class="field"><label>Cash collected by (wallet credited when paid in cash)</label>
       ${isOwner()?`<select id="s_collby">${DB.users.map(u=>`<option value="${u.id}" ${u.id===collBy?'selected':''}>${esc(u.name)}${u.id===session.id?' (you)':''}</option>`).join('')}</select>`:`<input value="${esc(session.name)} (you)" disabled><input type="hidden" id="s_collby" value="${session.id}">`}
     </div>
@@ -3409,7 +3407,8 @@ function saleMeta(){
   saleCalc();
 }
 function saleProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
-  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join(''); }
+  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const av=saleAvail(x.id,eng),bp=avgBuyPrice(x.id,eng); if(av<=1e-9 && x.id!==sel)return '';   // hide out-of-stock products (keep the one already on this line)
+    return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — avail ${num(av)} · buy ${money(bp)}</option>`;}).join(''); }
 /* stock available for THIS line = product stock − qty already used by OTHER lines of the same product */
 function saleLineAvail(i,eng){ const it=saleDraft[i]; if(!it||!it.productId)return 0; eng=eng||computeEngine();
   const used=saleDraft.reduce((a,x,j)=> a + (j!==i && x.productId===it.productId ? (+x.qty||0):0), 0);
@@ -3478,7 +3477,7 @@ function saveSale(id,print){
   const t=$('#s_tot')._t, method=$('#s_pay').value;
   const deductPct=method==='cash'?(+($('#s_deduct')?.value)||0):0;
   const paidRaw=$('#s_paid').value;
-  if(paidRaw==='')return toast('Enter the amount received (0 for a full-credit sale)',1);
+  if(paidRaw==='')return toast('Enter the amount received now — put 0 if the customer pays later',1);
   let paid=Math.max(0,+paidRaw);
   if(paid>t.total+0.01) return toast(`Amount received ${money(paid)} exceeds the bill total ${money(t.total)} — overpayment isn't allowed. Reduce the amount.`,1);
   const payMeta={}; if(deductPct>0)payMeta.deductPct=deductPct;
@@ -3487,18 +3486,24 @@ function saveSale(id,print){
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
     payment:method,discount:+($('#s_disc').value||0),vatMode:t.mode,
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
+  const bal=Math.round((t.total-paid)*100)/100;
+  const creditNote = bal>0.01 ? `<br><br>⚠ Sold for <b>${money(t.total)}</b> but only <b>${money(paid)}</b> received now — balance <b style="color:var(--red)">${money(bal)}</b> will be tracked as credit in Payments.` : '';
   if(id){ // EDIT — confirm; workers route to admin approval
     const rec=DB.sales.find(x=>x.id===id); const inv=rec?rec.invoiceNo:'';
     const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Updated'}]:[]};
-    if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('sale','edit',id,inv,data),'Send');
-    return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.`,()=>{
+    if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?${creditNote}`,()=>queueApproval('sale','edit',id,inv,data),'Send');
+    return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.${creditNote}`,()=>{
       commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>printSale(id),120); },'Save');
   }
   // NEW sale
-  DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
-  DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
-  save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
-  if(print)setTimeout(()=>printSale(nid),120);
+  const commitNew=()=>{
+    DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
+    DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
+    save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
+    if(print)setTimeout(()=>printSale(nid),120);
+  };
+  if(bal>0.01) return confirmBox('Credit sale — balance due',`Sold for <b>${money(t.total)}</b> but only <b>${money(paid)}</b> received now.<br>The balance <b style="color:var(--red)">${money(bal)}</b> will be tracked as credit in Payments.<br><br>Save this sale?`,commitNew,'Save Sale');
+  commitNew();
 }
 function delSale(id){
   if(!requireOnline())return;
@@ -4672,7 +4677,7 @@ function purchaseGiftModal(preId){
     <div class="li-hint" id="g_availhint" style="margin-top:5px"></div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination (same as a purchase)</label>
     <div class="line-items" style="padding:8px"><div id="gb_splits"></div></div>
-    <button class="mini-btn" onclick="addGiftBuySplit()">＋ Add payment</button>
+    <div class="row-actions" style="margin-bottom:4px"><button class="mini-btn" onclick="addGiftBuySplit()">＋ Add payment</button><button class="mini-btn gold" onclick="giftBuyFillRemaining()">Fill balance</button></div>
     <div class="totbox" id="gb_tot" style="margin-top:12px"></div>
     <div class="field" style="margin-top:12px"><label>Note (optional)</label><input id="g_note" placeholder="e.g. bought from / receipt no."></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
@@ -4708,7 +4713,7 @@ function renderGiftBuySplits(){
       const req=info.ref==='mandatory';
       mid=`<input type="text" ${info.refKind==='tel'?'inputmode="tel"':''} value="${esc(s.ref||'')}" placeholder="${esc(info.refLabel)}${req?' *':''}" oninput="giftBuySplits[${i}].ref=this.value">`;
     } else if(s.method==='cash'){
-      mid=`<input type="number" min="0" max="100" step="any" value="${s.deductPct!=null&&s.deductPct!==''?s.deductPct:''}" placeholder="Cash discount %" oninput="giftBuySplits[${i}].deductPct=this.value;giftBuyCalc()">`;
+      mid=`<input class="gb-disc" type="number" min="0" max="100" step="any" value="${s.deductPct!=null&&s.deductPct!==''?s.deductPct:''}" placeholder="Cash discount %" oninput="giftBuyDiscount(${i},this.value)">`;
       if(+s.deductPct>0)hint=`<div class="li-hint">Cash discount ${(+s.deductPct)}% → pay <b style="color:var(--green)">${money((+s.amount||0)*(1-(+s.deductPct||0)/100))}</b> cash</div>`;
     } else {
       mid=`<div style="color:var(--muted2);font-size:12px;align-self:center">Out of wallet</div>`;
@@ -4725,6 +4730,23 @@ function renderGiftBuySplits(){
 function giftBorrowLender(i,val){ giftBuySplits[i].lenderId=val; giftBuySplits[i].lenderCardId=''; giftBuySplits[i].commission=''; renderGiftBuySplits(); }
 function giftBorrowCard(i,val){ giftBuySplits[i].lenderCardId=val; const l=lenderById(giftBuySplits[i].lenderId), c=lenderCardById(l,val); giftBuySplits[i].commission=c?(c.commission||0):''; renderGiftBuySplits(); }
 function addGiftBuySplit(){ giftBuySplits.push({method:'cash',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}); renderGiftBuySplits(); flashNewRow('#gb_splits .split-row'); }
+/* remaining balance not yet covered by any payment row */
+function giftBuyRemaining(){ const amt=+($('#g_amt')?.value||0); return Math.round((amt-giftBuySplits.reduce((a,s)=>a+(+s.amount||0),0))*100)/100; }
+/* fill the last payment row with whatever balance is still uncovered */
+function giftBuyFillRemaining(){ const rem=giftBuyRemaining(); if(rem<=0.001)return;
+  if(giftBuySplits.length)giftBuySplits[giftBuySplits.length-1].amount=Math.round(((+giftBuySplits[giftBuySplits.length-1].amount||0)+rem)*100)/100;
+  else giftBuySplits.push({method:'cash',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:rem});
+  renderGiftBuySplits(); }
+/* typing a cash discount on a row with no amount yet auto-fills the balance it covers (still editable) */
+function giftBuyDiscount(i,val){ const s=giftBuySplits[i]; s.deductPct=val;
+  if(s.amount===''||s.amount==null||+s.amount===0){
+    const amt=+($('#g_amt')?.value||0), others=giftBuySplits.reduce((a,x,j)=>a+(j===i?0:(+x.amount||0)),0), rem=Math.round((amt-others)*100)/100;
+    if(rem>0){ s.amount=rem; renderGiftBuySplits();
+      const row=document.querySelectorAll('#gb_splits .split-row')[i], d=row&&row.querySelector('.gb-disc');
+      if(d){ d.focus(); const v=d.value; d.value=''; d.value=v; }   // re-render moved caret — restore it
+      return; }
+  }
+  giftBuyCalc(); }
 function onGiftQty(){ const qty=Math.max(1,Math.floor(+($('#g_qty')?.value||1))); const single=$('#g_singlenum'), wrap=$('#g_numwrap');
   if(single)single.style.display=qty>1?'none':''; if(wrap)wrap.style.display=qty>1?'':'none'; giftBuyCalc(); }
 function giftBuyCalc(){
