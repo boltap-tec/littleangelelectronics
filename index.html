@@ -1576,7 +1576,7 @@ function uniqSorted(a){ return [...new Set((a||[]).map(x=>(x||'').trim()).filter
 function allSuppliers(){ return uniqSorted(DB.purchases.map(p=>p.supplier)); }
 function allCustomers(){ return uniqSorted(DB.sales.map(s=>s.customer)); }
 function allCategories(){ return uniqSorted(DB.products.map(p=>p.category)); }
-function productsByRecent(){ return [...DB.products].sort((a,b)=>(lastBuyDate(b.id)||'').localeCompare(lastBuyDate(a.id)||'')||a.name.localeCompare(b.name)); }
+function productsByRecent(){ return [...DB.products].sort((a,b)=>lastBuyKey(b.id).localeCompare(lastBuyKey(a.id))||a.name.localeCompare(b.name)); }
 function dataList(id,arr){ return `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`; }
 /* ---- roles & permissions (ALL_VIEWS/WORKER_DEFAULT/VIEW_LABELS declared near top, before load()) ---- */
 function userPerms(u){ if(!u)return[]; if(u.role==='owner')return ALL_VIEWS.slice(); return (u.perms&&u.perms.length)?u.perms.slice():WORKER_DEFAULT.slice(); }
@@ -2004,7 +2004,7 @@ function renderPurchaseModal(){
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
     <div class="line-items"><div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Cost/unit</div><div>Amount</div><div></div></div><div id="b_rows"></div></div>
-    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addBuyRow()">＋ Add product</button><button class="mini-btn" onclick="buyNewProdToggle()">✨ New product</button></div>
+    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addBuyRow()">＋ Add product</button><button class="mini-btn" onclick="buyPickMulti()">☰ Pick multiple</button><button class="mini-btn" onclick="buyNewProdToggle()">✨ New product</button></div>
     <div id="b_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
       <div class="grid3">
         <div class="field"><label>Name *</label><input id="np_name" autocomplete="off" placeholder="Product name"></div>
@@ -2040,6 +2040,19 @@ function renderBuyRows(){
   buyCalcTotal();
 }
 function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); flashNewRow('#b_rows .li-row'); }
+/* tick several products at once → one purchase row each (existing rows untouched) */
+function buyPickMulti(){
+  if(!DB.products.length)return toast('Add a product first — use “New product”.',1);
+  const eng=computeEngine(), have=new Set(buyItems.map(it=>it.productId).filter(Boolean));
+  const items=productsByRecent().map(p=>({value:p.id,label:p.name,
+    sub:`stock ${num(stockOf(p.id,eng))} · buy ${money(avgBuyPrice(p.id,eng))}`+(have.has(p.id)?' · already added':''),
+    disabled:have.has(p.id)}));
+  openMultiPick({title:'Pick multiple products',items,onAdd:vals=>{
+    if(buyItems.length===1 && !buyItems[0].productId) buyItems.splice(0,1);
+    vals.forEach(pid=>{ if(!buyItems.some(it=>it.productId===pid)) buyItems.push({productId:pid,qty:1,rate:''}); });
+    if(!buyItems.length) buyItems.push({productId:'',qty:1,rate:''});
+    renderBuyRows(); flashNewRow('#b_rows .li-row'); }});
+}
 function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; const show=w.style.display==='none'; w.style.display=show?'':'none';
   if(show){ ['#np_name','#np_cat','#np_color'].forEach(s=>{const el=$(s);if(el)el.value='';}); setTimeout(()=>$('#np_name')?.focus(),30); } }
 function buyAddNewProduct(){
@@ -2935,7 +2948,7 @@ function renderOnlineModal(o){
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
     <div class="line-items"><div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Cost/unit</div><div>Amount</div><div></div></div><div id="o_rows"></div></div>
-    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addOnlRow()">＋ Add product</button><button class="mini-btn" onclick="onlNewProdToggle()">✨ New product</button></div>
+    <div class="row-actions" style="margin-bottom:6px"><button class="mini-btn" onclick="addOnlRow()">＋ Add product</button><button class="mini-btn" onclick="onlPickMulti()">☰ Pick multiple</button><button class="mini-btn" onclick="onlNewProdToggle()">✨ New product</button></div>
     <div id="o_newprod" style="display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 12px 4px;margin:8px 0 12px">
       <div class="grid3">
         <div class="field"><label>Name *</label><input id="onp_name" autocomplete="off" placeholder="Product name"></div>
@@ -2977,6 +2990,19 @@ function renderOnlRows(){
   onlCalcTotal();
 }
 function addOnlRow(){ onlItems.push({productId:'',qty:1,rate:''}); renderOnlRows(); flashNewRow('#o_rows .li-row'); }
+/* tick several products at once → one online-order row each (existing rows untouched) */
+function onlPickMulti(){
+  if(!DB.products.length)return toast('Add a product first — use “New product”.',1);
+  const eng=computeEngine(), have=new Set(onlItems.map(it=>it.productId).filter(Boolean));
+  const items=productsByRecent().map(p=>({value:p.id,label:p.name,
+    sub:`stock ${num(stockOf(p.id,eng))} · buy ${money(avgBuyPrice(p.id,eng))}`+(have.has(p.id)?' · already added':''),
+    disabled:have.has(p.id)}));
+  openMultiPick({title:'Pick multiple products',items,onAdd:vals=>{
+    if(onlItems.length===1 && !onlItems[0].productId) onlItems.splice(0,1);
+    vals.forEach(pid=>{ if(!onlItems.some(it=>it.productId===pid)) onlItems.push({productId:pid,qty:1,rate:''}); });
+    if(!onlItems.length) onlItems.push({productId:'',qty:1,rate:''});
+    renderOnlRows(); flashNewRow('#o_rows .li-row'); }});
+}
 function onlNewProdToggle(){ const w=$('#o_newprod'); if(!w)return; const show=w.style.display==='none'; w.style.display=show?'':'none';
   if(show){ ['#onp_name','#onp_cat','#onp_color'].forEach(s=>{const el=$(s);if(el)el.value='';}); setTimeout(()=>$('#onp_name')?.focus(),30); } }
 function onlAddNewProduct(){
@@ -3308,6 +3334,7 @@ function shopCard(x){
     <div class="shop-body">
       <div class="shop-name" title="${esc(p.name)}">${esc(p.name)}</div>
       <div class="shop-cat">${p.category?esc(p.category):'&nbsp;'}</div>
+      ${colorChip(p)}
       <div class="shop-cost">Bought price <b style="color:var(--gold2)">${money(x.cost)}</b></div>
       <div class="shop-ctrl">${ctrl}</div>
     </div></div>`;
@@ -3383,6 +3410,7 @@ function buyStoreCard(x){
     <div class="shop-body">
       <div class="shop-name" title="${esc(p.name)}">${esc(p.name)}</div>
       <div class="shop-cat">${p.category?esc(p.category):'&nbsp;'}</div>
+      ${colorChip(p)}
       <div class="shop-cost">${priceVal?`${priceLab}<b style="color:var(--gold2)">${money(priceVal)}</b>`:'&nbsp;'}</div>
       <div class="shop-ctrl">${ctrl}</div>
     </div></div>`;
@@ -3481,7 +3509,7 @@ function newSale(id,prefillPid){
       <div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Rate</div><div>Amount</div><div></div></div>
       <div id="s_rows"></div>
     </div>
-    <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button>
+    <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button><button class="mini-btn" onclick="salePickMulti()">☰ Pick multiple</button>
     <div class="field" style="margin-top:14px"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received — put 0 if paid later" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Mandatory. Put <b>0</b> (or a part amount) if the customer pays later — the balance is tracked as credit in Payments.</div></div>
     <div class="grid2">
       <div class="field"><label>VAT Mode</label><select id="s_vatmode" onchange="saleCalc()">
@@ -3536,6 +3564,21 @@ function renderSaleRows(){
   saleCalc();
 }
 function addSaleRow(){saleDraft.push({productId:'',qty:1,rate:''});renderSaleRows();flashNewRow('#s_rows .li-row');}
+/* tick several products at once → one sales row each (only in-stock products, existing rows untouched) */
+function salePickMulti(){
+  if(!DB.products.length)return toast('Add a product first.',1);
+  const eng=computeEngine(), have=new Set(saleDraft.map(it=>it.productId).filter(Boolean));
+  const items=productsByRecent().map(p=>({p,av:saleAvail(p.id,eng)})).filter(x=>x.av>1e-9)
+    .map(x=>({value:x.p.id,label:x.p.name,
+      sub:`avail ${num(x.av)} · buy ${money(avgBuyPrice(x.p.id,eng))}`+(have.has(x.p.id)?' · already added':''),
+      disabled:have.has(x.p.id)}));
+  if(!items.length)return toast('No products in stock to sell.',1);
+  openMultiPick({title:'Pick multiple products',items,onAdd:vals=>{
+    if(saleDraft.length===1 && !saleDraft[0].productId) saleDraft.splice(0,1);
+    vals.forEach(pid=>{ if(!saleDraft.some(it=>it.productId===pid)) saleDraft.push({productId:pid,qty:1,rate:''}); });
+    if(!saleDraft.length) saleDraft.push({productId:'',qty:1,rate:''});
+    renderSaleRows(); flashNewRow('#s_rows .li-row'); }});
+}
 let _salePaidTouched=false;
 function saleCalc(){
   const eng=computeEngine();
@@ -5084,6 +5127,13 @@ function delGift(id){
 function totalBought(pid){ let q=0; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{if(it.productId===pid)q+=+it.qty||0;})); return q; }
 function totalSold(pid){ let q=0; DB.sales.forEach(s=>s.items.forEach(it=>{if(it.productId===pid)q+=+it.qty||0;})); return q; }
 function lastBuyDate(pid){ let d=''; DB.purchases.forEach(p=>{ if((p.date||'')>d && purchaseItems(p).some(it=>it.productId===pid))d=p.date; }); return d; }
+/* ranking key for "most recently purchased first" — the newest purchase that
+   includes this product, as "date|id". Fixed-width date compares first, then the
+   record id (uid() is Date.now()-based, so it encodes entry time), so products
+   bought on the same day rank by when the purchase was actually entered — the one
+   you just bought floats to the top instead of tying alphabetically. Never-bought
+   products return '' and sort last. */
+function lastBuyKey(pid){ let k=''; DB.purchases.forEach(p=>{ if(purchaseItems(p).some(it=>it.productId===pid)){ const key=(p.date||'')+'|'+(p.id||''); if(key>k)k=key; } }); return k; }
 let _invSort='recent', _invShowCat=false;
 function setInvSort(v){ _invSort=v; renderInventory(); }
 function toggleInvCat(){ _invShowCat=!_invShowCat; renderInventory(); }
@@ -6344,6 +6394,66 @@ function devClearConfirm(){
 /* =========================================================
    MODAL / CONFIRM
    ========================================================= */
+/* ============================================================
+   MULTI-PICK — a searchable checkbox list for choosing several
+   products in one go. Floats above the current modal (its own
+   overlay, so it never closes the form behind it); the caller
+   supplies the items and gets back the ticked values to append
+   as rows. Reused by Purchase, Sales and Online order forms.
+   ============================================================ */
+function openMultiPick(cfg){
+  if(!document.getElementById('mpickCss')){
+    const st=document.createElement('style'); st.id='mpickCss';
+    st.textContent=`
+    .mpick-back{position:fixed;inset:0;z-index:99994;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:18px}
+    .mpick{width:min(560px,96vw);max-height:min(82vh,640px);background:var(--panel);border:1px solid var(--line2);border-radius:16px;
+      box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden}
+    .mpick-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
+    .mpick-head h4{margin:0;font-size:15.5px;flex:1}
+    .mpick-srch{margin:10px 12px 6px;padding:11px 12px;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:9px;font-size:14.5px;outline:none}
+    .mpick-srch:focus{border-color:var(--brand2);box-shadow:0 0 0 3px rgba(99,102,241,.18)}
+    .mpick-list{flex:1;overflow:auto;padding:2px 8px 8px;-webkit-overflow-scrolling:touch}
+    .mpick-opt{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer;font-size:14px;color:var(--text);line-height:1.35}
+    .mpick-opt:hover{background:var(--panel2)}
+    .mpick-opt input{width:17px;height:17px;accent-color:var(--brand);flex:0 0 auto;margin-top:1px}
+    .mpick-opt.dis{opacity:.5;cursor:default}
+    .mpick-opt small{color:var(--muted);display:block;font-size:11.5px;margin-top:1px}
+    .mpick-none{padding:18px;color:var(--muted);text-align:center;font-size:13px}
+    .mpick-foot{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end;align-items:center}
+    .mpick-count{margin-right:auto;color:var(--muted);font-size:13px}
+    @media(max-width:620px){ .mpick{width:auto;left:8px;right:8px;max-height:84vh} }`;
+    document.head.appendChild(st);
+  }
+  const chosen=new Set();
+  const back=document.createElement('div'); back.className='mpick-back';
+  const box=document.createElement('div'); box.className='mpick';
+  box.innerHTML=`<div class="mpick-head"><h4>${esc(cfg.title||'Pick products')}</h4><button class="close-x" data-x>×</button></div>
+    <input class="mpick-srch" type="text" placeholder="Type to search…">
+    <div class="mpick-list"></div>
+    <div class="mpick-foot"><span class="mpick-count">0 selected</span>
+      <button class="btn-sm btn-ghost" data-x>Cancel</button>
+      <button class="btn-sm btn-gold" data-add disabled>Add</button></div>`;
+  back.appendChild(box); document.body.appendChild(back);
+  const srch=box.querySelector('.mpick-srch'), list=box.querySelector('.mpick-list'),
+        countEl=box.querySelector('.mpick-count'), addBtn=box.querySelector('[data-add]');
+  function close(){ back.remove(); }
+  function foot(){ countEl.textContent=chosen.size+' selected'; addBtn.disabled=!chosen.size; addBtn.textContent=chosen.size?`Add ${chosen.size}`:'Add'; }
+  function render(){
+    const terms=srch.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const rows=(cfg.items||[]).filter(it=>terms.every(t=>it.label.toLowerCase().includes(t)||(it.sub||'').toLowerCase().includes(t)));
+    list.innerHTML=rows.length? rows.map(it=>`<label class="mpick-opt${it.disabled?' dis':''}">
+        <input type="checkbox" value="${esc(it.value)}" ${it.disabled?'disabled':''} ${chosen.has(it.value)?'checked':''}>
+        <span>${esc(it.label)}${it.sub?`<small>${esc(it.sub)}</small>`:''}</span></label>`).join('')
+      : '<div class="mpick-none">No matches</div>';
+  }
+  render(); foot(); setTimeout(()=>srch.focus(),30);
+  srch.addEventListener('input',render);
+  list.addEventListener('change',e=>{ const cb=e.target.closest('input[type=checkbox]'); if(!cb)return;
+    if(cb.checked)chosen.add(cb.value); else chosen.delete(cb.value); foot(); });
+  box.addEventListener('click',e=>{ if(e.target.closest('[data-x]'))close(); });
+  addBtn.addEventListener('click',()=>{ const vals=[...chosen]; close(); if(vals.length&&cfg.onAdd)cfg.onAdd(vals); });
+  back.addEventListener('mousedown',e=>{ if(e.target===back)close(); });
+}
 function openModal(title,body,foot){
   $('#modalRoot').innerHTML=`<div class="modal-back" onmousedown="window._mdOnBack=(event.target===this)" onmouseup="if(event.target!==this)window._mdOnBack=false" onclick="if(event.target===this&&window._mdOnBack)closeModal()">
     <div class="modal"><div class="modal-head"><h3>${title}</h3><button class="close-x" onclick="closeModal()">×</button></div>
@@ -6382,7 +6492,7 @@ function confirmBox(title,msg,onYes,yesLabel){
   const TH=5;
   const enh=s=>s&&s.tagName==='SELECT'&&!s.multiple&&!s.disabled&&!s.dataset.noSrch
     &&(s.classList.contains('srch')||s.options.length>=TH);
-  let pop=null,back=null,curSel=null,items=[],activeIdx=0;
+  let pop=null,back=null,curSel=null,items=[],activeIdx=0,eatClick=false,openW=0;
 
   function injectCss(){
     if(document.getElementById('srchCss'))return;
@@ -6411,7 +6521,7 @@ function confirmBox(title,msg,onYes,yesLabel){
   function fmt(t){ const m=t.split(' — '); return m.length>1? esc(m[0])+' <small>— '+esc(m.slice(1).join(' — '))+'</small>' : esc(t); }
 
   function open(sel){
-    injectCss(); close(); curSel=sel;
+    injectCss(); close(); curSel=sel; openW=window.innerWidth;
     back=document.createElement('div'); back.className='srch-back';
     /* dismiss on a full click (down+up) rather than mousedown: tearing the backdrop
        out on mousedown let the trailing click fall through to the modal behind and close it */
@@ -6444,7 +6554,10 @@ function confirmBox(title,msg,onYes,yesLabel){
     function pick(i){ const o=items[i]; if(!o){close();return;} sel.value=o.value; close(); sel.dispatchEvent(new Event('change',{bubbles:true})); }
 
     activeIdx=Math.max(0,all.filter(o=>!o.dis).findIndex(o=>o.value===sel.value));
-    render(''); setTimeout(()=>inp.focus(),0); ensure();
+    /* on phones, don't auto-focus the search box — that pops the keyboard, whose
+       viewport resize would close the picker the instant it opens. Desktop still focuses. */
+    const smallScreen=window.matchMedia&&window.matchMedia('(max-width:620px)').matches;
+    render(''); if(!smallScreen)setTimeout(()=>inp.focus(),0); ensure();
     inp.addEventListener('input',()=>{ activeIdx=0; render(inp.value); });
     inp.addEventListener('keydown',e=>{
       if(e.key==='ArrowDown'){e.preventDefault();activeIdx++;render(inp.value);ensure();}
@@ -6462,9 +6575,14 @@ function confirmBox(title,msg,onYes,yesLabel){
   document.addEventListener('mousedown',e=>{
     const sel=e.target.closest?e.target.closest('select'):null;
     if(sel&&enh(sel)){ e.preventDefault(); e.stopPropagation();
-      if(curSel===sel){close();} else open(sel); }
+      if(curSel===sel){close();}
+      else { open(sel);
+        /* a tap also fires a synthesized click; on touch it lands on the backdrop we
+           just opened and would close the picker instantly. Swallow that one click. */
+        eatClick=true; setTimeout(()=>{eatClick=false;},600); } }
   },true);
   document.addEventListener('click',e=>{
+    if(eatClick){ eatClick=false; if(!(pop&&pop.contains(e.target))){ e.preventDefault(); e.stopPropagation(); return; } }
     const sel=e.target.closest?e.target.closest('select'):null;
     if(sel&&enh(sel)){ e.preventDefault(); e.stopPropagation(); }
   },true);
@@ -6474,7 +6592,9 @@ function confirmBox(title,msg,onYes,yesLabel){
       e.preventDefault(); open(sel); }
   },true);
   document.addEventListener('scroll',e=>{ if(pop&&!pop.contains(e.target))close(); },true);
-  window.addEventListener('resize',close);
+  /* close on a real resize / orientation change, but ignore height-only changes —
+     those are the mobile keyboard opening, which must not dismiss the picker. */
+  window.addEventListener('resize',()=>{ if(pop&&window.innerWidth!==openW)close(); });
 })();
 
 /* boot */
