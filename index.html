@@ -957,21 +957,23 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
 const KEY='lae_db_v1';
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
-const ALL_VIEWS=['dashboard','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
-const WORKER_DEFAULT=['shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',shop:'Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
+const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
+const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
     {v:'dashboard', ic:'📊', lab:'Dashboard'} ]},
   {tag:'Buy & Stock', ic:'📦', color:'#f5b301', items:[
+    {v:'buystore',  ic:'🛒', lab:'Buy Store'},
     {v:'purchases', ic:'📥', lab:'Purchases'},
+    {v:'giftcards', ic:'🎁', lab:'Gift Cards'},
     {v:'online',    ic:'🛒', lab:'Online Orders', badge:'onlBadge'},
     {v:'inventory', ic:'📦', lab:'Inventory'},
     {v:'products',  ic:'🏷️', lab:'Products'},
     {v:'compare',   ic:'🔎', lab:'Price Compare'} ]},
   {tag:'Sell & Bill', ic:'🧾', color:'#22c55e', items:[
-    {v:'shop',     ic:'🛍️', lab:'Store'},
+    {v:'shop',     ic:'🛍️', lab:'Sell Store'},
     {v:'sales',    ic:'🧾', lab:'Sales & Billing'},
     {v:'payments', ic:'💵', lab:'Payments'} ]},
   {tag:'Cash & Cards', ic:'💳', color:'#38bdf8', items:[
@@ -979,8 +981,6 @@ const NAV_GROUPS=[
     {v:'cards',     ic:'💳', lab:'Credit Cards', owner:true},
     {v:'cardpref',  ic:'⭐', lab:'Card Preference', owner:true},
     {v:'lenders',   ic:'🤝', lab:'Card Lenders', owner:true, badge:'lenderBadge'} ]},
-  {tag:'Gift Cards', ic:'🎁', color:'#ec4899', items:[
-    {v:'giftcards', ic:'🎁', lab:'Gift Cards'} ]},
   {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
     {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
     {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true} ]},
@@ -1986,7 +1986,9 @@ let buyItems=[], buySplits=[], _buyEditId='';
 function newPurchase(id,prefillPid){
   const p=id?DB.purchases.find(x=>x.id===id):null;
   _buyEditId=id||'';
-  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate})) : [{productId:prefillPid||'',qty:1,rate:''}];
+  buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}))
+    : (Array.isArray(prefillPid)&&prefillPid.length ? prefillPid.map(i=>({productId:i.productId,qty:+i.qty||1,rate:i.rate||''}))
+       : [{productId:prefillPid||'',qty:1,rate:''}]);
   if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
   buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:normBuyMethod(pm.method),cardId:pm.cardId||'',giftId:pm.giftId||'',ref:pm.payRef||'',deductPct:pm.deductPct||'',amount:pm.amount}))
     : [{method:'card',cardId:'',giftId:'',ref:'',amount:''}];
@@ -2803,6 +2805,7 @@ const ONLINE_STATUS=[
   {k:'ordered',  lab:'Ordered',   tag:'bank',    ic:'🧾'},
   {k:'shipped',  lab:'Shipped',   tag:'partial', ic:'🚚'},
   {k:'delivered',lab:'Delivered', tag:'ok',      ic:'📦'},
+  {k:'returned', lab:'Returned',  tag:'adjust',  ic:'↩'},
   {k:'cancelled',lab:'Cancelled', tag:'due',     ic:'✕'}
 ];
 function onlStatusInfo(k){ return ONLINE_STATUS.find(s=>s.k===k)||ONLINE_STATUS[0]; }
@@ -2857,7 +2860,7 @@ views.online=function(){
   <div class="page-head"><div><h2>🛒 Online Orders</h2><p>Orders placed on online platforms. They stay out of inventory until you mark them <b>Delivered</b> — then they move into stock as a purchase. Payment can be recorded now or on delivery.</p></div>
     <div class="row-actions"><button class="btn-sm" onclick="newOnline()">🛒 New Online Order</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="onlSearch" placeholder="Search platform / supplier / product / tracking…" oninput="renderOnline()"></div>
-    <label class="chk"><input type="checkbox" id="onlHideDone" onchange="renderOnline()"> Hide delivered &amp; cancelled</label></div>
+    <label class="chk"><input type="checkbox" id="onlHideDone" onchange="renderOnline()"> Hide delivered / returned / cancelled</label></div>
   <div id="onlList"></div>`;
 };
 views._after_online=renderOnline;
@@ -2869,7 +2872,7 @@ function renderOnline(){
   const match=o=> onlItemsArr(o).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);})
     || (o.platform||'').toLowerCase().includes(q) || (o.supplier||'').toLowerCase().includes(q) || (o.ref||'').toLowerCase().includes(q) || (o.tracking||'').toLowerCase().includes(q);
   let rows=[...(DB.online||[])].sort((a,b)=>(a.orderDate<b.orderDate?1:a.orderDate>b.orderDate?-1:0)).filter(match);
-  if(hideDone) rows=rows.filter(o=>o.status!=='delivered'&&o.status!=='cancelled');
+  if(hideDone) rows=rows.filter(o=>o.status!=='delivered'&&o.status!=='cancelled'&&o.status!=='returned');
   if(!(DB.online||[]).length){ host.innerHTML=`<div class="panel">${emptyBox('🛒','No online orders yet','Record an order you placed online. It waits here until it arrives, then moves into inventory.')}</div>`; return; }
   if(!rows.length){ host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No online orders match your filter.')}</div>`; return; }
   const today=todayStr();
@@ -2878,7 +2881,7 @@ function renderOnline(){
     <tbody>${rows.map(o=>{ const its=onlItemsArr(o), more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';
       const overdue=(o.status==='ordered'||o.status==='shipped')&&o.expectedDate&&o.expectedDate<today;
       const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
-      const paid=(o.status!=='cancelled'&&+o.payAmt>0)?(+o.payAmt||0):0;
+      const paid=(o.status!=='cancelled'&&o.status!=='returned'&&+o.payAmt>0)?(+o.payAmt||0):0;
       return `<tr>
         <td><b class="rowlink" onclick="onlineDetail('${o.id}')" title="View order details">${esc(o.ref)}</b></td>
         <td>${fmtDate(o.orderDate)}</td>
@@ -2893,7 +2896,8 @@ function renderOnline(){
     </tbody></table></div>`;
 }
 function onlRowActions(o){
-  if(o.status==='delivered') return `<button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
+  if(o.status==='delivered') return `<button class="mini-btn" style="color:var(--amber);border-color:#7a5a12" onclick="returnOnline('${o.id}')" title="Return the product — remove stock & refund to the pay mode">↩ Return</button> <button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
+  if(o.status==='returned') return `<button class="mini-btn" onclick="reopenOnline('${o.id}')">Reopen</button> <button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
   if(o.status==='cancelled') return `<button class="mini-btn" onclick="reopenOnline('${o.id}')">Reopen</button> <button class="mini-btn red" onclick="delOnline('${o.id}')">Del</button>`;
   let b='';
   if(o.status==='ordered') b+=`<button class="mini-btn gold" onclick="setOnlineStatus('${o.id}','shipped')">Mark shipped</button> `;
@@ -3094,13 +3098,29 @@ function cancelOnline(id){
 }
 function reopenOnline(id){
   if(!requireOnline())return;
-  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status!=='cancelled')return;
-  o.status='ordered';
-  applyOnlinePay(o);            // re-apply any prepayment that was reverted on cancel
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||(o.status!=='cancelled'&&o.status!=='returned'))return;
+  o.status='ordered'; o.returnedDate='';
+  applyOnlinePay(o);            // re-apply any prepayment that was reverted on cancel / return
   const pm=onlPayObj(o);
   logAct('edit','online order',o.ref,'Reopened → ordered'+(pm?' · re-applied '+money(pm.amount):''));
   save();renderOnline();renderBell();
   toast('Order reopened'+(pm?' · '+money(pm.amount)+' re-applied':''));
+}
+/* return a delivered order: remove the stocked purchase (stock out) and refund every payment
+   back to its original method, then mark the order Returned (kept for the record). */
+function returnOnline(id){
+  if(!requireOnline())return;
+  const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status!=='delivered')return;
+  const linked=o.purchaseId&&DB.purchases.some(p=>p.id===o.purchaseId);
+  const paid=(+o.payAmt>0)?money(+o.payAmt):'the amount paid';
+  confirmBox('Return this order?',`Return online order <b>${esc(o.ref)}</b>? The stocked goods are removed from inventory and ${paid} is reverted to its original pay mode — a card charge is removed, cash goes back to the wallet, a gift-card balance is restored, or a vendor-card swipe is reversed.`+(isOwner()?'':' The admin will be notified.'),()=>{
+    if(linked) commitPurchaseDelete(o.purchaseId);   // reverses stock + every card/gift/lender/cash charge of the purchase
+    else revertOnlinePay(o);                          // fallback: undo any order-tagged prepayment
+    o.status='returned'; o.returnedDate=todayStr(); o.purchaseId='';
+    logAct('return','online order',o.ref,'Returned · stock removed & payment reverted');
+    save();renderOnline();if(typeof renderPurchases==='function')renderPurchases();renderBell();renderOnlineBadge();
+    toast('↩ '+o.ref+' returned — stock removed & payment reverted'+(isOwner()?'':' · admin notified'));
+  },'Return');
 }
 /* delivery opens a modal so the balance can be PAID AT DELIVERY (updating cards / cash),
    then the order is stocked into inventory as a purchase carrying every payment. */
@@ -3228,7 +3248,7 @@ function onlineDetail(id){
   const rows=its.map(it=>{const p=productById(it.productId);return `<tr><td>${esc(p?p.name:'—')}</td><td class="num">${num(it.qty)}</td><td class="num">${money(it.rate)}</td><td class="num">${money((+it.qty||0)*(+it.rate||0))}</td></tr>`;}).join('');
   const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
   const cell=(lab,val)=>`<div><div style="color:var(--muted);font-size:12px">${lab}</div><b>${val}</b></div>`;
-  const pm=onlPayObj(o); const reverted=o.status==='cancelled';
+  const pm=onlPayObj(o); const reverted=o.status==='cancelled'||o.status==='returned';
   const payLine = pm ? `${payMethodTag(pm.method)} ${money(pm.amount)}${reverted?' <span class="tag due">reverted</span>':''}` : '<span style="color:var(--muted2)">Not paid yet</span>';
   openModal('Online Order · '+esc(o.ref),`
     <div class="grid3" style="gap:12px;margin-bottom:12px">
@@ -3245,7 +3265,7 @@ function onlineDetail(id){
     <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><td colspan="3" class="num"><b>Estimated total${onlDiscount(o)>0?` (after ${money(onlDiscount(o))} discount)`:''}</b></td><td class="num"><b>${money(onlTotal(o))}</b></td></tr></tfoot></table></div>
     ${o.notes?`<div class="note" style="margin-top:10px">📝 ${esc(o.notes)}</div>`:''}`,
-    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>${(o.status!=='delivered'&&o.status!=='cancelled')?` <button class="btn-sm" onclick="closeModal();newOnline('${o.id}')">Edit</button> <button class="btn-sm btn-green" onclick="closeModal();deliverOnline('${o.id}')">✓ Mark Delivered</button>`:''}`);
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>${(o.status==='ordered'||o.status==='shipped')?` <button class="btn-sm" onclick="closeModal();newOnline('${o.id}')">Edit</button> <button class="btn-sm btn-green" onclick="closeModal();deliverOnline('${o.id}')">✓ Mark Delivered</button>`:''}${o.status==='delivered'?` <button class="btn-sm" style="color:var(--amber);border-color:#7a5a12" onclick="closeModal();returnOnline('${o.id}')">↩ Return</button>`:''}`);
 }
 
 /* =========================================================
@@ -3257,7 +3277,7 @@ function onlineDetail(id){
 let _shopCart={};   // { productId: qty }
 views.shop=function(){
   return `
-  <div class="page-head"><div><h2>🛍️ Store</h2><p>Browse products in stock, add to cart and sell. Purchase price &amp; live stock shown on each card.</p></div></div>
+  <div class="page-head"><div><h2>🛍️ Sell Store</h2><p>Browse products in stock, add to cart and sell. Purchase price &amp; live stock shown on each card.</p></div></div>
   <div class="toolbar">
     <div class="search"><span class="si">🔎</span><input id="shopSearch" placeholder="Search product / category…" oninput="renderShop()"></div>
     <label class="chk"><input type="checkbox" id="shopOOS" onchange="renderShop()"> Show out of stock</label>
@@ -3318,6 +3338,73 @@ function shopCheckout(){
   if(!items.length)return toast('Cart is empty',1);
   _shopCart={}; renderShopCart();      // items now live in the sales bill
   newSale('', items);
+}
+
+/* =========================================================
+   BUY STORE  — the Sell Store's mirror for restocking.
+   Pick existing products into a cart, then checkout opens the
+   same New Purchase flow pre-filled, where you set cost/unit,
+   add brand-new products and choose payment exactly as a purchase.
+   Buying has no stock cap (you can order any quantity) and shows
+   out-of-stock items too, since those are the usual restocks.
+   ========================================================= */
+let _buyCart={};   // { productId: qty }
+views.buystore=function(){
+  return `
+  <div class="page-head"><div><h2>🛒 Buy Store</h2><p>Pick the products you're restocking, set quantities, then checkout to set cost &amp; payment — exactly like a purchase. New products can be added at checkout.</p></div></div>
+  <div class="toolbar">
+    <div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search product / category…" oninput="renderBuyStore()"></div>
+    <button class="btn-sm btn-ghost" onclick="newPurchase('')">✨ Blank purchase</button>
+  </div>
+  <div id="buyGrid"></div>
+  <div id="buyCartBar" class="shop-cartbar hidden"></div>`;
+};
+views._after_buystore=renderBuyStore;
+function renderBuyStore(){
+  const host=$('#buyGrid'); if(!host)return;
+  const eng=computeEngine(), q=($('#buySearch')?.value||'').toLowerCase();
+  let list=productsByRecent().map(p=>({p,qty:stockOf(p.id,eng),cost:avgBuyPrice(p.id,eng),last:lastKnownRate(p.id)}))
+    .filter(x=>((x.p.name||'').toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q)));
+  if(!list.length){ host.innerHTML=`<div class="panel">${emptyBox('🛒','Nothing to show',DB.products.length?'No products match your search.':'No products yet — use “Blank purchase” to add one, or add it in Products.')}</div>`; renderBuyCart(); return; }
+  host.innerHTML=`<div class="shop-grid">${list.map(buyStoreCard).join('')}</div>`;
+  initImgSkel(host);
+  renderBuyCart();
+}
+function buyStoreCard(x){
+  const p=x.p, inCart=_buyCart[p.id]||0;
+  const img=p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="" onerror="this.remove()">`:`<div class="shop-icon">${iconSVGtile(p)}</div>`;
+  const badge=`<span class="shop-stock${x.qty<=0?' oos':''}">${num(x.qty)} in stock</span>`;
+  const priceLab=x.last?'Last cost ':(x.cost?'Avg buy ':''), priceVal=x.last||x.cost;
+  const ctrl = inCart>0
+    ? `<div class="shop-step"><button onclick="buyStoreAdd('${p.id}',-1)">−</button><input type="number" inputmode="numeric" min="0" value="${inCart}" onchange="buyStoreSet('${p.id}',this.value)" onfocus="this.select()" title="Quantity to buy"><button onclick="buyStoreAdd('${p.id}',1)">＋</button></div>`
+    : `<button class="btn-sm" style="width:100%;justify-content:center" onclick="buyStoreAdd('${p.id}',1)">➕ Add to purchase</button>`;
+  return `<div class="shop-card ${x.qty<=0?'oos':''}">
+    <div class="shop-img" onclick="openImageFinder('${p.id}')" title="Click to set / change image">${img}${badge}<span class="shop-cam">📷</span></div>
+    <div class="shop-body">
+      <div class="shop-name" title="${esc(p.name)}">${esc(p.name)}</div>
+      <div class="shop-cat">${p.category?esc(p.category):'&nbsp;'}</div>
+      <div class="shop-cost">${priceVal?`${priceLab}<b style="color:var(--gold2)">${money(priceVal)}</b>`:'&nbsp;'}</div>
+      <div class="shop-ctrl">${ctrl}</div>
+    </div></div>`;
+}
+function buyStoreAdd(pid,delta){ let q=(_buyCart[pid]||0)+delta; if(q<=0)delete _buyCart[pid]; else _buyCart[pid]=q; renderBuyStore(); }
+/* set an exact quantity typed into the card */
+function buyStoreSet(pid,val){ let q=Math.floor(+val||0); if(q<=0)delete _buyCart[pid]; else _buyCart[pid]=q; renderBuyStore(); }
+function buyCartUnits(){ return Object.values(_buyCart).reduce((a,q)=>a+q,0); }
+function buyStoreClear(){ _buyCart={}; renderBuyStore(); }
+function renderBuyCart(){
+  const bar=$('#buyCartBar'); if(!bar)return; const ids=Object.keys(_buyCart);
+  if(!ids.length){ bar.classList.add('hidden'); bar.innerHTML=''; return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML=`<div class="scb-left">🛒 <b>${ids.length}</b> product(s) · <b>${num(buyCartUnits())}</b> unit(s)</div>
+    <div class="scb-right"><button class="btn-sm btn-ghost" onclick="buyStoreClear()">Clear</button>
+    <button class="btn-sm btn-gold" onclick="buyStoreCheckout()">Buy / Checkout →</button></div>`;
+}
+function buyStoreCheckout(){
+  const items=Object.keys(_buyCart).map(pid=>({productId:pid,qty:_buyCart[pid],rate:''}));
+  if(!items.length)return toast('Cart is empty',1);
+  _buyCart={}; renderBuyCart();        // items now live in the purchase draft
+  newPurchase('', items);
 }
 
 /* =========================================================
@@ -4635,18 +4722,39 @@ function giftCell(g){ const prod=giftIsProduct(g); return `<div>${giftVisual(g)}
 views.giftcards=function(){
   return `
   <div class="page-head"><div><h2>🎁 Gift Cards</h2><p>Gift-card types you deal in (Lulu, Carrefour, Apple…), each with a running balance. Buy / recharge a balance — cash may carry a discount so you pay less than the balance — then use it to pay for stock.</p></div>
-    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="newGiftProductModal()">＋ New Gift Card</button><button class="btn-sm" onclick="purchaseGiftModal()">🎁 Buy / Recharge</button></div></div>
+    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="toggleGiftHist()">📜 History</button><button class="btn-sm btn-ghost" onclick="newGiftProductModal()">＋ New Gift Card</button><button class="btn-sm" onclick="purchaseGiftModal()">🎁 Buy / Recharge</button></div></div>
   <div class="toolbar">
     <div class="search"><span class="si">🔎</span><input id="giftSearch" placeholder="Search gift card name..." oninput="renderGiftCards()"></div>
   </div>
   <div id="giftStats" class="cards"></div>
+  <div id="giftHist"></div>
   <div id="giftWrap"></div>`;
 };
 views._after_giftcards=renderGiftCards;
+let _giftShowHist=false;
+function toggleGiftHist(){ _giftShowHist=!_giftShowHist; renderGiftCards(); }
+/* every gift-card transaction across all cards, newest first */
+function giftAllTxns(){ const out=[]; (DB.giftcards||[]).forEach(g=>{ (g.txns||[]).forEach(t=>out.push({...t,giftId:g.id,giftName:g.name})); });
+  out.sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0)); return out; }
+function giftHistoryHtml(q){
+  const all=giftAllTxns().filter(t=>!q||[(t.giftName||''),(t.note||'')].some(v=>v.toLowerCase().includes(q)));
+  if(!all.length)return `<div class="panel" style="margin-bottom:14px;padding:12px 14px"><div class="cat-head" style="margin:0 0 6px">📜 Overall gift-card history</div><div class="li-hint">No transactions yet.</div></div>`;
+  let load=0,spend=0,adj=0;
+  const rows=all.map(t=>{ const amt=+t.amount||0; if(t.type==='load')load+=amt; else if(t.type==='spend')spend+=amt; else if(t.type==='adjust')adj+=amt;
+    const signed=t.type==='spend'?`<span style="color:var(--red)">− ${money(amt)}</span>`:(t.type==='adjust'?`${amt<0?'− ':'+ '}${money(Math.abs(amt))}`:`<span style="color:var(--green)">+ ${money(amt)}</span>`);
+    return `<tr><td>${fmtDate(t.date)}</td><td><b class="rowlink" onclick="giftDetail('${t.giftId}')">${esc(t.giftName||'—')}</b></td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td style="white-space:normal">${esc(t.note||'')}</td><td class="num">${signed}</td><td>${esc(userName(t.byId||''))}</td></tr>`; }).join('');
+  return `<div class="panel" style="margin-bottom:14px;padding:12px 14px">
+    <div class="cat-head" style="margin:0 0 8px">📜 Overall gift-card history <span class="cc">${all.length} entr${all.length===1?'y':'ies'}</span></div>
+    <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>Gift Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>By</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td class="num">${money(load-spend+adj)}</td><td></td></tr></tfoot>
+    </table></div></div>`;
+}
 function renderGiftCards(){
   const host=$('#giftWrap'); if(!host)return;
   const all=DB.giftcards||[];
   const q=($('#giftSearch')?.value||'').toLowerCase().trim();
+  const gh=$('#giftHist'); if(gh)gh.innerHTML=_giftShowHist?giftHistoryHtml(q):'';
   const match=g=>!q||[g.name,g.store,g.number].some(v=>(v||'').toLowerCase().includes(q));
   const prods=all.filter(g=>giftIsProduct(g)&&match(g));
   const legacy=all.filter(g=>!giftIsProduct(g)&&match(g));
@@ -5269,7 +5377,7 @@ function cashEntries(){
   (DB.purchases||[]).forEach(p=>(p.payments||[]).forEach(pm=>{ const net=pmCashNet(pm); if(pm.method==='cash'&&net>0) e.push({date:pm.date||p.date,dir:'out',amount:net,cat:'purchase',desc:'Purchase '+(p.ref||'')+(p.supplier?' · '+p.supplier:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:p.byId||''}); }));
   /* online-order cash prepayments: counted only while the order is live (ordered/shipped).
      Once delivered it becomes a real purchase (counted above); once cancelled the cash reverts by being dropped here. */
-  (DB.online||[]).forEach(o=>{ if(o.status==='delivered'||o.status==='cancelled')return; const pm=onlPayObj(o); const net=pmCashNet(pm); if(pm&&pm.method==='cash'&&net>0) e.push({date:pm.date||o.orderDate,dir:'out',amount:net,cat:'purchase',desc:'Online order '+(o.ref||'')+(o.platform?' · '+o.platform:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:o.byId||''}); });
+  (DB.online||[]).forEach(o=>{ if(o.status==='delivered'||o.status==='cancelled'||o.status==='returned')return; const pm=onlPayObj(o); const net=pmCashNet(pm); if(pm&&pm.method==='cash'&&net>0) e.push({date:pm.date||o.orderDate,dir:'out',amount:net,cat:'purchase',desc:'Online order '+(o.ref||'')+(o.platform?' · '+o.platform:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:o.byId||''}); });
   (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:t.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return e;
@@ -6305,7 +6413,10 @@ function confirmBox(title,msg,onYes,yesLabel){
   function open(sel){
     injectCss(); close(); curSel=sel;
     back=document.createElement('div'); back.className='srch-back';
-    back.addEventListener('mousedown',close);
+    /* dismiss on a full click (down+up) rather than mousedown: tearing the backdrop
+       out on mousedown let the trailing click fall through to the modal behind and close it */
+    back.addEventListener('mousedown',e=>e.preventDefault());
+    back.addEventListener('click',close);
     pop=document.createElement('div'); pop.className='srch-pop';
     const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Type to search…';
     const list=document.createElement('div'); list.className='srch-list';
@@ -6341,7 +6452,11 @@ function confirmBox(title,msg,onYes,yesLabel){
       else if(e.key==='Enter'){e.preventDefault();pick(activeIdx);}
       else if(e.key==='Escape'){e.preventDefault();close();}
     });
-    list.addEventListener('mousedown',e=>{ const el=e.target.closest('.srch-opt'); if(el){e.preventDefault();pick(+el.dataset.i);} });
+    /* keep focus in the search box on press, but commit the choice on the full click:
+       picking on mousedown removed the option mid-gesture, so the browser re-targeted the
+       trailing click onto the modal behind and closed the whole screen */
+    list.addEventListener('mousedown',e=>{ if(e.target.closest('.srch-opt'))e.preventDefault(); });
+    list.addEventListener('click',e=>{ const el=e.target.closest('.srch-opt'); if(el){e.preventDefault();e.stopPropagation();pick(+el.dataset.i);} });
   }
 
   document.addEventListener('mousedown',e=>{
