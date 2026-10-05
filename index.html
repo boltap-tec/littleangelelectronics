@@ -1982,13 +1982,13 @@ views._after_purchases=renderPurchases;
 function renderPurchases(){
   const host=$('#buyList'); if(!host)return;
   const q=($('#buySearch')?.value||'').toLowerCase();
-  const match=p=> purchaseItems(p).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);}) || (p.supplier||'').toLowerCase().includes(q) || (p.ref||'').toLowerCase().includes(q);
+  const match=p=> purchaseItems(p).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);}) || (p.supplier||'').toLowerCase().includes(q) || (p.ref||'').toLowerCase().includes(q) || (p.orderNo||'').toLowerCase().includes(q);
   const rows=[...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).filter(match);
   if(!DB.purchases.length){host.innerHTML=`<div class="panel">${emptyBox('📥','No purchases yet','Record your first stock purchase.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>Ref</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
+    <thead><tr><th>Ref</th><th>Order No</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(p=>{const tot=purchaseTotal(p),its=purchaseItems(p),more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';return `<tr>
-      <td><b class="rowlink" onclick="purchaseDetail('${p.id}')" title="View purchase details">${esc(p.ref)}</b></td><td>${fmtDate(p.date)}</td>
+      <td><b class="rowlink" onclick="purchaseDetail('${p.id}')" title="View purchase details">${esc(p.ref)}</b></td><td>${esc(p.orderNo||p.ref)}</td><td>${fmtDate(p.date)}</td>
       <td><div class="prodcell">${productStack(its)}<div><b style="color:${prodNameColor(productById(its[0]?.productId))}">${esc(purchaseFirstName(p))}</b>${more}</div></div></td>
       <td class="num">${num(purchaseQty(p))}</td><td class="num"><b>${money(tot)}</b></td>
       <td>${esc(p.supplier||'—')}</td><td>${payMethodTag(p.payment||'cash')}</td>
@@ -2014,9 +2014,10 @@ function renderPurchaseModal(){
   const id=_buyEditId, p=id?DB.purchases.find(x=>x.id===id):null;
   openModal(`${id?'Edit':'New'} Purchase`,`
     ${flowScaffold('b_flow',['Products','Payment','Settled'])}
-    <div class="grid2">
+    <div class="grid3">
       <div class="field"><label>Date *</label><input id="b_date" type="date" value="${p?p.date:todayStr()}"></div>
       <div class="field"><label>Supplier (purchaser name)</label><input id="b_sup" list="dl_sup" value="${esc(p?p.supplier||'':'')}" placeholder="e.g. Carrefour Deira">${dataList('dl_sup',allSuppliers())}</div>
+      <div class="field"><label>Order No.</label><input id="b_orderno" value="${esc(p?p.orderNo||'':'')}" placeholder="supplier bill / order no — auto if blank"></div>
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products *</label>
     <div class="line-items"><div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Cost/unit</div><div>Amount</div><div></div></div><div id="b_rows"></div></div>
@@ -2232,7 +2233,7 @@ function savePurchase(id){
   // gift cards can't go below zero — block if any gift card is overspent
   const giftReq={}; rawSplits.forEach(s=>{ if(payMethodInfo(s.method).savedGift&&s.giftId)giftReq[s.giftId]=(giftReq[s.giftId]||0)+(+s.amount||0); });
   for(const gid in giftReq){ const g=giftById(gid); if(g){ const av=giftAvailForSplit(g); if(giftReq[gid]-av>1e-6) return toast(`${g.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
-  const date=$('#b_date').value, supplier=$('#b_sup').value.trim();
+  const date=$('#b_date').value, supplier=$('#b_sup').value.trim(), orderNo=($('#b_orderno')?.value||'').trim();
   const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard; const isBorrow=s.method==='cardborrow';
     return {method:s.method,cardId:linksCard?(s.cardId||''):'',giftId:info.savedGift?(s.giftId||''):'',lenderId:isBorrow?(s.lenderId||''):'',lenderCardId:isBorrow?(s.lenderCardId||''):'',commission:isBorrow?(+s.commission||0):0,ref:(linksCard||info.savedGift||isBorrow)?'':(s.ref||'').trim(),deductPct:s.method==='cash'?(+s.deductPct||0):0,amount:+s.amount}; });
   // A card may be swiped past its limit ONLY if it's flagged "allow negative".
@@ -2247,10 +2248,11 @@ function savePurchase(id){
   if(paid>tot+0.01) return toast(`Payment ${money(paid)} exceeds the purchase total ${money(tot)} — overpayment isn't allowed. Reduce the amount(s).`,1);
   const methodTag = splits.length===0?'cash':(splits.length===1?splits[0].method:'split');
   const payments = splits.map(s=>({id:uid(),date,amount:s.amount,method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',lenderId:s.lenderId||'',lenderCardId:s.lenderCardId||'',commission:s.commission||0,deductPct:s.deductPct||0,payRef:s.ref||'',ref:'Initial'}));
-  const data={date,supplier,items,discount,payment:methodTag,paid,payments};
+  const data={date,supplier,orderNo,items,discount,payment:methodTag,paid,payments};
   const negMsg=negWarn.length?(' · 🔴 '+negWarn.map(n=>`${n.name} negative ${money(n.over)}`).join(', ')+' — pay immediately'):'';
   if(id){ // EDIT existing — confirm; workers route to admin approval
     const rec=DB.purchases.find(x=>x.id===id); const ref=rec?rec.ref:'';
+    data.orderNo = orderNo || (rec&&rec.orderNo) || ref || '';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
     return confirmBox('Save changes?',`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated.`,()=>{
       commitPurchase(id,data); save();closeModal();renderPurchases();renderBell();toast('Purchase updated'+negMsg, negWarn.length?1:0);
@@ -2258,6 +2260,7 @@ function savePurchase(id){
   }
   // NEW purchase (allowed for owner & worker)
   DB.counters.purchase++; const purchaseId=uid(), ref='PUR-'+String(DB.counters.purchase).padStart(4,'0');
+  data.orderNo = orderNo || ref;
   DB.purchases.push({id:purchaseId,ref,byId:session.id,...data});
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } }
@@ -2915,20 +2918,21 @@ function renderOnline(){
   const q=($('#onlSearch')?.value||'').toLowerCase();
   const hideDone=$('#onlHideDone')?.checked;
   const match=o=> onlItemsArr(o).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);})
-    || (o.platform||'').toLowerCase().includes(q) || (o.supplier||'').toLowerCase().includes(q) || (o.ref||'').toLowerCase().includes(q) || (o.tracking||'').toLowerCase().includes(q);
+    || (o.platform||'').toLowerCase().includes(q) || (o.supplier||'').toLowerCase().includes(q) || (o.ref||'').toLowerCase().includes(q) || (o.orderNo||'').toLowerCase().includes(q) || (o.tracking||'').toLowerCase().includes(q);
   let rows=[...(DB.online||[])].sort((a,b)=>(a.orderDate<b.orderDate?1:a.orderDate>b.orderDate?-1:0)).filter(match);
   if(hideDone) rows=rows.filter(o=>o.status!=='delivered'&&o.status!=='cancelled'&&o.status!=='returned');
   if(!(DB.online||[]).length){ host.innerHTML=`<div class="panel">${emptyBox('🛒','No online orders yet','Record an order you placed online. It waits here until it arrives, then moves into inventory.')}</div>`; return; }
   if(!rows.length){ host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No online orders match your filter.')}</div>`; return; }
   const today=todayStr();
   host.innerHTML=`<div class="table-wrap"><table style="min-width:900px">
-    <thead><tr><th>Ref</th><th>Ordered</th><th>Expected</th><th>Products</th><th class="num">Qty</th><th class="num">Est. total</th><th class="num">Paid</th><th>Platform</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Ref</th><th>Order No</th><th>Ordered</th><th>Expected</th><th>Products</th><th class="num">Qty</th><th class="num">Est. total</th><th class="num">Paid</th><th>Platform</th><th>Status</th><th></th></tr></thead>
     <tbody>${rows.map(o=>{ const its=onlItemsArr(o), more=its.length>1?` <span style="color:var(--muted2)">+${its.length-1} more</span>`:'';
       const overdue=(o.status==='ordered'||o.status==='shipped')&&o.expectedDate&&o.expectedDate<today;
       const linked=o.purchaseId&&DB.purchases.find(p=>p.id===o.purchaseId);
       const paid=(o.status!=='cancelled'&&o.status!=='returned'&&+o.payAmt>0)?(+o.payAmt||0):0;
       return `<tr>
         <td><b class="rowlink" onclick="onlineDetail('${o.id}')" title="View order details">${esc(o.ref)}</b></td>
+        <td>${esc(o.orderNo||o.ref)}</td>
         <td>${fmtDate(o.orderDate)}</td>
         <td>${o.expectedDate?`${fmtDate(o.expectedDate)}${overdue?' <span class="tag due">overdue</span>':''}`:'—'}</td>
         <td><div class="prodcell">${productStack(its)}<div><b style="color:${prodNameColor(productById(its[0]?.productId))}">${esc(onlFirstName(o))}</b>${more}</div></div></td>
@@ -2969,9 +2973,10 @@ function renderOnlineModal(o){
   const payMethSel=(o&&o.payMethod)||'cash';
   _onlPay={lenderId:(o&&o.payLenderId)||'',lenderCardId:(o&&o.payLenderCardId)||'',commission:(o&&o.payCommission!=null?o.payCommission:'')};
   openModal(`${id?'Edit':'New'} Online Order`,`
-    <div class="grid2">
+    <div class="grid3">
       <div class="field"><label>Platform / Store *</label><input id="o_plat" list="dl_onlplat" value="${esc(o?o.platform||'':'')}" placeholder="e.g. Amazon.ae, Noon, AliExpress">${dataList('dl_onlplat',allOnlinePlatforms())}</div>
       <div class="field"><label>Seller / Supplier</label><input id="o_sup" list="dl_sup" value="${esc(o?o.supplier||'':'')}" placeholder="optional">${dataList('dl_sup',allSuppliers())}</div>
+      <div class="field"><label>Order No.</label><input id="o_orderno" value="${esc(o?o.orderNo||'':'')}" placeholder="platform order no — auto if blank"></div>
     </div>
     <div class="grid3">
       <div class="field"><label>Order Date *</label><input id="o_date" type="date" value="${o?o.orderDate:todayStr()}"></div>
@@ -3111,11 +3116,12 @@ function saveOnline(id){
     if(info.ref && !info.savedCard && !info.savedGift && payMethod!=='cardborrow'){ payRef=($('#o_payref')?.value||'').trim(); if(info.ref==='mandatory'&&!payRef)return toast(info.refLabel.replace(/ \((required|optional)\)/,'')+' is required',1); }
   }
   const payDate=$('#o_paydate')?.value||$('#o_date').value||todayStr();
-  const data={platform,supplier:$('#o_sup').value.trim(),orderDate:$('#o_date').value||todayStr(),expectedDate:$('#o_exp').value||'',tracking:$('#o_track').value.trim(),notes:$('#o_notes').value.trim(),items,discount,
+  const data={platform,orderNo:($('#o_orderno')?.value||'').trim(),supplier:$('#o_sup').value.trim(),orderDate:$('#o_date').value||todayStr(),expectedDate:$('#o_exp').value||'',tracking:$('#o_track').value.trim(),notes:$('#o_notes').value.trim(),items,discount,
     payAmt,payMethod:payAmt>0?payMethod:'',payCardId,payGiftId,payDeductPct,payRef,payLenderId,payLenderCardId,payCommission,payDate:payAmt>0?payDate:''};
   if(id){
     const rec=(DB.online||[]).find(x=>x.id===id); if(!rec)return; if(rec.status==='delivered')return toast('Delivered orders are purchases now',1);
     revertOnlinePay(rec);            // undo the old prepayment's wallet effect
+    data.orderNo = data.orderNo || rec.orderNo || rec.ref || '';
     Object.assign(rec,data);
     if(rec.status!=='cancelled') applyOnlinePay(rec);   // re-apply the new prepayment (a cancelled order stays reverted)
     logAct('edit','online order',rec.ref,`Edited · ${items.length} item(s) · ${money(tot)}${payAmt>0?' · paid '+money(payAmt):''}`);
@@ -3127,6 +3133,7 @@ function saveOnline(id){
   if(!DB.counters.online)DB.counters.online=0;
   DB.counters.online++; const ref='ONL-'+String(DB.counters.online).padStart(4,'0');
   const o={id:uid(),ref,status:'ordered',byId:session.id,createdTs:todayStr(),purchaseId:'',...data};
+  if(!o.orderNo) o.orderNo = ref;
   DB.online.push(o);
   applyOnlinePay(o);
   logAct('create','online order',ref,`New · ${items.length} item(s) · ${platform} · ${money(tot)}${payAmt>0?' · paid '+money(payAmt):''}`);
@@ -3314,6 +3321,7 @@ function onlineDetail(id){
       <div><div style="color:var(--muted);font-size:12px">Status</div>${onlStatusTag(o.status)}</div>
       ${cell('Ordered',fmtDate(o.orderDate))}
       ${cell('Expected',o.expectedDate?fmtDate(o.expectedDate):'—')}
+      ${cell('Order No',esc(o.orderNo||o.ref||'—'))}
       ${o.supplier?cell('Seller',esc(o.supplier)):''}
       ${o.tracking?cell('Tracking',esc(o.tracking)):''}
       <div><div style="color:var(--muted);font-size:12px">Payment</div><b>${payLine}</b></div>
@@ -3484,12 +3492,12 @@ function renderSales(){
   const host=$('#saleList'); if(!host)return;
   const q=($('#saleSearch')?.value||'').toLowerCase();
   const eng=isOwner()?computeEngine():null;
-  const rows=[...DB.sales].sort((a,b)=>a.date<b.date?1:-1).filter(s=>s.invoiceNo.toLowerCase().includes(q)||(s.customer||'').toLowerCase().includes(q));
+  const rows=[...DB.sales].sort((a,b)=>a.date<b.date?1:-1).filter(s=>s.invoiceNo.toLowerCase().includes(q)||(s.customer||'').toLowerCase().includes(q)||(s.billNo||'').toLowerCase().includes(q));
   if(!DB.sales.length){host.innerHTML=`<div class="panel">${emptyBox('🧾','No sales yet','Create your first sales bill.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Product</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
+    <thead><tr><th>Invoice</th><th>Bill No</th><th>Date</th><th>Customer</th><th>Product</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
     <tbody>${rows.map(s=>{const prof=isOwner()?netOf(s)-(eng.saleCost[s.id]||0):0;return `<tr>
-      <td><b class="rowlink" onclick="saleDetail('${s.id}')" title="View bill details">${esc(s.invoiceNo)}</b></td><td>${fmtDate(s.date)}</td>
+      <td><b class="rowlink" onclick="saleDetail('${s.id}')" title="View bill details">${esc(s.invoiceNo)}</b></td><td>${esc(s.billNo||s.invoiceNo)}</td><td>${fmtDate(s.date)}</td>
       <td>${esc(s.customer||'Walk-in')}${s.custPhone?` <a href="tel:${esc((s.custPhone||'').replace(/\s+/g,''))}" onclick="event.stopPropagation()" title="Call ${esc(s.custPhone)}" style="text-decoration:none;margin-left:4px">📞</a>`:''}</td>
       <td><div class="prodcell">${productStack(s.items)}<div><b style="color:${prodNameColor(productById(s.items[0]?.productId))}">${esc(itemsFirstName(s.items))}</b>${s.items.length>1?` <span style="color:var(--muted2)">+${s.items.length-1} more</span>`:''}</div></div></td><td class="num"><b>${money(s.total)}</b></td>
       ${isOwner()?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}
@@ -3532,7 +3540,8 @@ function newSale(id,prefillPid){
       <div class="field"><label>Customer (buyer name)</label><input id="s_cust" list="dl_cust" value="${esc(cust||'')}" placeholder="Walk-in" onchange="saleCustAutofill()" oninput="saleCustAutofill()">${dataList('dl_cust',allCustomers())}</div>
       <div class="field"><label>Customer Phone</label><input id="s_phone" value="${esc(phone||'')}" placeholder="optional"></div>
     </div>
-    <div class="grid2">
+    <div class="grid3">
+      <div class="field"><label>Bill No</label><input id="s_billno" value="${esc(s?s.billNo||'':'')}" placeholder="bill-book no — auto if blank"></div>
       <div class="field"><label>Customer Address</label><input id="s_addr" value="${esc(addr)}" placeholder="optional — shown on bill"></div>
       <div class="field"><label>Customer VAT No.</label><input id="s_vat" value="${esc(vatNo)}" placeholder="TRN — shown on VAT bill"></div>
     </div>
@@ -3664,7 +3673,7 @@ function saveSale(id,print){
   if(paid>t.total+0.01) return toast(`Amount received ${money(paid)} exceeds the bill total ${money(t.total)} — overpayment isn't allowed. Reduce the amount.`,1);
   const payMeta={}; if(deductPct>0)payMeta.deductPct=deductPct;
   const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
-    custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),collectedBy:($('#s_collby')?.value||session.id),
+    custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),billNo:($('#s_billno')?.value||'').trim(),collectedBy:($('#s_collby')?.value||session.id),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
     payment:method,discount:+($('#s_disc').value||0),vatMode:t.mode,
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
@@ -3673,6 +3682,7 @@ function saveSale(id,print){
   if(id){ // EDIT — confirm; workers route to admin approval
     const rec=DB.sales.find(x=>x.id===id); const inv=rec?rec.invoiceNo:'';
     const data={...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Updated'}]:[]};
+    data.billNo = base.billNo || (rec&&rec.billNo) || inv || '';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?${creditNote}`,()=>queueApproval('sale','edit',id,inv,data),'Send');
     return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.${creditNote}`,()=>{
       commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>openSalePdf(id),120); },'Save');
@@ -3680,7 +3690,7 @@ function saveSale(id,print){
   // NEW sale
   const commitNew=()=>{
     DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
-    DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
+    DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,billNo:base.billNo||inv,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
     save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
     if(print)setTimeout(()=>openSalePdf(nid),120);
   };
@@ -5498,6 +5508,7 @@ function saleDetail(id){
   openModal(`${hasVat?'Tax Invoice':'Invoice'} ${esc(s.invoiceNo)}`,`
     <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
       ${miniStat('Date',fmtDate(s.date))}
+      ${miniStat('Bill No',esc(s.billNo||s.invoiceNo||'—'))}
       ${miniStat('Customer',esc(s.customer||'Walk-in'))}
       ${miniStat('Total',money(s.total))}
       ${miniStat(bal>0.01?'Balance Due':'Status',bal>0.01?money(bal):'Paid',bal>0.01?'var(--red)':'var(--green)')}
@@ -5533,6 +5544,7 @@ function purchaseDetail(id){
   openModal('Purchase '+esc(p.ref),`
     <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
       ${miniStat('Date',fmtDate(p.date))}
+      ${miniStat('Order No',esc(p.orderNo||p.ref||'—'))}
       ${miniStat('Supplier',esc(p.supplier||'—'))}
       ${miniStat('Total',money(tot))}
       ${miniStat(bal>0.01?'Balance Due':'Status',bal>0.01?money(bal):'Paid',bal>0.01?'var(--red)':'var(--green)')}
