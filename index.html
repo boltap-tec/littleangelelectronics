@@ -477,6 +477,15 @@ td.num,th.num{text-align:right}
 /* out-of-stock group — dimmed like an inactive section */
 #invList .inv-zero{opacity:.7}
 #invList .inv-zero:hover{opacity:1}
+/* Stock Check (temporary count sheet) */
+#invList table.sc-grid{min-width:0}
+#invList table.sc-grid tbody td:first-child,#invList table.sc-grid thead th:first-child{position:static;box-shadow:none;background:transparent;text-align:center;width:46px}
+#invList tr.sc-done{background:rgba(46,216,115,.10)}
+#invList tr.sc-done:hover{background:rgba(46,216,115,.16)}
+body.light #invList tr.sc-done{background:rgba(31,138,76,.08)}
+.sc-chk{width:20px;height:20px;cursor:pointer;accent-color:#2fd873;vertical-align:middle}
+.sc-count{width:88px;background:var(--panel2);border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:7px 9px;font-size:14px;font-weight:700;text-align:right}
+.sc-count:focus{outline:none;border-color:var(--gold2,#f5b301)}
 .tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700}
 .tag.cash{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.card{background:var(--brandsoft);color:#c7c9ff;border:1px solid #4338ca}
@@ -5341,6 +5350,60 @@ function lastBuyKey(pid){ let k=''; DB.purchases.forEach(p=>{ if(purchaseItems(p
 let _invSort='recent', _invShowCat=false;
 function setInvSort(v){ _invSort=v; renderInventory(); }
 function toggleInvCat(){ _invShowCat=!_invShowCat; renderInventory(); }
+
+/* =========================================================
+   STOCK CHECK — a temporary count sheet.
+   Tick each item as you physically verify it, optionally type the
+   counted quantity; mismatches vs system stock are flagged live.
+   State lives ONLY in the browser (localStorage) so a reload won't
+   lose a half-done count. It NEVER changes real inventory data.
+   ========================================================= */
+const SC_KEY='la_stockcheck_v1';
+let _invCheckMode=false, _scOnlyUnchecked=false, _scQty={};
+let _scState=(function(){ try{return JSON.parse(localStorage.getItem(SC_KEY))||{};}catch(e){return {};} })();
+function scSave(){ try{localStorage.setItem(SC_KEY,JSON.stringify(_scState));}catch(e){} }
+function toggleInvCheck(){ _invCheckMode=!_invCheckMode; if(!_invCheckMode)_scOnlyUnchecked=false; renderInventory(); }
+function scToggleUnchecked(){ _scOnlyUnchecked=!_scOnlyUnchecked; renderInventory(); }
+function scClearAll(){ confirmBox('Clear stock check?','This clears every tick &amp; count on this check sheet. Your real inventory is <b>not</b> changed.',()=>{ _scState={}; scSave(); renderInventory(); toast('Stock check cleared'); },'Clear sheet'); }
+function scDiffHtml(counted,sys){ if(counted==='') return '<span style="color:var(--muted2)">—</span>';
+  const d=Number(counted)-sys; return d===0?'<span class="tag ok">match</span>':`<span class="tag low">${d>0?'+':'−'}${num(Math.abs(d))}</span>`; }
+function scTick(pid,on){ const st=_scState[pid]||(_scState[pid]={}); st.checked=on; scSave();
+  const tr=document.getElementById('scr_'+pid); if(tr)tr.classList.toggle('sc-done',on); scUpdateProgress(); }
+function scCount(pid,val){ const st=_scState[pid]||(_scState[pid]={}); const empty=(val==null||val==='');
+  if(empty) delete st.counted; else { st.counted=val; st.checked=true; } scSave();
+  const cell=document.getElementById('scd_'+pid); if(cell) cell.innerHTML=scDiffHtml(empty?'':val,_scQty[pid]||0);
+  const tr=document.getElementById('scr_'+pid); if(tr){ tr.classList.toggle('sc-done',!!st.checked); const c=tr.querySelector('.sc-chk'); if(c)c.checked=!!st.checked; }
+  scUpdateProgress(); }
+function scUpdateProgress(){ const ids=Object.keys(_scQty); let checked=0,counted=0,mismatch=0;
+  ids.forEach(pid=>{ const st=_scState[pid]; if(!st)return; if(st.checked)checked++;
+    const cv=st.counted; if(cv===0||cv){ counted++; if(Number(cv)!==(_scQty[pid]||0))mismatch++; } });
+  const el=$('#scProg'); if(el) el.innerHTML=`<b>${checked}</b> / ${ids.length} ticked · <b>${counted}</b> counted · <span style="color:${mismatch?'var(--red)':'var(--green)'};font-weight:700">${mismatch} mismatch${mismatch===1?'':'es'}</span>`; }
+function scRow(x){ const st=_scState[x.p.id]||{}; const checked=!!st.checked;
+  const cv=(st.counted===0||st.counted)?String(st.counted):'';
+  return `<tr id="scr_${x.p.id}" class="${checked?'sc-done':''}">
+    <td><input type="checkbox" class="sc-chk" ${checked?'checked':''} onchange="scTick('${x.p.id}',this.checked)" title="Tick when checked"></td>
+    <td><div class="prodcell">${productThumbEdit(x.p)}<b style="color:${prodNameColor(x.p)}">${esc(x.p.name)}</b></div></td>
+    <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
+    <td class="num"><input type="number" inputmode="decimal" class="sc-count" value="${esc(cv)}" placeholder="count" oninput="scCount('${x.p.id}',this.value)"></td>
+    <td class="num" id="scd_${x.p.id}">${scDiffHtml(cv,x.qty)}</td>
+  </tr>`; }
+function renderStockCheck(data,host){
+  _scQty={}; data.forEach(x=>_scQty[x.p.id]=x.qty);
+  let rows=[...data].sort((a,b)=>a.p.name.localeCompare(b.p.name));
+  if(_scOnlyUnchecked) rows=rows.filter(x=>!(_scState[x.p.id]&&_scState[x.p.id].checked));
+  const head=`<thead><tr><th>✓</th><th>Product</th><th class="num">System</th><th class="num">Counted</th><th class="num">Diff</th></tr></thead>`;
+  host.innerHTML=`
+    <div class="panel" style="padding:12px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
+      <div><div class="cat-head" style="margin:0 0 4px">✅ Stock check <span class="cc">temporary · not saved to inventory</span></div><div id="scProg" class="li-hint"></div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="mini-btn ${_scOnlyUnchecked?'gold':''}" onclick="scToggleUnchecked()">${_scOnlyUnchecked?'● Only unchecked':'Only unchecked'}</button>
+        <button class="mini-btn red" onclick="scClearAll()">Clear sheet</button>
+      </div>
+    </div>
+    ${rows.length?`<div class="table-wrap"><table class="sc-grid">${head}<tbody>${rows.map(scRow).join('')}</tbody></table></div>`
+      :`<div class="panel">${emptyBox('✅','All ticked','Every shown item is checked. Turn off "Only unchecked" to see them all.')}</div>`}`;
+  scUpdateProgress();
+}
 /* category-wise totals (pieces + value) for in-stock items, with a grand total row */
 function invCatTotalsHtml(catAgg,totUnits,totVal){
   const cats=Object.keys(catAgg).sort((a,b)=>a==='Uncategorised'?1:b==='Uncategorised'?-1:a.localeCompare(b));
@@ -5565,6 +5628,7 @@ function purchaseDetail(id){
 views.inventory=function(){
   return `
   <div class="page-head"><div><h2>Inventory</h2><p>Total purchased, sold & balance stock — with weighted-average cost. Buy or sell any item in one click.</p></div>
+    <button class="btn-sm btn-gold" id="scToggleBtn" style="align-self:flex-end" onclick="toggleInvCheck()">✓ Stock Check</button>
     <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="toggleInvCat()">📊 Category Totals</button>
     <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="exportInventoryExcel()">⬇ Excel</button>
     <div class="field" style="margin:0;min-width:210px"><label>Sort by</label>
@@ -5597,10 +5661,12 @@ function renderInventory(){
     <div class="stat gold"><span class="ic">🏷️</span><div class="label">Products</div><div class="val">${DB.products.length}</div></div>
     <div class="stat red"><span class="ic">⚠️</span><div class="label">Low Stock</div><div class="val">${low}</div><div class="foot">≤ ${S().lowStockLevel} units</div></div>
     <div class="stat"><span class="ic">🚫</span><div class="label">Out of Stock</div><div class="val">${out}</div></div>`;
-  const ct=$('#invCatTotals'); if(ct)ct.innerHTML=_invShowCat?invCatTotalsHtml(catAgg,totUnits,totVal):'';
+  const scBtn=$('#scToggleBtn'); if(scBtn){ scBtn.textContent=_invCheckMode?'✕ Exit Stock Check':'✓ Stock Check'; scBtn.classList.toggle('btn-gold',!_invCheckMode); scBtn.classList.toggle('btn-red',_invCheckMode); }
+  const ct=$('#invCatTotals'); if(ct)ct.innerHTML=(_invShowCat&&!_invCheckMode)?invCatTotalsHtml(catAgg,totUnits,totVal):'';
   const host=$('#invList'); if(!host)return;
   if(!DB.products.length){host.innerHTML=`<div class="panel">${emptyBox('📦','No inventory','Add products & purchases to see stock.')}</div>`;return;}
   if(!data.length){host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match your search.')}</div>`;return;}
+  if(_invCheckMode){ renderStockCheck(data,host); return; }
   /* in-stock items shown normally; zero-inventory items grouped separately at the bottom (dimmed, like inactive cards) */
   const inStock=data.filter(x=>x.qty>0), zero=data.filter(x=>x.qty<=0);
   const zeroSection=()=>{ if(!zero.length)return ''; const z=[...zero].sort((a,b)=>a.p.name.localeCompare(b.p.name));
