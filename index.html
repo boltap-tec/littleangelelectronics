@@ -772,6 +772,10 @@ body.light .tag.load{background:#e3f7ea;color:#1f8a4c;border-color:#b6e6c8}
 body.light .tag.spend{background:#fde7e7;color:#c62b2b;border-color:#f4c4c4}
 .tag.adjust{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
 body.light .tag.adjust{background:#e2f1fb;color:#1667a3;border-color:#bcdcf0}
+.tag.oldpay{background:#23272e;color:#b9c2cf;border:1px solid #3a4150}
+body.light .tag.oldpay{background:#eef1f5;color:#56637a;border-color:#d3d9e2}
+.tag.oldbal{background:#3a2a12;color:#f3c37a;border:1px solid #6b4e1f}
+body.light .tag.oldbal{background:#fdf1dc;color:#9a6a12;border-color:#efd5a3}
 
 /* ===== dashboard quick-tiles (screenshot style) ===== */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px;margin-bottom:8px}
@@ -4003,7 +4007,9 @@ function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(
 function ym(d){ return (d||'').slice(0,7); }
 /* outstanding = opening + purchases − (payments+recharges+discounts) */
 function cardOutstanding(c){ let o=+c.openingOutstanding||0;
-  (c.txns||[]).forEach(t=> o += (t.type==='purchase' ? (+t.amount||0) : -(+t.amount||0)) ); return o; }
+  /* 'oldpay' is a record-only historical payment — shown in history but never moves the balance/limit.
+     'oldbal' is last month's carried-over balance — it adds to what you owe (like a charge) until paid. */
+  (c.txns||[]).forEach(t=>{ if(t.type==='oldpay')return; o += ((t.type==='purchase'||t.type==='oldbal') ? (+t.amount||0) : -(+t.amount||0)); }); return o; }
 function cardAvailable(c){ return (+c.creditLimit||0) - cardOutstanding(c); }
 function cardDiscountInMonth(c,m){ return (c.txns||[]).filter(t=>t.type==='discount' && ym(t.date)===m).reduce((s,t)=>s+(+t.amount||0),0); }
 function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date(); t.setHours(0,0,0,0);
@@ -4028,6 +4034,15 @@ function cardStatementDate(c){
   const s=new Date(due); s.setDate(s.getDate()-20); return s;
 }
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
+/* the occurrence of a card's payment day NEAREST to today — may be in the recent
+   past (unlike cardDueDate, which always rolls to the next upcoming cycle). Used by
+   the "due within ±N days" window so a due date that just passed still shows up. */
+function cardDueNearToday(c){ const t=new Date(); t.setHours(0,0,0,0);
+  const day=(c&&+c.paymentDay)||1, y=t.getFullYear(), m=t.getMonth();
+  const cands=[monthDay(y,m-1,day), monthDay(y,m,day), monthDay(y,m+1,day)];
+  let best=cands[0]; cands.forEach(d=>{ if(Math.abs(d-t)<Math.abs(best-t)) best=d; }); return best; }
+/* human label for signed "days left": negative = overdue, 0 = today, positive = upcoming */
+function dueLeftTxt(dleft){ return dleft<0 ? (Math.abs(dleft)+'d ago') : (dleft===0?'today':('in '+dleft+'d')); }
 /* due reminders: only UNPAID cards (outstanding>0), soonest due first; paid cards never show */
 function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=cardDueDate(c); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
   .filter(r=>r.out>0.005 && r.dleft<=10).sort((a,b)=>a.dleft-b.dleft); }
@@ -4319,9 +4334,9 @@ function exportActivityExcel(){
 }
 
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
-const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND'};
+const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND',oldpay:'OLD PAYMENT',oldbal:'OLD BALANCE'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
-function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend');
+function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend'&&t.type!=='oldbal');
   return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
 function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && ![1,2,3,4,5].includes(pct);
   return `<select id="${idSel}" onchange="redeemToggle('${idSel}','${idOther}')">
@@ -4592,6 +4607,8 @@ function cardDetail(id){
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
       <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Cashback</button>
       <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','purchase')">− Manual charge</button>
+      <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','oldbal')" title="Record last month's carried-over balance as owed, so you can pay it now with ＋ Payment">🧾 Old balance</button>
+      <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','oldpay')" title="Log a past payment for the record only — does not change the balance or limit">🕘 Old payment</button>
       ${isOwner()?`<button class="btn-sm btn-ghost" onclick="adjustBalanceModal('${c.id}')">✎ Edit balance</button>`:''}
     </div>
     <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
@@ -4613,13 +4630,13 @@ function cardTxnModal(id,type,txnId){
   const c=cardById(id); if(!c)return;
   const edit = txnId ? (c.txns||[]).find(t=>t.id===txnId) : null;
   const out=cardOutstanding(c), avail=cardAvailable(c);
-  const sign = (type==='purchase') ? -1 : 1;                 // how the amount moves AVAILABLE
+  const sign = (type==='purchase'||type==='oldbal') ? -1 : (type==='oldpay') ? 0 : 1;   // how the amount moves AVAILABLE (oldpay = record only, no movement; oldbal = carried-over balance owed)
   const base = edit ? (avail - sign*(+edit.amount||0)) : avail;   // available without this entry
   const preAmt = edit ? (+edit.amount||0) : 0;
   _ctBase=base; _ctSign=sign; _ctNeg=!!c.allowNegative;
-  const word={recharge:'recharge',payment:'payment',deposit:'deposit',discount:'cashback',purchase:'charge'}[type]||'entry';
-  const titles={payment:'Record Card Payment',deposit:'Card Deposit',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge'};
-  const hints={payment:'Amount you paid the bank — frees up your available limit.',deposit:'Cash deposited into the card to pay down what you owe — frees up the available limit. Taken from your cash box.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
+  const word={recharge:'recharge',payment:'payment',deposit:'deposit',discount:'cashback',purchase:'charge',oldpay:'record',oldbal:'old balance'}[type]||'entry';
+  const titles={payment:'Record Card Payment',deposit:'Card Deposit',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge',oldpay:'Record Old Payment',oldbal:'Add Old Credit Balance'};
+  const hints={payment:'Amount you paid the bank — frees up your available limit.',deposit:'Cash deposited into the card to pay down what you owe — frees up the available limit. Taken from your cash box.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.',oldpay:'A past payment you already made — logged in this card\'s history for your records only. It does NOT change the outstanding balance or available limit, and is not deducted from your cash box.',oldbal:'Last month\'s carried-over balance that is still owed on this card. It adds to the outstanding so you can pay it now with ＋ Payment — the two entries balance each other out.'};
   const dueDate=cardDueDate(c);
   openModal((edit?'Edit ':'')+(titles[type]||'Card entry'),`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
@@ -6077,7 +6094,7 @@ function daySummaryHtml(dstr){
   const invRows=g.sales.map(s=>{const bal=s.total-(s.paid||0),prof=netOf(s)-(eng.saleCost[s.id]||0);return `<tr><td>${esc(s.invoiceNo)}</td><td>${esc(s.customer||'Walk-in')}</td><td>${esc(itemsFirstName(s.items))}${s.items.length>1?' +'+(s.items.length-1):''}</td><td>${(s.payment||'cash').toUpperCase()}</td><td class="r">${M(s.total)}</td><td class="r">${M(s.paid||0)}</td><td class="r">${M(bal)}</td>${owner?`<td class="r">${M(prof)}</td>`:''}</tr>`;}).join('');
   const purRows=g.purch.map(p=>{const tot=purchaseTotal(p),bal=tot-(p.paid||0);return `<tr><td>${esc(p.ref)}</td><td>${esc(p.supplier||'—')}</td><td class="r">${num(purchaseQty(p))}</td><td class="r">${M(tot)}</td><td>${(p.payment||'cash').toUpperCase()}</td><td class="r">${M(p.paid||0)}</td><td class="r">${M(bal)}</td></tr>`;}).join('');
   const cashRows=g.cash.map(e=>`<tr><td>${(e.cat||'').toUpperCase()}</td><td>${esc(e.desc||'')}</td><td>${esc(userName(e.who))}</td><td class="r">${e.dir==='in'?M(e.amount):''}</td><td class="r">${e.dir==='out'?M(e.amount):''}</td></tr>`).join('');
-  const cardRows=g.cards.map(t=>{const sign=t.type==='adjust'?((+t.amount>=0)?'+':'−'):(t.type==='purchase'?'−':'+');return `<tr><td>${esc(t.card)}</td><td>${txnLabel(t.type)}</td><td>${esc(t.note||'')}</td><td class="r">${sign}${M(Math.abs(+t.amount||0))}</td></tr>`;}).join('');
+  const cardRows=g.cards.map(t=>{const sign=t.type==='adjust'?((+t.amount>=0)?'+':'−'):((t.type==='purchase'||t.type==='oldbal')?'−':'+');return `<tr><td>${esc(t.card)}</td><td>${txnLabel(t.type)}</td><td>${esc(t.note||'')}</td><td class="r">${sign}${M(Math.abs(+t.amount||0))}</td></tr>`;}).join('');
   const kpi=(k,v)=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
   return `<div id="invoiceArea" style="max-width:760px;margin:0 auto;padding:30px;font-family:Segoe UI,Arial,sans-serif;color:#111;background:#fff">
     <style>
@@ -6143,7 +6160,7 @@ function cardStatementPanel(c,inR,q){
   const due=cardDueDate(c), dl=daysUntil(due);
   const asc=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   let bal=+c.openingOutstanding||0; const rr=[];
-  asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
+  asc.forEach(t=>{ if(t.type!=='oldpay') bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
   let spend=0,pay=0,redeem=0,pcount=0,maxp=0; rr.forEach(t=>{ if(t.type==='purchase'){spend+=+t.amount||0;pcount++;maxp=Math.max(maxp,+t.amount||0);} else if(t.type==='payment'||t.type==='recharge')pay+=+t.amount||0; else if(t.type==='discount')redeem+=+t.amount||0; });
   const avg=pcount?spend/pcount:0;
   /* text search over the running ledger — matches note, type label, amount or date */
@@ -6214,7 +6231,7 @@ function exportCardReportExcel(){
   const sel=$('#crCard')?.value||''; const all=DB.cards||[]; const cards= sel? all.filter(c=>c.id===sel): all;
   const rows=[['Card','Date','Type','Note','Amount','Outstanding After']];
   cards.forEach(c=>{ const asc=[...(c.txns||[])].sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0)); let bal=+c.openingOutstanding||0;
-    asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=(t.type==='purchase'?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'',num2(signed),num2(bal)]); } }); });
+    asc.forEach(t=>{ if(t.type!=='oldpay') bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'',num2(signed),num2(bal)]); } }); });
   if(rows.length===1){ toast('No card transactions in this period',1); return; }
   exportExcel('card_statement_'+todayStr()+'.xlsx',[{name:'Card Statement',rows}]);
 }
@@ -6225,12 +6242,20 @@ views.cardusage=function(){
   return `
   <div class="page-head"><div><h2>📊 Card Usage</h2><p>One row per card — limit, used, available, usage &amp; the next payment due date. Ordered by due date.</p></div>
     <div class="row-actions">
+      <select id="cuWindow" class="mini-btn srch" style="padding:9px" onchange="renderCardUsage()" title="Which due dates to show">
+        <option value="all">All due dates</option>
+        <option value="near2">Due within ±2 days of today</option>
+      </select>
+      <select id="cuCards" class="mini-btn srch" style="padding:9px" onchange="renderCardUsage()" title="Which cards to include">
+        <option value="all">All cards</option>
+        <option value="used">Utilized cards only</option>
+      </select>
       <select id="cuOrder" class="mini-btn srch" style="padding:9px" onchange="renderCardUsage()" title="Due-date order">
         <option value="near">Due date · nearest first</option>
         <option value="far">Due date · farthest first</option>
       </select>
-      <label class="chk" style="align-self:center"><input type="checkbox" id="cuUsed" onchange="renderCardUsage()"> Only used cards</label>
       <button class="btn-sm btn-green" onclick="exportCardUsageExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfCardUsage()">📄 PDF</button>
     </div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cuSearch" placeholder="Search card, holder or bank..." oninput="renderCardUsage()"></div></div>
   <div id="cuStats" class="cards"></div>
@@ -6240,12 +6265,15 @@ views._after_cardusage=()=>{ if(isOwner())renderCardUsage(); };
 /* shared, sorted & filtered rows for both the on-screen table and the Excel export */
 function cardUsageRows(){
   const order=$('#cuOrder')?.value||'near';
-  const onlyUsed=!!($('#cuUsed')?.checked);
+  const onlyUsed=($('#cuCards')?.value||'all')==='used';
+  const win=$('#cuWindow')?.value||'all';
   const q=($('#cuSearch')?.value||'').trim().toLowerCase();
   let rows=(DB.cards||[]).map(c=>{
-    const due=cardDueDate(c), limit=+c.creditLimit||0, out=cardOutstanding(c);
+    const due= win==='near2' ? cardDueNearToday(c) : cardDueDate(c);
+    const limit=+c.creditLimit||0, out=cardOutstanding(c);
     return { c, due, dleft:daysUntil(due), limit, out, avail:limit-out, usedPct: limit>0?Math.min(100,Math.max(0,out/limit*100)):0 };
   });
+  if(win==='near2') rows=rows.filter(r=>Math.abs(r.dleft)<=2);  // due dates 2 days before → 2 days after today
   if(onlyUsed) rows=rows.filter(r=>r.out>0.005);
   if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number].some(v=>(v||'').toLowerCase().includes(q)));
   rows.sort((a,b)=> order==='far' ? (b.due-a.due) : (a.due-b.due));
@@ -6266,7 +6294,7 @@ function renderCardUsage(){
   if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No cards match your filter.')}</div>`; return; }
   const tr=rows.map(r=>{
     const dueCls=(r.dleft<=3 && r.out>0.005)?'var(--red)':'';
-    const dueTxt=fmtDate(isoDate(r.due))+' · '+(r.dleft<=0?'today':r.dleft+'d');
+    const dueTxt=fmtDate(isoDate(r.due))+' · '+dueLeftTxt(r.dleft);
     return `<tr>
       <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}</div></td>
       <td>${esc(cardOwnerLabel(r.c))}</td>
@@ -6284,13 +6312,66 @@ function renderCardUsage(){
     <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Limit</th><th class="num">Used</th><th class="num">Available</th><th class="num">Usage</th><th>Next Due</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
   </div>`;
 }
+/* current window/cards filter as human labels + a filename stem, shared by Excel & PDF */
+function cardUsageReportMeta(){
+  const near=($('#cuWindow')?.value||'all')==='near2';
+  const used=($('#cuCards')?.value||'all')==='used';
+  return {
+    near, used,
+    windowLabel: near ? 'Due within ±2 days of today' : 'All due dates',
+    cardsLabel : used ? 'Utilized cards only' : 'All cards',
+    stem: 'card_usage'+(near?'_due2days':'')+(used?'_utilized':'')
+  };
+}
 function exportCardUsageExcel(){
   const rows=cardUsageRows();
   if(!rows.length){ toast('No cards to export',1); return; }
-  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Available','Usage %','Next Due','Days Left']];
+  const m=cardUsageReportMeta();
+  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Available','Usage %','Next Due','Days (– = overdue)']];
   rows.forEach(r=>out.push([r.c.name,cardOwnerLabel(r.c),r.c.bank||'',maskCard(r.c.number),num2(r.limit),num2(r.out),num2(r.avail),Math.round(r.usedPct),isoDate(r.due),r.dleft]));
-  exportExcel('card_usage_'+todayStr()+'.xlsx',[{name:'Card Usage',rows:out}]);
+  exportExcel(m.stem+'_'+todayStr()+'.xlsx',[{name:'Card Usage',rows:out}]);
 }
+/* printable table → PDF (same offscreen html2canvas → jsPDF pattern as the other reports) */
+function cardUsageReportHtml(){
+  const rows=cardUsageRows(); if(!rows.length)return '';
+  const st=S(), m=cardUsageReportMeta();
+  const tL=rows.reduce((s,r)=>s+r.limit,0), tO=rows.reduce((s,r)=>s+r.out,0), tA=rows.reduce((s,r)=>s+r.avail,0);
+  const head=['Card','Holder','Bank','Limit','Used','Available','Usage %','Next Due','Days'];
+  const isNum=idx=>(idx>=3&&idx<=6)||idx===8;   // Limit..Usage% and Days → right-aligned
+  const cell=(v,idx,tag,extra)=>`<${tag} style="text-align:${isNum(idx)?'right':'left'};padding:6px 9px;border-bottom:1px solid #e3e3e3;font-size:11px;white-space:nowrap${extra||''}">${esc(String(v))}</${tag}>`;
+  const th=head.map((h,idx)=>cell(h,idx,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
+  const trs=rows.map(r=>{
+    const cells=[r.c.name,cardOwnerLabel(r.c),r.c.bank||'—',money(r.limit),money(r.out),money(r.avail),Math.round(r.usedPct)+'%',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)];
+    return '<tr>'+cells.map((v,idx)=>cell(v,idx,'td')).join('')+'</tr>';
+  }).join('');
+  const foot=`<tr style="font-weight:800">${cell('Total · '+rows.length+' card'+(rows.length===1?'':'s'),0,'td',';border-top:2px solid #222')}${cell('',1,'td',';border-top:2px solid #222')}${cell('',2,'td',';border-top:2px solid #222')}${cell(money(tL),3,'td',';border-top:2px solid #222')}${cell(money(tO),4,'td',';border-top:2px solid #222')}${cell(money(tA),5,'td',';border-top:2px solid #222')}${cell((tL>0?Math.round(tO/tL*100):0)+'%',6,'td',';border-top:2px solid #222')}${cell('',7,'td',';border-top:2px solid #222')}${cell('',8,'td',';border-top:2px solid #222')}</tr>`;
+  return `<div id="usagePdfArea" style="width:820px;background:#fff;color:#111;padding:24px;font-family:Arial,Helvetica,sans-serif">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px">
+      <div><div style="font-size:20px;font-weight:800">📊 Card Usage</div>
+        <div style="font-size:12px;color:#666">${esc(m.windowLabel)} · ${esc(m.cardsLabel)} · ${rows.length} card(s)</div></div>
+      <div style="text-align:right;font-size:12px;color:#444"><b>${esc(st.company||'')}</b><br>${fmtDate(todayStr())}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${foot}</tbody></table>
+    <div style="margin-top:14px;color:#888;font-size:10px">Due date = the card's payment day. "Days" is relative to today — a negative value means the due date has passed.</div>
+  </div>`;
+}
+async function buildCardUsagePdf(){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
+  const html=cardUsageReportHtml(); if(!html){ toast('No cards to export',1); return null; }
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:860px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#usagePdfArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    return {blob:pdf.output('blob'), filename:cardUsageReportMeta().stem+'_'+todayStr()+'.pdf'};
+  }catch(e){ toast('Could not build the PDF',1); return null; }
+  finally{ document.body.removeChild(holder); }
+}
+async function pdfCardUsage(){ toast('Preparing PDF…',0); const r=await buildCardUsagePdf(); if(!r)return;
+  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
 
 /* =========================================================
    SETTINGS
