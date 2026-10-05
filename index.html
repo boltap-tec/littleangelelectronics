@@ -6251,8 +6251,8 @@ views.cardusage=function(){
         <option value="used">Utilized cards only</option>
       </select>
       <select id="cuOrder" class="mini-btn srch" style="padding:9px" onchange="renderCardUsage()" title="Due-date order">
+        <option value="far">Due date · latest first</option>
         <option value="near">Due date · nearest first</option>
-        <option value="far">Due date · farthest first</option>
       </select>
       <button class="btn-sm btn-green" onclick="exportCardUsageExcel()">⬇ Excel</button>
       <button class="btn-sm btn-ghost" onclick="pdfCardUsage()">📄 PDF</button>
@@ -6262,16 +6262,34 @@ views.cardusage=function(){
   <div id="cuBody"></div>`;
 };
 views._after_cardusage=()=>{ if(isOwner())renderCardUsage(); };
+/* split a card's outstanding into the CURRENT statement period's due and any OLD
+   due carried forward from before the current statement.
+   • prevCut = the statement cutoff one cycle before the current statement date.
+   • oldDue  = net balance billed up to prevCut still unpaid after every
+     payment/deposit/recharge/cashback made since prevCut (oldest cleared first).
+   • curDue  = the rest of the outstanding (this billing period).  oldDue+curDue = out. */
+function cardDueSplit(c){
+  const out=cardOutstanding(c), stmt=cardStatementDate(c);
+  const prevIso=isoDate(monthDay(stmt.getFullYear(), stmt.getMonth()-1, stmt.getDate()));
+  let prevBal=+c.openingOutstanding||0, payAfter=0;
+  (c.txns||[]).forEach(t=>{
+    if(t.type==='oldpay'||!t.date) return;
+    if(t.date<=prevIso){ prevBal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); }
+    else if(t.type!=='purchase'){ payAfter += (+t.amount||0); }
+  });
+  const oldDue=Math.max(0, Math.min(out, prevBal-payAfter));
+  return { oldDue, curDue:Math.max(0, out-oldDue) };
+}
 /* shared, sorted & filtered rows for both the on-screen table and the Excel export */
 function cardUsageRows(){
-  const order=$('#cuOrder')?.value||'near';
+  const order=$('#cuOrder')?.value||'far';
   const onlyUsed=($('#cuCards')?.value||'all')==='used';
   const win=$('#cuWindow')?.value||'all';
   const q=($('#cuSearch')?.value||'').trim().toLowerCase();
   let rows=(DB.cards||[]).map(c=>{
     const due= win==='near2' ? cardDueNearToday(c) : cardDueDate(c);
-    const limit=+c.creditLimit||0, out=cardOutstanding(c);
-    return { c, due, dleft:daysUntil(due), limit, out, avail:limit-out, usedPct: limit>0?Math.min(100,Math.max(0,out/limit*100)):0 };
+    const limit=+c.creditLimit||0, out=cardOutstanding(c), sp=cardDueSplit(c);
+    return { c, due, dleft:daysUntil(due), limit, out, curDue:sp.curDue, oldDue:sp.oldDue, avail:limit-out, usedPct: limit>0?Math.min(100,Math.max(0,out/limit*100)):0 };
   });
   if(win==='near2') rows=rows.filter(r=>Math.abs(r.dleft)<=2);  // due dates 2 days before → 2 days after today
   if(onlyUsed) rows=rows.filter(r=>r.out>0.005);
@@ -6301,15 +6319,18 @@ function renderCardUsage(){
       <td><span class="tag bank">${esc(r.c.bank||'—')}</span></td>
       <td class="num">${money(r.limit)}</td>
       <td class="num"${r.out>0.005?' style="color:var(--amber)"':''}>${money(r.out)}</td>
+      <td class="num"${r.curDue>0.005?'':' style="color:var(--muted2)"'}>${money(r.curDue)}</td>
+      <td class="num" style="color:${r.oldDue>0.005?'var(--red)':'var(--muted2)'}">${r.oldDue>0.005?money(r.oldDue):'—'}</td>
       <td class="num"${r.avail<0?' style="color:var(--red)"':''}>${money(r.avail)}</td>
       <td class="num">${Math.round(r.usedPct)}%</td>
       <td${dueCls?` style="color:${dueCls};font-weight:700"`:''}>${dueTxt}</td>
     </tr>`;
   }).join('');
-  const tL2=rows.reduce((s,r)=>s+r.limit,0), tO2=rows.reduce((s,r)=>s+r.out,0), tA2=rows.reduce((s,r)=>s+r.avail,0);
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tL2)}</td><td class="num">${money(tO2)}</td><td class="num">${money(tA2)}</td><td class="num">${tL2>0?Math.round(tO2/tL2*100):0}%</td><td></td></tr>`;
+  const tL2=rows.reduce((s,r)=>s+r.limit,0), tO2=rows.reduce((s,r)=>s+r.out,0), tC2=rows.reduce((s,r)=>s+r.curDue,0), tOld2=rows.reduce((s,r)=>s+r.oldDue,0), tA2=rows.reduce((s,r)=>s+r.avail,0);
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tL2)}</td><td class="num">${money(tO2)}</td><td class="num">${money(tC2)}</td><td class="num"${tOld2>0.005?' style="color:var(--red)"':''}>${money(tOld2)}</td><td class="num">${money(tA2)}</td><td class="num">${tL2>0?Math.round(tO2/tL2*100):0}%</td><td></td></tr>`;
   body.innerHTML=`<div class="panel">
-    <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Limit</th><th class="num">Used</th><th class="num">Available</th><th class="num">Usage</th><th>Next Due</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div class="table-wrap"><table style="min-width:860px"><thead><tr><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Limit</th><th class="num">Used</th><th class="num">Current Due</th><th class="num">Old Due</th><th class="num">Available</th><th class="num">Usage</th><th>Next Due</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Current Due = this statement period's charges · Old Due = unpaid balance carried from before the current statement · the two add up to Used (outstanding).</div>
   </div>`;
 }
 /* current window/cards filter as human labels + a filename stem, shared by Excel & PDF */
@@ -6327,24 +6348,25 @@ function exportCardUsageExcel(){
   const rows=cardUsageRows();
   if(!rows.length){ toast('No cards to export',1); return; }
   const m=cardUsageReportMeta();
-  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Available','Usage %','Next Due','Days (– = overdue)']];
-  rows.forEach(r=>out.push([r.c.name,cardOwnerLabel(r.c),r.c.bank||'',maskCard(r.c.number),num2(r.limit),num2(r.out),num2(r.avail),Math.round(r.usedPct),isoDate(r.due),r.dleft]));
+  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Current Statement Due','Old Due','Available','Usage %','Next Due','Days (– = overdue)']];
+  rows.forEach(r=>out.push([r.c.name,cardOwnerLabel(r.c),r.c.bank||'',maskCard(r.c.number),num2(r.limit),num2(r.out),num2(r.curDue),num2(r.oldDue),num2(r.avail),Math.round(r.usedPct),isoDate(r.due),r.dleft]));
   exportExcel(m.stem+'_'+todayStr()+'.xlsx',[{name:'Card Usage',rows:out}]);
 }
 /* printable table → PDF (same offscreen html2canvas → jsPDF pattern as the other reports) */
 function cardUsageReportHtml(){
   const rows=cardUsageRows(); if(!rows.length)return '';
   const st=S(), m=cardUsageReportMeta();
-  const tL=rows.reduce((s,r)=>s+r.limit,0), tO=rows.reduce((s,r)=>s+r.out,0), tA=rows.reduce((s,r)=>s+r.avail,0);
-  const head=['Card','Holder','Bank','Limit','Used','Available','Usage %','Next Due','Days'];
-  const isNum=idx=>(idx>=3&&idx<=6)||idx===8;   // Limit..Usage% and Days → right-aligned
+  const tL=rows.reduce((s,r)=>s+r.limit,0), tO=rows.reduce((s,r)=>s+r.out,0), tC=rows.reduce((s,r)=>s+r.curDue,0), tOld=rows.reduce((s,r)=>s+r.oldDue,0), tA=rows.reduce((s,r)=>s+r.avail,0);
+  const head=['Card','Holder','Bank','Limit','Used','Current Due','Old Due','Available','Usage %','Next Due','Days'];
+  const isNum=idx=>(idx>=3&&idx<=8)||idx===10;   // Limit..Usage% and Days → right-aligned
   const cell=(v,idx,tag,extra)=>`<${tag} style="text-align:${isNum(idx)?'right':'left'};padding:6px 9px;border-bottom:1px solid #e3e3e3;font-size:11px;white-space:nowrap${extra||''}">${esc(String(v))}</${tag}>`;
   const th=head.map((h,idx)=>cell(h,idx,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
   const trs=rows.map(r=>{
-    const cells=[r.c.name,cardOwnerLabel(r.c),r.c.bank||'—',money(r.limit),money(r.out),money(r.avail),Math.round(r.usedPct)+'%',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)];
+    const cells=[r.c.name,cardOwnerLabel(r.c),r.c.bank||'—',money(r.limit),money(r.out),money(r.curDue),r.oldDue>0.005?money(r.oldDue):'—',money(r.avail),Math.round(r.usedPct)+'%',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)];
     return '<tr>'+cells.map((v,idx)=>cell(v,idx,'td')).join('')+'</tr>';
   }).join('');
-  const foot=`<tr style="font-weight:800">${cell('Total · '+rows.length+' card'+(rows.length===1?'':'s'),0,'td',';border-top:2px solid #222')}${cell('',1,'td',';border-top:2px solid #222')}${cell('',2,'td',';border-top:2px solid #222')}${cell(money(tL),3,'td',';border-top:2px solid #222')}${cell(money(tO),4,'td',';border-top:2px solid #222')}${cell(money(tA),5,'td',';border-top:2px solid #222')}${cell((tL>0?Math.round(tO/tL*100):0)+'%',6,'td',';border-top:2px solid #222')}${cell('',7,'td',';border-top:2px solid #222')}${cell('',8,'td',';border-top:2px solid #222')}</tr>`;
+  const bt=';border-top:2px solid #222';
+  const foot=`<tr style="font-weight:800">${cell('Total · '+rows.length+' card'+(rows.length===1?'':'s'),0,'td',bt)}${cell('',1,'td',bt)}${cell('',2,'td',bt)}${cell(money(tL),3,'td',bt)}${cell(money(tO),4,'td',bt)}${cell(money(tC),5,'td',bt)}${cell(money(tOld),6,'td',bt)}${cell(money(tA),7,'td',bt)}${cell((tL>0?Math.round(tO/tL*100):0)+'%',8,'td',bt)}${cell('',9,'td',bt)}${cell('',10,'td',bt)}</tr>`;
   return `<div id="usagePdfArea" style="width:820px;background:#fff;color:#111;padding:24px;font-family:Arial,Helvetica,sans-serif">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px">
       <div><div style="font-size:20px;font-weight:800">📊 Card Usage</div>
@@ -6352,7 +6374,7 @@ function cardUsageReportHtml(){
       <div style="text-align:right;font-size:12px;color:#444"><b>${esc(st.company||'')}</b><br>${fmtDate(todayStr())}</div>
     </div>
     <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${foot}</tbody></table>
-    <div style="margin-top:14px;color:#888;font-size:10px">Due date = the card's payment day. "Days" is relative to today — a negative value means the due date has passed.</div>
+    <div style="margin-top:14px;color:#888;font-size:10px">Current Due = this statement period's charges · Old Due = unpaid balance carried from before the current statement (the two add up to Used). Due date = the card's payment day; "Days" is relative to today — a negative value means the due date has passed.</div>
   </div>`;
 }
 async function buildCardUsagePdf(){
