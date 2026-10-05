@@ -4709,9 +4709,82 @@ function expectedCashback(c,amount,m){ const pct=+c.discountPercent||0; if(pct<=
   return Math.min(amount*pct/100, cashbackCapRemaining(c,m||ym(todayStr()))); }
 /* cashback already accrued this cycle (pending until it posts on the statement) */
 function pendingCashback(c){ return cardDiscountInMonth(c,ym(todayStr())); }
+/* shared ranking so the on-screen table and the Excel/PDF exports always agree */
+function cardPrefRanked(amount,onlyFit){
+  const m=ym(todayStr());
+  let cards=activeCards().map(c=>{
+    const av=cardAvailable(c), pct=+c.discountPercent||0, capRem=cashbackCapRemaining(c,m);
+    const fits = amount<=0 ? true : (av>=amount || cardAllowsNeg(c));
+    const cb = amount>0 ? expectedCashback(c,amount,m) : 0;
+    const due=cardDueDate(c), dl=daysUntil(due);
+    return {c,av,pct,capRem,fits,cb,due,dl,pending:pendingCashback(c)};
+  });
+  if(onlyFit) cards=cards.filter(x=>x.fits);
+  cards.sort((a,b)=> (b.fits-a.fits) || (amount>0 ? (b.cb-a.cb) : (b.pct-a.pct)) || (b.av-a.av));
+  return cards;
+}
+/* table rows (array-of-arrays, with header) for export — holder & bank in their own columns */
+function cardPrefExportRows(){
+  const amount=Math.max(0,+($('#pref_amt')?.value)||0), onlyFit=!!$('#pref_fit')?.checked;
+  const cards=cardPrefRanked(amount,onlyFit);
+  const header=['Rank','Card','Holder','Bank','Available','Cashback %'];
+  if(amount>0) header.push('Earns on '+amount);
+  header.push('Cap Left','Pending Cashback','Cashback Credited');
+  const rows=[header];
+  cards.forEach((x,i)=>{
+    const r=[i+1, x.c.name, cardOwnerLabel(x.c), x.c.bank||'', num2(x.av), x.pct||0];
+    if(amount>0) r.push(x.cb>0?num2(x.cb):0);
+    r.push(x.capRem===Infinity?'No cap':num2(x.capRem), x.pending>0?num2(x.pending):0, fmtDate(isoDate(cardStatementDate(x.c))));
+    rows.push(r);
+  });
+  return {rows,cards,amount};
+}
+function exportCardPrefExcel(){
+  const {rows,cards}=cardPrefExportRows();
+  if(!cards.length){ toast('No active cards to export',1); return; }
+  exportExcel('card_preference_'+todayStr()+'.xlsx',[{name:'Card Preference',rows}]);
+}
+/* printable table → PDF (same offscreen html2canvas → jsPDF pattern as the other reports) */
+function cardPrefReportHtml(){
+  const {rows,cards,amount}=cardPrefExportRows(); if(!cards.length)return '';
+  const st=S(), head=rows[0], body=rows.slice(1);
+  const rt=(idx,len)=> (idx>=4 && idx!==len-1) ? 'right' : 'left';
+  const th=head.map((h,idx)=>`<th style="text-align:${rt(idx,head.length)};padding:7px 9px;border-bottom:2px solid #222;font-size:11px;white-space:nowrap">${esc(String(h))}</th>`).join('');
+  const trs=body.map(r=>`<tr>${r.map((v,idx)=>`<td style="text-align:${rt(idx,r.length)};padding:6px 9px;border-bottom:1px solid #e3e3e3;font-size:11px">${esc(String(v))}</td>`).join('')}</tr>`).join('');
+  return `<div id="prefPdfArea" style="width:760px;background:#fff;color:#111;padding:24px;font-family:Arial,Helvetica,sans-serif">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px">
+      <div><div style="font-size:20px;font-weight:800">⭐ Card Preference</div>
+        <div style="font-size:12px;color:#666">Ranked ${amount>0?('for '+money(amount)):'by cashback %'} · ${cards.length} active card(s)</div></div>
+      <div style="text-align:right;font-size:12px;color:#444"><b>${esc(st.company||'')}</b><br>${fmtDate(todayStr())}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>
+    <div style="margin-top:14px;color:#888;font-size:10px">Cashback posts on each card's statement date, not at the till. Advisory only.</div>
+  </div>`;
+}
+async function buildCardPrefPdf(){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
+  const html=cardPrefReportHtml(); if(!html){ toast('No active cards to export',1); return null; }
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#prefPdfArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    return {blob:pdf.output('blob'), filename:'card_preference_'+todayStr()+'.pdf'};
+  }catch(e){ toast('Could not build the PDF',1); return null; }
+  finally{ document.body.removeChild(holder); }
+}
+async function pdfCardPref(){ toast('Preparing PDF…',0); const r=await buildCardPrefPdf(); if(!r)return;
+  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
 views.cardpref=function(){
   return `
-  <div class="page-head"><div><h2>⭐ Card Preference</h2><p>Which card to use next — ranked by the cashback it earns, with enough balance to cover the spend. Cashback isn't given at the till; it posts in the statement cycle, so it's shown here as <b>pending</b> with its credit date.</p></div></div>
+  <div class="page-head"><div><h2>⭐ Card Preference</h2><p>Which card to use next — ranked by the cashback it earns, with enough balance to cover the spend. Cashback isn't given at the till; it posts in the statement cycle, so it's shown here as <b>pending</b> with its credit date.</p></div>
+    <div class="row-actions">
+      <button class="btn-sm btn-green" onclick="exportCardPrefExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfCardPref()">📄 PDF</button>
+    </div></div>
   <div class="toolbar">
     <div class="field" style="margin:0;min-width:220px"><label>Planned purchase amount (${S().currency})</label><input id="pref_amt" type="number" min="0" step="any" placeholder="e.g. 2000 — leave blank to rank by cashback %" oninput="renderCardPref()"></div>
     <label class="chk" style="align-self:flex-end"><input type="checkbox" id="pref_fit" onchange="renderCardPref()"> Only cards with enough balance</label>
@@ -4721,18 +4794,9 @@ views.cardpref=function(){
 };
 views._after_cardpref=renderCardPref;
 function renderCardPref(){
-  const host=$('#prefList'); if(!host)return; const m=ym(todayStr());
+  const host=$('#prefList'); if(!host)return;
   const amount=Math.max(0,+($('#pref_amt')?.value)||0), onlyFit=!!$('#pref_fit')?.checked;
-  let cards=activeCards().map(c=>{
-    const av=cardAvailable(c), pct=+c.discountPercent||0, capRem=cashbackCapRemaining(c,m);
-    const fits = amount<=0 ? true : (av>=amount || cardAllowsNeg(c));
-    const cb = amount>0 ? expectedCashback(c,amount,m) : 0;
-    const due=cardDueDate(c), dl=daysUntil(due);
-    return {c,av,pct,capRem,fits,cb,due,dl,pending:pendingCashback(c)};
-  });
-  if(onlyFit) cards=cards.filter(x=>x.fits);
-  // rank: cards that fit first; then by cashback earned (amount) or cashback % ; then most available
-  cards.sort((a,b)=> (b.fits-a.fits) || (amount>0 ? (b.cb-a.cb) : (b.pct-a.pct)) || (b.av-a.av));
+  const cards=cardPrefRanked(amount,onlyFit);
   const top=$('#prefTop');
   if(!cards.length){ if(top)top.innerHTML=''; host.innerHTML=`<div class="panel">${emptyBox('⭐','No cards to rank','Add active credit cards (with a cashback % and limit) to get a recommendation.')}</div>`; return; }
   const best=cards[0];
@@ -4751,11 +4815,13 @@ function renderCardPref(){
       </div></div>`;
   }
   host.innerHTML=`<div class="cat-head">Ranked ${amount>0?`for ${money(amount)}`:'by cashback %'} <span class="cc">${cards.length} active card${cards.length===1?'':'s'}</span></div>
-    <div class="table-wrap"><table style="min-width:720px">
-    <thead><tr><th>#</th><th>Card</th><th class="num">Available</th><th class="num">Cashback</th>${amount>0?'<th class="num">Earns now</th>':''}<th class="num">Cap left</th><th class="num">Pending cashback</th><th>Cashback credited</th></tr></thead>
+    <div class="table-wrap"><table style="min-width:860px">
+    <thead><tr><th>#</th><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Available</th><th class="num">Cashback</th>${amount>0?'<th class="num">Earns now</th>':''}<th class="num">Cap left</th><th class="num">Pending cashback</th><th>Cashback credited</th></tr></thead>
     <tbody>${cards.map((x,i)=>`<tr style="${!x.fits?'opacity:.55':''}">
       <td><b>${i===0&&x.fits?'🏆':(i+1)}</b></td>
-      <td><b>${esc(x.c.name)}</b>${x.c.owner?`<div style="color:var(--muted2);font-size:11.5px">👤 ${esc(x.c.owner)}</div>`:''}${!x.fits?'<div style="color:var(--red);font-size:11px">short of balance</div>':''}</td>
+      <td><b>${esc(x.c.name)}</b>${!x.fits?'<div style="color:var(--red);font-size:11px">short of balance</div>':''}</td>
+      <td>${x.c.owner&&x.c.owner.trim()?`👤 ${esc(x.c.owner.trim())}`:'<span style="color:var(--muted2)">My own</span>'}</td>
+      <td>${x.c.bank?esc(x.c.bank):'<span style="color:var(--muted2)">—</span>'}</td>
       <td class="num" style="color:${x.av<0?'var(--red)':'var(--green)'};font-weight:700">${money(x.av)}</td>
       <td class="num">${x.pct?`${x.pct}%`:'—'}</td>
       ${amount>0?`<td class="num" style="color:var(--green);font-weight:700">${x.cb>0?money(x.cb):'—'}</td>`:''}
@@ -5757,6 +5823,8 @@ views.profit=function(){
       <input id="rpTo" type="date" class="mini-btn" style="padding:9px" oninput="renderProfit()">
       <button class="btn-sm btn-ghost" onclick="clearRange()">Clear</button>
       <button class="btn-sm btn-green" onclick="exportProfitExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="exportCardPrefExcel()" title="Export the card-preference ranking (holder & bank in separate columns)">⭐ Card Pref · Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfCardPref()" title="Export the card-preference ranking as PDF">⭐ Card Pref · PDF</button>
     </div></div>
   <div id="profitBody"></div>`;
 };
