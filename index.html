@@ -3941,6 +3941,26 @@ function cardGrad(c){ return (CARD_THEMES.find(t=>t.k===(c&&c.theme))||CARD_THEM
 /* most-recent colour you saved for a given bank/issuer, so re-using a bank re-applies its look */
 function bankTheme(bank){ bank=(bank||'').trim().toLowerCase(); if(!bank)return null;
   const m=(DB.cards||[]).filter(c=>(c.bank||'').trim().toLowerCase()===bank && c.theme); return m.length?m[m.length-1].theme:null; }
+/* the colour used MOST for a bank across saved cards (ties → most recent) */
+function bankDominantTheme(bank){ bank=(bank||'').trim().toLowerCase(); if(!bank)return null;
+  const m=(DB.cards||[]).filter(c=>(c.bank||'').trim().toLowerCase()===bank && c.theme); if(!m.length)return null;
+  const n={}; m.forEach(c=>n[c.theme]=(n[c.theme]||0)+1);
+  let best=null,bn=-1; for(let i=m.length-1;i>=0;i--){ const t=m[i].theme; if(n[t]>bn){bn=n[t];best=t;} } return best; }
+/* repaint existing cards so every card of a bank shares that bank's dominant colour */
+function unifyCardColours(){
+  if(!requireOnline())return;
+  const cards=DB.cards||[], plan=[];
+  [...new Set(cards.map(c=>(c.bank||'').trim()).filter(Boolean))].forEach(b=>{
+    const t=bankDominantTheme(b); if(!t)return;
+    cards.forEach(c=>{ if((c.bank||'').trim().toLowerCase()===b.toLowerCase() && c.theme!==t) plan.push([c,t]); });
+  });
+  if(!plan.length)return toast('Every card already matches its bank colour',1);
+  confirmBox('Unify card colours?',`This repaints ${plan.length} card${plan.length===1?'':'s'} so all cards of a bank share that bank's colour (the one used most for it). Cards with no bank set are left unchanged.`,()=>{
+    plan.forEach(([c,t])=>c.theme=t);
+    save(); logAct('edit','card','',`unified ${plan.length} card colour${plan.length===1?'':'s'} by bank`);
+    if($('.nav-item.active')?.dataset.view==='cards')renderCards(); toast(`${plan.length} card${plan.length===1?'':'s'} recoloured`);
+  },'Unify');
+}
 function cardOwnerLabel(c){ return (c&&c.owner&&c.owner.trim())?c.owner.trim():'My own'; }
 function allCardOwners(){ return uniqSorted((DB.cards||[]).map(c=>c.owner)); }
 function allCardNames(){ return uniqSorted((DB.cards||[]).map(c=>c.name)); }
@@ -4370,7 +4390,10 @@ function cardCell(c,badge){ return `<div>${badge?`<div style="text-align:center;
 views.cards=function(){
   return `
   <div class="page-head"><div><h2>Credit Cards</h2><p>Card limits, balances, monthly commission discount & payment-date reminders.</p></div>
-    <button class="btn-sm" onclick="editCard()">＋ Add Card</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-sm btn-ghost" onclick="unifyCardColours()" title="Repaint every card so all cards of a bank share that bank's colour">🎨 Unify colours</button>
+      <button class="btn-sm" onclick="editCard()">＋ Add Card</button>
+    </div></div>
   <div class="toolbar">
     <div class="role-toggle" id="cardViewTgl" style="margin:0;max-width:460px;flex:0 0 auto">
       <button data-cv="owners" class="${_cardView==='owners'?'active':''}" onclick="setCardView('owners')">👤 Owner</button>
