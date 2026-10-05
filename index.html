@@ -739,16 +739,26 @@ body.light .pstack>*{border-color:#fff!important}
 .cc-due{display:inline-block;background:rgba(0,0,0,.22);padding:3px 9px;border-radius:999px;font-weight:700;margin-top:3px}
 .cc-due.warn{background:rgba(255,70,70,.45)}
 .cc-pct{position:absolute;top:16px;right:64px;background:rgba(255,255,255,.22);padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800}
+/* light-coloured cards (e.g. Simplylife yellow, liv silver) need dark text */
+.ccard.cc-dark{color:#141a22}
+.ccard.cc-dark .cc-holder{color:#141a22;text-shadow:none}
+.ccard.cc-dark .ccbar{background:rgba(0,0,0,.16)}
+.ccard.cc-dark .ccbar>i{background:rgba(0,0,0,.72)}
+.ccard.cc-dark .cc-due{background:rgba(0,0,0,.12)}
+.ccard.cc-dark .cc-due.warn{background:rgba(200,30,30,.35)}
+.ccard.cc-dark .cc-pct{background:rgba(0,0,0,.12)}
+.ccard.cc-dark::after{background:radial-gradient(150px 150px at 88% 8%,rgba(255,255,255,.55),transparent 60%)}
+.ccard.cc-dark .cc-chip{background:linear-gradient(135deg,#e6d79a,#b5912f)}
 
 .bar{height:9px;border-radius:6px;background:var(--line);overflow:hidden}
 .bar>i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--brand2))}
 .tag.purchase{background:var(--brandsoft);color:#c7c9ff;border:1px solid #4338ca}
-.tag.payment,.tag.recharge{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
+.tag.payment,.tag.recharge,.tag.deposit{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.discount{background:var(--ambersoft);color:#f5cf7a;border:1px solid #7a5b1e}
 .card-swatches{display:flex;flex-wrap:wrap;gap:9px}
 .card-swatches .sw{width:46px;height:30px;border-radius:8px}
 body.light .tag.purchase{background:#e6e7ff;color:#4338ca;border-color:#c3c6f5}
-body.light .tag.payment,body.light .tag.recharge{background:#e3f7ea;color:#1f8a4c;border-color:#b6e6c8}
+body.light .tag.payment,body.light .tag.recharge,body.light .tag.deposit{background:#e3f7ea;color:#1f8a4c;border-color:#b6e6c8}
 body.light .tag.discount{background:#fdf1d8;color:#9a6b0f;border-color:#f0dca6}
 .tag.split{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
 body.light .tag.split{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
@@ -1785,6 +1795,7 @@ views.dashboard=function(){
       ${canView('purchases')?`<button class="btn-sm btn-ghost" onclick="go('purchases');setTimeout(newPurchase,50)">📦 New Product Purchase</button>`:''}
       ${canView('giftcards')?`<button class="btn-sm btn-ghost" onclick="go('giftcards');setTimeout(purchaseGiftModal,50)">🎁 New Gift Card Purchase</button>`:''}
       ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('recharge')">💳 Card Recharge</button>`:''}
+      ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('deposit')">⇩ Card Deposit</button>`:''}
       ${canView('cards')?`<button class="btn-sm btn-ghost" onclick="quickCardTxn('payment')">💵 Card Pay</button>`:''}
     </div>
   </div>
@@ -2015,7 +2026,7 @@ function renderPurchaseModal(){
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination *</label>
     <div class="line-items"><div id="b_splits"></div></div>
-    <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="addBuySplit()">＋ Add payment</button><button class="mini-btn gold" onclick="buyFillRemaining()">Fill balance</button></div>
+    <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="addBuySplit()">＋ Add payment</button><button class="mini-btn" onclick="buyPickMultiCards()">☰ Pick multiple cards</button><button class="mini-btn gold" onclick="buyFillRemaining()">Fill balance</button></div>
     <div class="grid2" style="margin-top:2px">
       <div class="field"><label>Discount (${S().currency})</label><input id="b_disc" type="number" min="0" step="any" value="${p?(+p.discount||0):0}" placeholder="0" oninput="buyCalcTotal()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Supplier discount — lowers the payable amount & the average cost.</div></div>
       <div></div>
@@ -2130,6 +2141,21 @@ function renderBuySplits(){
   buyCalcTotal();
 }
 function addBuySplit(){ buySplits.push({method:'card',cardId:'',ref:'',giftId:'',amount:''}); renderBuySplits(); flashNewRow('#b_splits .split-row'); }
+/* tick several cards at once → one card payment line each (existing lines untouched) */
+function buyPickMultiCards(){
+  const cards=activeCards();
+  if(!cards.length)return toast('No active cards — add one in Credit Cards.',1);
+  const have=new Set(buySplits.filter(s=>s.method==='card'&&s.cardId).map(s=>s.cardId));
+  const items=cards.map(c=>({value:c.id,
+    label:c.name+(c.owner&&c.owner.trim()?' · '+cardOwnerLabel(c):''),
+    sub:'avail '+money(cardAvailForSplit(c))+(c.discountPercent?' · '+c.discountPercent+'% cashback':'')+(have.has(c.id)?' · already added':''),
+    disabled:have.has(c.id)}));
+  openMultiPick({title:'Pick multiple cards',items,onAdd:vals=>{
+    if(buySplits.length===1 && buySplits[0].method==='card' && !buySplits[0].cardId && !(+buySplits[0].amount>0)) buySplits.splice(0,1);
+    vals.forEach(cid=>{ if(!buySplits.some(s=>s.method==='card'&&s.cardId===cid)) buySplits.push({method:'card',cardId:cid,giftId:'',ref:'',amount:''}); });
+    if(!buySplits.length) buySplits.push({method:'card',cardId:'',ref:'',giftId:'',amount:''});
+    renderBuySplits(); flashNewRow('#b_splits .split-row'); }});
+}
 function buySplitCardPick(i,val){ if(val==='__new'){ quickAddCardFromPurchase(i); return; } buySplits[i].cardId=val; buyCalcTotal(); }
 function quickAddCardFromPurchase(i){
   openModal('Add Card',`
@@ -3919,23 +3945,28 @@ function savePay(kind,id){
 /* =========================================================
    CREDIT CARDS  (module 2)
    ========================================================= */
+/* d:1 = light card → dark text (handled by .ccard.cc-dark). Tuned to real UAE bank cards. */
 const CARD_THEMES=[
-  {k:'indigo', g:'linear-gradient(135deg,#4f46e5,#7c3aed)'},
-  {k:'sky',    g:'linear-gradient(135deg,#0ea5e9,#2563eb)'},
-  {k:'emerald',g:'linear-gradient(135deg,#059669,#10b981)'},
-  {k:'gold',   g:'linear-gradient(135deg,#a9791b,#f5b301)'},
-  {k:'rose',   g:'linear-gradient(135deg,#e11d48,#fb7185)'},
-  {k:'slate',  g:'linear-gradient(135deg,#3b4a63,#0f172a)'},
-  {k:'navy',   g:'linear-gradient(135deg,#0b1f4d,#1e3a8a)'},
-  {k:'red',    g:'linear-gradient(135deg,#b91c1c,#ef4444)'},
-  {k:'black',  g:'linear-gradient(135deg,#374151,#0b0f1a)'},
-  {k:'yellow', g:'linear-gradient(135deg,#f59e0b,#fcd34d)'},
-  {k:'purple', g:'linear-gradient(135deg,#6b21a8,#a855f7)'},
-  {k:'teal',   g:'linear-gradient(135deg,#0d9488,#2dd4bf)'},
-  {k:'orange', g:'linear-gradient(135deg,#c2410c,#fb923c)'},
-  {k:'green',  g:'linear-gradient(135deg,#15803d,#22c55e)'},
-  {k:'cyan',   g:'linear-gradient(135deg,#0891b2,#22d3ee)'},
-  {k:'maroon', g:'linear-gradient(135deg,#7f1d1d,#be123c)'}
+  {k:'indigo', g:'linear-gradient(135deg,#4f46e5,#7c3aed)'},          /* generic */
+  {k:'sky',    g:'linear-gradient(135deg,#0b84d6,#1b5fd0)'},          /* FAB Cashback, Citi */
+  {k:'azure',  g:'linear-gradient(135deg,#17a6e6,#0f74d6)'},          /* Al-Futtaim Blue */
+  {k:'navy',   g:'linear-gradient(135deg,#121a4d,#273a86)'},          /* Al Hilal, aafaq */
+  {k:'royal',  g:'linear-gradient(135deg,#1e40af,#3f63d6)'},          /* FAB GEMS */
+  {k:'cyan',   g:'linear-gradient(135deg,#0891b2,#22d3ee)'},          /* bright cyan */
+  {k:'teal',   g:'linear-gradient(135deg,#0c8f86,#17b9a8)'},          /* ADIB Cashback, U by Emaar */
+  {k:'emerald',g:'linear-gradient(135deg,#059669,#10b981)'},          /* generic green */
+  {k:'green',  g:'linear-gradient(135deg,#15803d,#22c55e)'},          /* DIB */
+  {k:'gold',   g:'linear-gradient(135deg,#a9791b,#f5b301)'},          /* gold */
+  {k:'yellow', g:'linear-gradient(135deg,#f2c200,#ffd53a)', d:1},     /* Simplylife */
+  {k:'orange', g:'linear-gradient(135deg,#c2410c,#fb923c)'},          /* orange */
+  {k:'red',    g:'linear-gradient(135deg,#b01722,#e23340)'},          /* FAB red */
+  {k:'maroon', g:'linear-gradient(135deg,#5e1113,#9a1b1f)'},          /* Dubai First */
+  {k:'rose',   g:'linear-gradient(135deg,#e11d48,#fb7185)'},          /* rose */
+  {k:'purple', g:'linear-gradient(135deg,#3f1255,#7a1f74)'},          /* deem */
+  {k:'slate',  g:'linear-gradient(135deg,#3b4a63,#0f172a)'},          /* slate */
+  {k:'graphite',g:'linear-gradient(135deg,#464f5d,#1b212b)'},         /* Ajman */
+  {k:'black',  g:'linear-gradient(135deg,#232a36,#05070c)'},          /* DIB, CBD, ADCB, ADIB SHARE */
+  {k:'silver', g:'linear-gradient(135deg,#c2c9d4,#eef1f6)', d:1}      /* liv */
 ];
 function cardGrad(c){ return (CARD_THEMES.find(t=>t.k===(c&&c.theme))||CARD_THEMES[0]).g; }
 /* most-recent colour you saved for a given bank/issuer, so re-using a bank re-applies its look */
@@ -4055,7 +4086,7 @@ function quickCardTxn(type,cardId){
     return `<button class="pickrow" onclick="closeModal();quickCardTxn('${type}','${c.id}')">
       <span class="pk-main">${esc(cardLabel(c))}</span>
       <span class="pk-sub">available ${money(av)}${out>0.005?' · due '+money(out):''}</span></button>`; }).join('');
-  openModal(type==='recharge'?'↑ Recharge which card?':'💵 Pay which card?',
+  openModal(type==='recharge'?'↑ Recharge which card?':type==='deposit'?'⇩ Deposit to which card?':'💵 Pay which card?',
     `<div class="pickcol">${rows}</div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>`);
 }
@@ -4243,7 +4274,7 @@ function exportActivityExcel(){
 }
 
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
-const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND'};
+const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
 function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend');
   return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
@@ -4362,7 +4393,8 @@ function cardVisual(c){
   const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
   const l4=(c.number||'').replace(/\D/g,'').slice(-4);
   const holder=(c.owner&&c.owner.trim())?c.owner.trim():'';
-  return `<div class="ccard" style="background:${cardGrad(c)};${cardActive(c)?'':'opacity:.6'}" onclick="cardDetail('${c.id}')">
+  const dk=((CARD_THEMES.find(t=>t.k===c.theme)||{}).d)?' cc-dark':'';
+  return `<div class="ccard${dk}" style="background:${cardGrad(c)};${cardActive(c)?'':'opacity:.6'}" onclick="cardDetail('${c.id}')">
     ${c.discountPercent?`<div class="cc-pct">${c.discountPercent}% cashback</div>`:''}
     ${!cardActive(c)?`<div class="cc-pct" style="left:16px;right:auto;background:rgba(0,0,0,.35)">INACTIVE</div>`:''}
     <div class="cc-top"><div><div class="cc-name">${esc(c.name)}</div><div class="cc-bank">${esc(c.bank||'Credit Card')}</div>
@@ -4502,6 +4534,7 @@ function cardDetail(id){
     </div>
     <div class="row-actions" style="margin-bottom:16px">
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','payment')">＋ Payment</button>
+      <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','deposit')">⇩ Deposit</button>
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
       <button class="btn-sm btn-gold" onclick="cardTxnModal('${c.id}','discount')">％ Cashback</button>
       <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','purchase')">− Manual charge</button>
@@ -4530,24 +4563,26 @@ function cardTxnModal(id,type,txnId){
   const base = edit ? (avail - sign*(+edit.amount||0)) : avail;   // available without this entry
   const preAmt = edit ? (+edit.amount||0) : 0;
   _ctBase=base; _ctSign=sign; _ctNeg=!!c.allowNegative;
-  const word={recharge:'recharge',payment:'payment',discount:'cashback',purchase:'charge'}[type]||'entry';
-  const titles={payment:'Record Card Payment',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge'};
-  const hints={payment:'Amount you paid the bank — frees up your available limit.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
+  const word={recharge:'recharge',payment:'payment',deposit:'deposit',discount:'cashback',purchase:'charge'}[type]||'entry';
+  const titles={payment:'Record Card Payment',deposit:'Card Deposit',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge'};
+  const hints={payment:'Amount you paid the bank — frees up your available limit.',deposit:'Cash deposited into the card to pay down what you owe — frees up the available limit. Taken from your cash box.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.'};
   const dueDate=cardDueDate(c);
   openModal((edit?'Edit ':'')+(titles[type]||'Card entry'),`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
-    ${type==='payment'?`<div class="totbox" style="margin-bottom:12px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div><div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div></div>`:''}
+    ${(type==='payment'||type==='deposit')?`<div class="totbox" style="margin-bottom:12px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div><div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div></div>`:''}
     <div class="totbox" style="margin-bottom:14px">
       <div class="totrow"><span>Available ${edit?'before this entry':'now'}</span><span>${money(base)}</span></div>
       <div class="totrow" style="font-weight:800"><span>After this ${word}</span><span id="ct_after" style="color:var(--green)">${money(base+sign*preAmt)}</span></div>
       <div id="ct_warn" style="display:none;color:var(--red);font-size:12px;margin-top:6px">⚠ This pushes the card over its limit (negative available).</div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00" value="${edit?preAmt:(type==='payment'&&out>0.005?(+out.toFixed(2)):'')}" oninput="ctCalcAfter()"></div>
+      <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00" value="${edit?preAmt:((type==='payment'||type==='deposit')&&out>0.005?(+out.toFixed(2)):'')}" oninput="ctCalcAfter()"></div>
       <div class="field"><label>Date</label><input id="ct_date" type="date" value="${edit?esc(edit.date||todayStr()):todayStr()}"></div>
     </div>
     <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no." value="${edit?esc(edit.note||''):''}"></div>
-    ${(type==='recharge'||type==='payment')?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px;cursor:pointer">
+    ${type==='deposit'?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
+      <input type="checkbox" id="ct_cash" checked disabled style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Deposited from your cash box (deducts from Cash Book)</span></label>`
+    :(type==='recharge'||type==='payment')?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px;cursor:pointer">
       <input type="checkbox" id="ct_cash" ${edit&&edit.fromCash?'checked':''} style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Paid from cash box (deduct from Cash Book)</span></label>`:''}`,
     `<button class="btn-sm btn-ghost" onclick="cardDetail('${id}')">Back</button>
      <button class="btn-sm" onclick="saveCardTxn('${id}','${type}'${edit?`,'${txnId}'`:''})">${edit?'Update':'Save'}</button>`);
@@ -4563,7 +4598,7 @@ function saveCardTxn(id,type,txnId){
     const t=(c.txns||[]).find(x=>x.id===txnId); if(!t)return toast('Entry not found',1);
     if(t.srcPurchaseId)return toast('This entry comes from a purchase — edit it there',1);
     t.amount=amt; t.date=date; t.note=note;
-    if(type==='recharge'||type==='payment') t.fromCash=fromCash;
+    if(type==='recharge'||type==='payment'||type==='deposit') t.fromCash=fromCash;
     t.editedBy=session.id; t.editedAt=todayStr();
     logAct('edit','card entry',c.name,`${txnLabel(type)} ${money(amt)}`);
     save(); toast('Entry updated');
@@ -5449,7 +5484,7 @@ function cashEntries(){
   /* online-order cash prepayments: counted only while the order is live (ordered/shipped).
      Once delivered it becomes a real purchase (counted above); once cancelled the cash reverts by being dropped here. */
   (DB.online||[]).forEach(o=>{ if(o.status==='delivered'||o.status==='cancelled'||o.status==='returned')return; const pm=onlPayObj(o); const net=pmCashNet(pm); if(pm&&pm.method==='cash'&&net>0) e.push({date:pm.date||o.orderDate,dir:'out',amount:net,cat:'purchase',desc:'Online order '+(o.ref||'')+(o.platform?' · '+o.platform:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:o.byId||''}); });
-  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':'Card payment · ')+c.name,who:t.byId||''}); }));
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment'||t.type==='deposit')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':t.type==='deposit'?'Card deposit · ':'Card payment · ')+c.name,who:t.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return e;
 }
