@@ -982,7 +982,7 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -1005,6 +1005,7 @@ const NAV_GROUPS=[
     {v:'cardpref',  ic:'⭐', lab:'Card Preference', owner:true},
     {v:'lenders',   ic:'🤝', lab:'Card Lenders', owner:true, badge:'lenderBadge'} ]},
   {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
+    {v:'bsreport',   ic:'🛒', lab:'Buy & Sell Report', owner:true},
     {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
     {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true},
     {v:'cardusage',  ic:'📊', lab:'Card Usage', owner:true} ]},
@@ -6239,6 +6240,285 @@ async function buildDayPdf(dstr){
 async function pdfDay(dstr){ toast('Preparing PDF…',0); const r=await buildDayPdf(dstr); if(!r)return;
   const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
+/* =========================================================
+   BUY & SELL REPORT  — today's (or any period's) purchases &
+   sales with payment-mode breakdown and credit-card details.
+   ========================================================= */
+function bsPeriodLabel(from,to){
+  if(!from&&!to)return 'All time';
+  if(from&&from===to)return fmtDayLong(from);
+  return (from?fmtDate(from):'beginning')+' → '+(to?fmtDate(to):'today');
+}
+function bsLast4(c){ return c&&c.number?(c.number.replace(/\D/g,'').slice(-4)):''; }
+/* one Mode cell: a tag per payment (credit-card paid shows the card name · ••last4) */
+function bsModeCell(r,fallback){
+  const pays=(r.payments||[]);
+  if(!pays.length){ const info=payMethodInfo(fallback||'cash'); return `<span class="tag ${info.tag}">${esc(info.label)}</span> <span class="tag split" title="Not yet paid / collected">UNPAID</span>`; }
+  return pays.filter(pm=>(+pm.amount||0)>0.005).map(pm=>{ const info=payMethodInfo(pm.method); let lbl=info.label;
+    if(pm.cardId){ const c=cardById(pm.cardId); if(c){ const l4=bsLast4(c); lbl=(c.name||'Card')+(l4?' ••'+l4:''); } }
+    return `<span class="tag ${info.tag}">${esc(lbl)}</span>`; }).join(' ');
+}
+function bsReportData(inR){
+  const eng=computeEngine();
+  const purch=(DB.purchases||[]).filter(p=>inR(p.date)).sort((a,b)=>a.date<b.date?1:-1);
+  const sales=(DB.sales||[]).filter(s=>inR(s.date)).sort((a,b)=>a.date<b.date?1:-1);
+  const pTotal=purch.reduce((a,p)=>a+purchaseTotal(p),0);
+  const pPaid=purch.reduce((a,p)=>a+(+p.paid||0),0);
+  const pCredit=purch.reduce((a,p)=>a+Math.max(0,purchaseTotal(p)-(+p.paid||0)),0);
+  const sTotal=sales.reduce((a,s)=>a+(+s.total||0),0);
+  const sRecv=sales.reduce((a,s)=>a+(+s.paid||0),0);
+  const sCredit=sales.reduce((a,s)=>a+Math.max(0,(+s.total||0)-(+s.paid||0)),0);
+  const profit=sales.reduce((a,s)=>a+(netOf(s)-(eng.saleCost[s.id]||0)),0);
+  const qtyBought=purch.reduce((a,p)=>a+purchaseQty(p),0);
+  const qtySold=sales.reduce((a,s)=>a+s.items.reduce((x,it)=>x+(+it.qty||0),0),0);
+  /* payment-mode split (unpaid balance folded in as a "__credit" pseudo-mode) */
+  const agg=(records,totalFn)=>{ const modes={}; records.forEach(r=>{ (r.payments||[]).forEach(pm=>{ const k=pm.method||'cash'; modes[k]=(modes[k]||0)+(+pm.amount||0); });
+    const bal=Math.max(0,totalFn(r)-(+r.paid||0)); if(bal>0.005)modes['__credit']=(modes['__credit']||0)+bal; }); return modes; };
+  const pModes=agg(purch,purchaseTotal), sModes=agg(sales,s=>+s.total||0);
+  /* credit-card spend via purchases, grouped by the shop's own card */
+  const cs={}; purch.forEach(p=>(p.payments||[]).forEach(pm=>{ if(pm.cardId&&(+pm.amount||0)>0.005){ const c=cardById(pm.cardId);
+    if(!cs[pm.cardId])cs[pm.cardId]={id:pm.cardId,card:c,name:c?c.name:'(removed card)',spend:0,count:0};
+    cs[pm.cardId].spend+=(+pm.amount||0); cs[pm.cardId].count++; } }));
+  const cards=Object.values(cs).sort((a,b)=>b.spend-a.spend);
+  const cardTotal=cards.reduce((a,c)=>a+c.spend,0);
+  return {purch,sales,pTotal,pPaid,pCredit,sTotal,sRecv,sCredit,profit,qtyBought,qtySold,pModes,sModes,cards,cardTotal,eng};
+}
+/* horizontal mode-breakdown rows for one panel */
+function bsModeRows(modes){
+  const entries=Object.entries(modes).filter(([,v])=>v>0.005).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length)return `<div class="empty" style="padding:20px">No payments in this period</div>`;
+  const grand=entries.reduce((a,[,v])=>a+v,0)||1;
+  return entries.map(([k,v])=>{ const info= k==='__credit'?{label:'Unpaid · Credit',tag:'split'}:payMethodInfo(k); const pct=v/grand*100;
+    return `<div style="margin:0 0 11px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span class="tag ${info.tag}">${esc(info.label)}</span>
+        <b style="margin-left:auto">${money(v)}</b><span style="color:var(--muted2);font-size:12px;width:46px;text-align:right">${pct.toFixed(1)}%</span></div>
+      <div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div></div>`; }).join('');
+}
+function bsCardPanel(d){
+  if(!d.cards.length)return '';
+  const rows=d.cards.map(c=>{ const card=c.card; const l4=card?bsLast4(card):''; const owner=card?cardOwnerLabel(card):'—';
+    const limit=card?(+card.creditLimit||0):0, out=card?cardOutstanding(card):0, avail=limit-out, use=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
+    const pct=d.cardTotal>0?c.spend/d.cardTotal*100:0;
+    return `<tr>
+      <td><b>${esc(c.name)}</b>${l4?` <span style="color:var(--muted2)">••${esc(l4)}</span>`:''}${card&&card.bank?`<div style="color:var(--muted2);font-size:11.5px">${esc(card.bank)}</div>`:''}</td>
+      <td>${esc(owner)}</td>
+      <td class="num"><b>${money(c.spend)}</b><div style="color:var(--muted2);font-size:11.5px">${c.count} payment${c.count===1?'':'s'} · ${pct.toFixed(0)}%</div></td>
+      <td class="num" style="color:${out>0.005?'var(--amber)':'var(--muted2)'}">${money(out)}</td>
+      <td class="num" style="color:${avail<0?'var(--red)':'var(--green)'}">${money(avail)}</td>
+      <td class="num">${card?money(limit):'—'}<div class="bar" style="margin-top:4px"><i style="width:${use}%"></i></div></td></tr>`; }).join('');
+  return `<div class="panel">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 10px">💳 Credit cards used for buying
+      <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${d.cards.length} card${d.cards.length===1?'':'s'}</span>
+      <span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">spent ${money(d.cardTotal)}</span></div>
+    <div class="table-wrap"><table style="min-width:620px"><thead><tr><th>Card</th><th>Owner</th><th class="num">Spent · period</th><th class="num">Outstanding</th><th class="num">Available</th><th class="num">Limit</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+function bsPurchTable(d){
+  if(!d.purch.length)return `<div class="panel">${emptyBox('📥','No purchases','No purchases recorded in this period.')}</div>`;
+  const rows=d.purch.map(p=>{ const tot=purchaseTotal(p),bal=tot-(+p.paid||0);
+    return `<tr>
+      <td>${fmtDate(p.date)}</td>
+      <td><b class="rowlink" onclick="purchaseDetail('${p.id}')">${esc(p.ref)}</b></td>
+      <td>${esc(p.supplier||'—')}</td>
+      <td>${esc(itemsFirstName(purchaseItems(p)))}${purchaseItems(p).length>1?` <span style="color:var(--muted2)">+${purchaseItems(p).length-1}</span>`:''}</td>
+      <td class="num">${num(purchaseQty(p))}</td>
+      <td>${bsModeCell(p,p.payment||'cash')}</td>
+      <td class="num"><b>${money(tot)}</b></td>
+      <td class="num" style="color:var(--green)">${money(p.paid||0)}</td>
+      <td class="num" style="color:${bal>0.01?'var(--red)':'var(--muted2)'}">${money(bal)}</td></tr>`; }).join('');
+  return `<div class="panel">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 10px">📥 Purchases
+      <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${d.purch.length}</span>
+      <span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">total ${money(d.pTotal)}</span></div>
+    <div class="table-wrap"><table style="min-width:760px"><thead><tr><th>Date</th><th>Ref</th><th>Supplier</th><th>Items</th><th class="num">Qty</th><th>Mode of purchase</th><th class="num">Total</th><th class="num">Paid</th><th class="num">Balance</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+function bsSalesTable(d){
+  const owner=isOwner();
+  if(!d.sales.length)return `<div class="panel">${emptyBox('🧾','No sales','No invoices recorded in this period.')}</div>`;
+  const rows=d.sales.map(s=>{ const bal=(+s.total||0)-(+s.paid||0),prof=netOf(s)-(d.eng.saleCost[s.id]||0);
+    return `<tr>
+      <td>${fmtDate(s.date)}</td>
+      <td><b class="rowlink" onclick="saleDetail('${s.id}')">${esc(s.invoiceNo)}</b></td>
+      <td>${esc(s.customer||'Walk-in')}</td>
+      <td>${esc(itemsFirstName(s.items))}${s.items.length>1?` <span style="color:var(--muted2)">+${s.items.length-1}</span>`:''}</td>
+      <td>${bsModeCell(s,s.payment||'cash')}</td>
+      <td class="num"><b>${money(s.total)}</b></td>
+      <td class="num" style="color:var(--green)">${money(s.paid||0)}</td>
+      <td class="num" style="color:${bal>0.01?'var(--red)':'var(--muted2)'}">${money(bal)}</td>
+      ${owner?`<td class="num" style="color:${prof>=0?'var(--green)':'var(--red)'}">${money(prof)}</td>`:''}</tr>`; }).join('');
+  return `<div class="panel">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 10px">🧾 Sales &amp; billing
+      <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${d.sales.length}</span>
+      <span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">total ${money(d.sTotal)}</span></div>
+    <div class="table-wrap"><table style="min-width:760px"><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th>Items</th><th>Payment mode</th><th class="num">Total</th><th class="num">Received</th><th class="num">Balance</th>${owner?'<th class="num">Profit</th>':''}</tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+views.bsreport=function(){
+  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The Buy &amp; Sell report is restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>🛒 Buy &amp; Sell Report</h2><p>Today's purchases &amp; sales at a glance — payment mode, credit-card usage, profit &amp; balances. Pick a day or a range.</p></div>
+    <div class="row-actions">
+      <input id="bsFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderBsReport()" title="From date">
+      <input id="bsTo" type="date" class="mini-btn" style="padding:9px" oninput="renderBsReport()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearBsRange()">Clear</button>
+      <button class="btn-sm btn-green" onclick="exportBsReportExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-gold" onclick="bsReportPdf()" title="Download this report as a PDF">📄 PDF</button>
+    </div></div>
+  <div class="toolbar" style="gap:6px;flex-wrap:wrap">
+    <button class="btn-sm btn-ghost" onclick="bsPreset('today')">Today</button>
+    <button class="btn-sm btn-ghost" onclick="bsPreset('yday')">Yesterday</button>
+    <button class="btn-sm btn-ghost" onclick="bsPreset('7d')">Last 7 days</button>
+    <button class="btn-sm btn-ghost" onclick="bsPreset('month')">This month</button>
+    <span id="bsPeriod" style="margin-left:auto;align-self:center;color:var(--muted);font-weight:700;font-size:13px"></span>
+  </div>
+  <div id="bsStats" class="cards"></div>
+  <div id="bsBody"></div>`;
+};
+views._after_bsreport=()=>{ if(!isOwner())return; const f=$('#bsFrom'),t=$('#bsTo'); if(f&&!f.value)f.value=todayStr(); if(t&&!t.value)t.value=todayStr(); renderBsReport(); };
+function bsPreset(which){ const f=$('#bsFrom'),t=$('#bsTo'); if(!f||!t)return; const d=new Date(), today=todayStr();
+  if(which==='today'){ f.value=today; t.value=today; }
+  else if(which==='yday'){ const y=new Date(d); y.setDate(d.getDate()-1); f.value=isoDate(y); t.value=isoDate(y); }
+  else if(which==='7d'){ const s=new Date(d); s.setDate(d.getDate()-6); f.value=isoDate(s); t.value=today; }
+  else if(which==='month'){ f.value=today.slice(0,8)+'01'; t.value=today; }
+  renderBsReport(); }
+function clearBsRange(){ if($('#bsFrom'))$('#bsFrom').value=''; if($('#bsTo'))$('#bsTo').value=''; renderBsReport(); }
+function renderBsReport(){
+  if(!isOwner())return;
+  const from=$('#bsFrom')?.value, to=$('#bsTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const d=bsReportData(inR); const owner=isOwner();
+  const pl=$('#bsPeriod'); if(pl)pl.textContent='📅 '+bsPeriodLabel(from,to);
+  const cs=$('#bsStats'); if(cs)cs.innerHTML=`
+    <div class="stat blue"><span class="ic">📥</span><div class="label">Purchases</div><div class="val">${money(d.pTotal)}</div><div class="foot">${d.purch.length} entr${d.purch.length===1?'y':'ies'} · ${num(d.qtyBought)} qty</div></div>
+    <div class="stat red"><span class="ic">📤</span><div class="label">Paid Out</div><div class="val">${money(d.pPaid)}</div><div class="foot">credit taken ${money(d.pCredit)}</div></div>
+    <div class="stat gold"><span class="ic">💳</span><div class="label">Card Spend</div><div class="val">${money(d.cardTotal)}</div><div class="foot">${d.cards.length} card${d.cards.length===1?'':'s'} used</div></div>
+    <div class="stat gold"><span class="ic">🧾</span><div class="label">Sales</div><div class="val">${money(d.sTotal)}</div><div class="foot">${d.sales.length} invoice${d.sales.length===1?'':'s'} · ${num(d.qtySold)} qty</div></div>
+    <div class="stat green"><span class="ic">💵</span><div class="label">Collected</div><div class="val">${money(d.sRecv)}</div><div class="foot">credit given ${money(d.sCredit)}</div></div>
+    ${owner?`<div class="stat green"><span class="ic">💰</span><div class="label">Gross Profit</div><div class="val" style="color:${d.profit<0?'var(--red)':''}">${money(d.profit)}</div><div class="foot">on sales this period</div></div>`:''}`;
+  const body=$('#bsBody'); if(!body)return;
+  if(!d.purch.length&&!d.sales.length){ body.innerHTML=`<div class="panel">${emptyBox('🛒','No activity','No purchases or sales in this period. Try a wider date range.')}</div>`; return; }
+  body.innerHTML=`
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:2px">
+      <div class="panel" style="flex:1 1 300px;min-width:260px">
+        <div style="font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 12px">📥 Purchases by mode</div>
+        ${bsModeRows(d.pModes)}</div>
+      <div class="panel" style="flex:1 1 300px;min-width:260px">
+        <div style="font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 12px">🧾 Sales by mode</div>
+        ${bsModeRows(d.sModes)}</div>
+    </div>
+    ${bsCardPanel(d)}
+    ${bsPurchTable(d)}
+    ${bsSalesTable(d)}`;
+}
+function exportBsReportExcel(){
+  if(!isOwner())return;
+  const from=$('#bsFrom')?.value, to=$('#bsTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const d=bsReportData(inR);
+  if(!d.purch.length&&!d.sales.length){ toast('Nothing to export in this period',1); return; }
+  const owner=isOwner();
+  const summary=[['Buy & Sell Report'],['Period',bsPeriodLabel(from,to)],['Generated',fmtDate(todayStr())],[],
+    ['PURCHASES'],['Total',num2(d.pTotal)],['Paid out',num2(d.pPaid)],['Credit taken',num2(d.pCredit)],['Entries',d.purch.length],['Qty bought',num2(d.qtyBought)],[],
+    ['SALES'],['Total',num2(d.sTotal)],['Collected',num2(d.sRecv)],['Credit given',num2(d.sCredit)],['Invoices',d.sales.length],['Qty sold',num2(d.qtySold)]];
+  if(owner)summary.push(['Gross profit',num2(d.profit)]);
+  summary.push([],['Card spend (via purchases)',num2(d.cardTotal)]);
+  const modeSheet=[['PURCHASE MODES','Amount'],...Object.entries(d.pModes).filter(([,v])=>v>0.005).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k==='__credit'?'Unpaid / Credit':payMethodInfo(k).label,num2(v)]),
+    [],['SALE MODES','Amount'],...Object.entries(d.sModes).filter(([,v])=>v>0.005).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k==='__credit'?'Unpaid / Credit':payMethodInfo(k).label,num2(v)])];
+  const cardSheet=[['Card','Owner','Bank','Last 4','Spent (period)','Payments','Outstanding','Available','Limit']];
+  d.cards.forEach(c=>{ const card=c.card,limit=card?(+card.creditLimit||0):0,out=card?cardOutstanding(card):0;
+    cardSheet.push([c.name,card?cardOwnerLabel(card):'',card?(card.bank||''):'',card?bsLast4(card):'',num2(c.spend),c.count,num2(out),num2(limit-out),num2(limit)]); });
+  const pHead=['Date','Ref','Supplier','Items','Qty','Mode','Total','Paid','Balance'];
+  const pRows=[pHead]; d.purch.forEach(p=>{ const tot=purchaseTotal(p),bal=tot-(+p.paid||0);
+    const names=purchaseItems(p).map(it=>{const pr=productById(it.productId);return pr?pr.name:'Item';}).join(', ');
+    pRows.push([p.date,p.ref,p.supplier||'',names,num2(purchaseQty(p)),bsModeText(p,p.payment||'cash'),num2(tot),num2(p.paid),num2(bal)]); });
+  const sHead=['Date','Invoice','Customer','Items','Mode','Total','Received','Balance']; if(owner)sHead.push('Profit');
+  const sRows=[sHead]; d.sales.forEach(s=>{ const bal=(+s.total||0)-(+s.paid||0);
+    const names=s.items.map(it=>{const pr=productById(it.productId);return pr?pr.name:'Item';}).join(', ');
+    const r=[s.date,s.invoiceNo,s.customer||'Walk-in',names,bsModeText(s,s.payment||'cash'),num2(s.total),num2(s.paid),num2(bal)];
+    if(owner)r.push(num2(netOf(s)-(d.eng.saleCost[s.id]||0))); sRows.push(r); });
+  exportExcel('buy_sell_report_'+(from||'all')+'.xlsx',[
+    {name:'Summary',rows:summary},{name:'By Mode',rows:modeSheet},
+    ...(d.cards.length?[{name:'Cards Used',rows:cardSheet}]:[]),
+    {name:'Purchases',rows:pRows},{name:'Sales',rows:sRows}]);
+}
+/* plain-text version of the Mode cell, for Excel/PDF */
+function bsModeText(r,fallback){ const pays=(r.payments||[]).filter(pm=>(+pm.amount||0)>0.005);
+  if(!pays.length)return payMethodInfo(fallback||'cash').label+' (unpaid)';
+  return pays.map(pm=>{ let lbl=payMethodInfo(pm.method).label; if(pm.cardId){ const c=cardById(pm.cardId); if(c){ const l4=bsLast4(c); lbl=(c.name||'Card')+(l4?' ••'+l4:''); } } return lbl; }).join(', '); }
+/* printable PDF */
+function bsReportHtml(from,to){
+  const inR=d=>(!from||d>=from)&&(!to||d<=to); const d=bsReportData(inR);
+  if(!d.purch.length&&!d.sales.length)return null;
+  const st=S(), owner=isOwner(); const M=n=>st.currency+' '+(Number(n)||0).toLocaleString('en-AE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const logo=st.showLogo?(st.logoUrl?`<img src="${esc(st.logoUrl)}" style="height:54px;object-fit:contain">`:logoMark(54)):'';
+  const kpi=(k,v)=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const modeList=modes=>{ const e=Object.entries(modes).filter(([,v])=>v>0.005).sort((a,b)=>b[1]-a[1]); if(!e.length)return '<tr><td colspan="2" style="color:#999">None</td></tr>';
+    return e.map(([k,v])=>`<tr><td>${k==='__credit'?'Unpaid / Credit':esc(payMethodInfo(k).label)}</td><td class="r">${M(v)}</td></tr>`).join(''); };
+  const cardRows=d.cards.map(c=>{ const card=c.card,limit=card?(+card.creditLimit||0):0,out=card?cardOutstanding(card):0;
+    return `<tr><td>${esc(c.name)}${card&&bsLast4(card)?' ••'+esc(bsLast4(card)):''}</td><td>${card?esc(cardOwnerLabel(card)):'—'}</td><td>${card?esc(card.bank||''):''}</td><td class="r">${M(c.spend)}</td><td class="r">${M(out)}</td><td class="r">${M(limit-out)}</td></tr>`; }).join('');
+  const purRows=d.purch.map(p=>{ const tot=purchaseTotal(p),bal=tot-(+p.paid||0);
+    return `<tr><td>${fmtDate(p.date)}</td><td>${esc(p.ref)}</td><td>${esc(p.supplier||'—')}</td><td>${esc(bsModeText(p,p.payment||'cash'))}</td><td class="r">${M(tot)}</td><td class="r">${M(p.paid||0)}</td><td class="r">${M(bal)}</td></tr>`; }).join('');
+  const salRows=d.sales.map(s=>{ const bal=(+s.total||0)-(+s.paid||0),prof=netOf(s)-(d.eng.saleCost[s.id]||0);
+    return `<tr><td>${fmtDate(s.date)}</td><td>${esc(s.invoiceNo)}</td><td>${esc(s.customer||'Walk-in')}</td><td>${esc(bsModeText(s,s.payment||'cash'))}</td><td class="r">${M(s.total)}</td><td class="r">${M(s.paid||0)}</td><td class="r">${M(bal)}</td>${owner?`<td class="r">${M(prof)}</td>`:''}</tr>`; }).join('');
+  const sec=(title,head,rows)=> rows? `<div class="ds-h">${title}</div><table class="ds-t"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`:'';
+  return `<div id="invoiceArea" style="max-width:760px;margin:0 auto;padding:30px;font-family:Segoe UI,Arial,sans-serif;color:#111;background:#fff">
+    <style>
+      #invoiceArea .ds-t{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0 10px}
+      #invoiceArea .ds-t th{background:#f3f4f8;text-align:left;padding:7px 9px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#555;border-bottom:2px solid #e5e7eb}
+      #invoiceArea .ds-t td{padding:7px 9px;border-bottom:1px solid #eee}
+      #invoiceArea .ds-t td.r,#invoiceArea .ds-t th.r{text-align:right}
+      #invoiceArea .ds-h{font-size:12.5px;font-weight:800;color:#222;margin:16px 0 4px;border-left:4px solid #c9962f;padding-left:8px}
+      #invoiceArea .ds-kpi{display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 4px}
+      #invoiceArea .ds-kpi>div{flex:1 1 120px;border:1px solid #e5e7eb;border-radius:8px;padding:8px 11px}
+      #invoiceArea .ds-kpi .k{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:#888;font-weight:700}
+      #invoiceArea .ds-kpi .v{font-size:14px;font-weight:800;color:#111;margin-top:2px}
+      #invoiceArea .two{display:flex;gap:14px;flex-wrap:wrap}
+      #invoiceArea .two>div{flex:1 1 260px}
+    </style>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #c9962f;padding-bottom:14px">
+      <div style="display:flex;gap:12px;align-items:flex-start">${logo}<div>
+        <div style="font-size:16px;font-weight:800;line-height:1.25;max-width:360px">${esc(st.company)}</div>
+        <div style="color:#777;font-size:11px;margin-top:3px;max-width:360px">${esc(st.address)}</div>
+        ${st.showTrn&&st.trn?`<div style="color:#111;font-size:11.5px;margin-top:2px"><b>TRN:</b> ${esc(st.trn)}</div>`:''}</div></div>
+      <div style="text-align:right"><div style="font-size:18px;font-weight:800;color:#c9962f;letter-spacing:.5px">BUY &amp; SELL REPORT</div>
+        <div style="font-size:12.5px;color:#333;margin-top:3px">${esc(bsPeriodLabel(from,to))}</div></div>
+    </div>
+    <div class="ds-kpi">
+      ${kpi('Purchases ('+d.purch.length+')',M(d.pTotal))}
+      ${kpi('Paid Out',M(d.pPaid))}
+      ${kpi('Card Spend',M(d.cardTotal))}
+      ${kpi('Sales ('+d.sales.length+')',M(d.sTotal))}
+      ${kpi('Collected',M(d.sRecv))}
+      ${owner?kpi('Gross Profit',M(d.profit)):''}
+    </div>
+    <div class="two">
+      <div><div class="ds-h">📥 Purchases by mode</div><table class="ds-t"><tbody>${modeList(d.pModes)}</tbody></table></div>
+      <div><div class="ds-h">🧾 Sales by mode</div><table class="ds-t"><tbody>${modeList(d.sModes)}</tbody></table></div>
+    </div>
+    ${sec('💳 Credit cards used for buying',`<th>Card</th><th>Owner</th><th>Bank</th><th class="r">Spent</th><th class="r">Outstanding</th><th class="r">Available</th>`,cardRows)}
+    ${sec('📥 Purchases',`<th>Date</th><th>Ref</th><th>Supplier</th><th>Mode</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Balance</th>`,purRows)}
+    ${sec('🧾 Sales',`<th>Date</th><th>Invoice</th><th>Customer</th><th>Mode</th><th class="r">Total</th><th class="r">Received</th><th class="r">Balance</th>${owner?'<th class="r">Profit</th>':''}`,salRows)}
+    <div style="margin-top:22px;color:#999;font-size:10px;text-align:center">Generated ${fmtDate(todayStr())} · ${esc(st.company)}</div>
+  </div>`;
+}
+async function bsReportPdf(){
+  if(!isOwner())return;
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  const from=$('#bsFrom')?.value, to=$('#bsTo')?.value;
+  const html=bsReportHtml(from,to); if(!html){ toast('Nothing to export in this period',1); return; }
+  toast('Preparing PDF…',0);
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#invoiceArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    const filename='buy_sell_report_'+(from||'all')+'.pdf';
+    const url=URL.createObjectURL(pdf.output('blob')); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+filename);
+  }catch(e){ toast('Could not build the PDF',1); }
+  finally{ document.body.removeChild(holder); }
+}
 /* ---- Card Statement report ---- */
 function cardStatementPanel(c,inR,q){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
