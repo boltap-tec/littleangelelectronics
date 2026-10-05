@@ -969,7 +969,7 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -993,7 +993,8 @@ const NAV_GROUPS=[
     {v:'lenders',   ic:'🤝', lab:'Card Lenders', owner:true, badge:'lenderBadge'} ]},
   {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
     {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
-    {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true} ]},
+    {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true},
+    {v:'cardusage',  ic:'📊', lab:'Card Usage', owner:true} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'activity',  ic:'🧾', lab:'Activity Log', owner:true},
@@ -4624,6 +4625,7 @@ function cardTxnModal(id,type,txnId){
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
     ${(type==='payment'||type==='deposit')?`<div class="totbox" style="margin-bottom:12px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div><div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div></div>`:''}
     <div class="totbox" style="margin-bottom:14px">
+      ${(type==='payment'||type==='deposit'||type==='recharge')?`<div class="totrow"><span>Total limit</span><span>${money(+c.creditLimit||0)}</span></div>`:''}
       <div class="totrow"><span>Available ${edit?'before this entry':'now'}</span><span>${money(base)}</span></div>
       <div class="totrow" style="font-weight:800"><span>After this ${word}</span><span id="ct_after" style="color:var(--green)">${money(base+sign*preAmt)}</span></div>
       <div id="ct_warn" style="display:none;color:var(--red);font-size:12px;margin-top:6px">⚠ This pushes the card over its limit (negative available).</div>
@@ -6215,6 +6217,79 @@ function exportCardReportExcel(){
     asc.forEach(t=>{ bal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=(t.type==='purchase'?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'',num2(signed),num2(bal)]); } }); });
   if(rows.length===1){ toast('No card transactions in this period',1); return; }
   exportExcel('card_statement_'+todayStr()+'.xlsx',[{name:'Card Statement',rows}]);
+}
+
+/* ---- Card Usage report — one row per card, ordered by payment due date ---- */
+views.cardusage=function(){
+  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card usage reports are restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>📊 Card Usage</h2><p>One row per card — limit, used, available, usage &amp; the next payment due date. Ordered by due date.</p></div>
+    <div class="row-actions">
+      <select id="cuOrder" class="mini-btn srch" style="padding:9px" onchange="renderCardUsage()" title="Due-date order">
+        <option value="near">Due date · nearest first</option>
+        <option value="far">Due date · farthest first</option>
+      </select>
+      <label class="chk" style="align-self:center"><input type="checkbox" id="cuUsed" onchange="renderCardUsage()"> Only used cards</label>
+      <button class="btn-sm btn-green" onclick="exportCardUsageExcel()">⬇ Excel</button>
+    </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cuSearch" placeholder="Search card, holder or bank..." oninput="renderCardUsage()"></div></div>
+  <div id="cuStats" class="cards"></div>
+  <div id="cuBody"></div>`;
+};
+views._after_cardusage=()=>{ if(isOwner())renderCardUsage(); };
+/* shared, sorted & filtered rows for both the on-screen table and the Excel export */
+function cardUsageRows(){
+  const order=$('#cuOrder')?.value||'near';
+  const onlyUsed=!!($('#cuUsed')?.checked);
+  const q=($('#cuSearch')?.value||'').trim().toLowerCase();
+  let rows=(DB.cards||[]).map(c=>{
+    const due=cardDueDate(c), limit=+c.creditLimit||0, out=cardOutstanding(c);
+    return { c, due, dleft:daysUntil(due), limit, out, avail:limit-out, usedPct: limit>0?Math.min(100,Math.max(0,out/limit*100)):0 };
+  });
+  if(onlyUsed) rows=rows.filter(r=>r.out>0.005);
+  if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number].some(v=>(v||'').toLowerCase().includes(q)));
+  rows.sort((a,b)=> order==='far' ? (b.due-a.due) : (a.due-b.due));
+  return rows;
+}
+function renderCardUsage(){
+  if(!isOwner())return;
+  const all=DB.cards||[];
+  let tL=0,tO=0; all.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); });
+  const usedCount=all.filter(c=>cardOutstanding(c)>0.005).length;
+  const cs=$('#cuStats'); if(cs)cs.innerHTML= all.length?`
+    <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${all.length} card${all.length===1?'':'s'}</div></div>
+    <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tL-tO)}</div></div>
+    <div class="stat red"><span class="ic">📉</span><div class="label">Used · Outstanding</div><div class="val">${money(tO)}</div><div class="foot">${usedCount} card${usedCount===1?'':'s'} in use</div></div>`:'';
+  const body=$('#cuBody'); if(!body)return;
+  if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see usage.')}</div>`; return; }
+  const rows=cardUsageRows();
+  if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No cards match your filter.')}</div>`; return; }
+  const tr=rows.map(r=>{
+    const dueCls=(r.dleft<=3 && r.out>0.005)?'var(--red)':'';
+    const dueTxt=fmtDate(isoDate(r.due))+' · '+(r.dleft<=0?'today':r.dleft+'d');
+    return `<tr>
+      <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}</div></td>
+      <td>${esc(cardOwnerLabel(r.c))}</td>
+      <td><span class="tag bank">${esc(r.c.bank||'—')}</span></td>
+      <td class="num">${money(r.limit)}</td>
+      <td class="num"${r.out>0.005?' style="color:var(--amber)"':''}>${money(r.out)}</td>
+      <td class="num"${r.avail<0?' style="color:var(--red)"':''}>${money(r.avail)}</td>
+      <td class="num">${Math.round(r.usedPct)}%</td>
+      <td${dueCls?` style="color:${dueCls};font-weight:700"`:''}>${dueTxt}</td>
+    </tr>`;
+  }).join('');
+  const tL2=rows.reduce((s,r)=>s+r.limit,0), tO2=rows.reduce((s,r)=>s+r.out,0), tA2=rows.reduce((s,r)=>s+r.avail,0);
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tL2)}</td><td class="num">${money(tO2)}</td><td class="num">${money(tA2)}</td><td class="num">${tL2>0?Math.round(tO2/tL2*100):0}%</td><td></td></tr>`;
+  body.innerHTML=`<div class="panel">
+    <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Limit</th><th class="num">Used</th><th class="num">Available</th><th class="num">Usage</th><th>Next Due</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+  </div>`;
+}
+function exportCardUsageExcel(){
+  const rows=cardUsageRows();
+  if(!rows.length){ toast('No cards to export',1); return; }
+  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Available','Usage %','Next Due','Days Left']];
+  rows.forEach(r=>out.push([r.c.name,cardOwnerLabel(r.c),r.c.bank||'',maskCard(r.c.number),num2(r.limit),num2(r.out),num2(r.avail),Math.round(r.usedPct),isoDate(r.due),r.dleft]));
+  exportExcel('card_usage_'+todayStr()+'.xlsx',[{name:'Card Usage',rows:out}]);
 }
 
 /* =========================================================
