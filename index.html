@@ -2155,7 +2155,8 @@ function quickSaveCard(i){
   if(!requireOnline())return;
   const name=$('#qc_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#qc_day').value||1));
-  const c={id:uid(),name,owner:$('#qc_owner').value.trim(),bank:$('#qc_bank').value.trim(),number:$('#qc_number').value.trim(),theme:'indigo',
+  const qbank=$('#qc_bank').value.trim();
+  const c={id:uid(),name,owner:$('#qc_owner').value.trim(),bank:qbank,number:$('#qc_number').value.trim(),theme:bankTheme(qbank)||'indigo',
     creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,allowNegative:!!$('#qc_allowneg')?.checked,discountPercent:redeemVal('qc_disc','qc_discOther'),
     maxDiscountMonthly:+$('#qc_maxdisc').value||0,paymentDay:day,openingOutstanding:0,txns:[]};
   DB.cards.push(c); save(); renderBell();
@@ -3924,9 +3925,22 @@ const CARD_THEMES=[
   {k:'emerald',g:'linear-gradient(135deg,#059669,#10b981)'},
   {k:'gold',   g:'linear-gradient(135deg,#a9791b,#f5b301)'},
   {k:'rose',   g:'linear-gradient(135deg,#e11d48,#fb7185)'},
-  {k:'slate',  g:'linear-gradient(135deg,#3b4a63,#0f172a)'}
+  {k:'slate',  g:'linear-gradient(135deg,#3b4a63,#0f172a)'},
+  {k:'navy',   g:'linear-gradient(135deg,#0b1f4d,#1e3a8a)'},
+  {k:'red',    g:'linear-gradient(135deg,#b91c1c,#ef4444)'},
+  {k:'black',  g:'linear-gradient(135deg,#374151,#0b0f1a)'},
+  {k:'yellow', g:'linear-gradient(135deg,#f59e0b,#fcd34d)'},
+  {k:'purple', g:'linear-gradient(135deg,#6b21a8,#a855f7)'},
+  {k:'teal',   g:'linear-gradient(135deg,#0d9488,#2dd4bf)'},
+  {k:'orange', g:'linear-gradient(135deg,#c2410c,#fb923c)'},
+  {k:'green',  g:'linear-gradient(135deg,#15803d,#22c55e)'},
+  {k:'cyan',   g:'linear-gradient(135deg,#0891b2,#22d3ee)'},
+  {k:'maroon', g:'linear-gradient(135deg,#7f1d1d,#be123c)'}
 ];
 function cardGrad(c){ return (CARD_THEMES.find(t=>t.k===(c&&c.theme))||CARD_THEMES[0]).g; }
+/* most-recent colour you saved for a given bank/issuer, so re-using a bank re-applies its look */
+function bankTheme(bank){ bank=(bank||'').trim().toLowerCase(); if(!bank)return null;
+  const m=(DB.cards||[]).filter(c=>(c.bank||'').trim().toLowerCase()===bank && c.theme); return m.length?m[m.length-1].theme:null; }
 function cardOwnerLabel(c){ return (c&&c.owner&&c.owner.trim())?c.owner.trim():'My own'; }
 function allCardOwners(){ return uniqSorted((DB.cards||[]).map(c=>c.owner)); }
 function allCardNames(){ return uniqSorted((DB.cards||[]).map(c=>c.name)); }
@@ -3945,25 +3959,22 @@ function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date();
   let y=t.getFullYear(),m=t.getMonth(),d=mk(y,m); if(d<t){ if(++m>11){m=0;y++;} d=mk(y,m); } return d; }
 /* the day-of-month that a statement falls on, clamped to the month's length */
 function monthDay(y,m,day){ return new Date(y,m,Math.min(Math.min(31,Math.max(1,+day||1)),new Date(y,m+1,0).getDate())); }
-/* the card's upcoming payment DUE date. Two bases:
-   - 'statement': due = statement date + N grace days (UAE style — the number of
-     interest-free days decides the date; 21, 25, 31… all behave differently)
-   - otherwise (default): a fixed payment day each month (legacy behaviour) */
+/* the card's upcoming payment DUE date — a fixed payment day each month. */
 function cardDueDate(c){
   if(!c) return nextDue(1);
-  if(c.dueMode==='statement' && +c.statementDay>0){
-    const t=new Date(); t.setHours(0,0,0,0);
-    const off=Math.max(0,+c.dueDays||0); let best=null;
-    for(let k=-2;k<=2;k++){ const b=new Date(t.getFullYear(), t.getMonth()+k, 1);
-      const stmt=monthDay(b.getFullYear(), b.getMonth(), c.statementDay);
-      const due=new Date(stmt); due.setDate(due.getDate()+off);
-      if(due>=t && (!best || due<best)) best=due; }
-    if(best) return best;
-  }
   return nextDue(c.paymentDay);
 }
-/* the statement date for the cycle that the given due date closes (for display) */
-function cardStatementFor(c,due){ if(!c||c.dueMode!=='statement')return null; const s=new Date(due); s.setDate(s.getDate()-Math.max(0,+c.dueDays||0)); return s; }
+/* the statement date for the current due cycle (shown for cashback-credit timing).
+   If no statement day is set on the card, it defaults to 20 days before the due date. */
+function cardStatementDate(c){
+  const due=cardDueDate(c);
+  if(c && +c.statementDay>0){
+    let s=monthDay(due.getFullYear(), due.getMonth(), c.statementDay);
+    if(s>due){ const p=new Date(due.getFullYear(), due.getMonth()-1, 1); s=monthDay(p.getFullYear(), p.getMonth(), c.statementDay); }
+    return s;
+  }
+  const s=new Date(due); s.setDate(s.getDate()-20); return s;
+}
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
 /* due reminders: only UNPAID cards (outstanding>0), soonest due first; paid cards never show */
 function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=cardDueDate(c); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
@@ -4463,7 +4474,7 @@ function cardDetail(id){
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
     <div class="grid3" style="margin-bottom:16px">
       <div class="stat green"><div class="label">Available</div><div class="val">${money(avail)}</div><div class="foot">of ${money(limit)} limit</div></div>
-      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">due ${fmtDate(isoDate(cardDueDate(c)))}${c.dueMode==='statement'?` · stmt ${c.statementDay}+${+c.dueDays||0}d`:''}</div></div>
+      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">due ${fmtDate(isoDate(cardDueDate(c)))} · stmt ${fmtDate(isoDate(cardStatementDate(c)))}</div></div>
       <div class="stat gold"><div class="label">Cashback · pending cycle</div><div class="val">${money(discUsed)}</div><div class="foot">${c.discountPercent||0}% · ${cap>0?'cap '+money(cap):'no cap'} · posts on statement</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:16px">
@@ -4548,33 +4559,29 @@ function delCardTxn(cid,tid){ if(!requireOnline())return; const c=cardById(cid);
 /* ---- add / edit card (master data) ---- */
 let _cardTheme='indigo';
 function pickCardTheme(k){ _cardTheme=k; $$('#c_themes .sw').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); }
+/* when you type/pick a bank you've saved before, auto-apply the colour you last used for it */
+function cardBankChanged(){ const t=bankTheme($('#c_bank')?.value); if(t)pickCardTheme(t); }
 /* show the right day inputs for the chosen due-date basis + preview the next due date */
 function cardDueModeToggle(){
-  const mode=$('#c_duemode')?.value;
-  const fx=$('#c_duefixed'), st=$('#c_duestmt');
-  if(fx)fx.style.display=mode==='statement'?'none':'';
-  if(st)st.style.display=mode==='statement'?'':'none';
   const pv=$('#c_duepreview'); if(!pv)return;
-  const tmp = mode==='statement'
-    ? {dueMode:'statement', statementDay:Math.min(31,Math.max(1,+$('#c_stmtday').value||1)), dueDays:Math.max(0,+$('#c_duedays').value||0)}
-    : {paymentDay:Math.min(31,Math.max(1,+$('#c_day').value||1))};
-  const due=cardDueDate(tmp), dl=daysUntil(due);
-  const pre = mode==='statement' ? `Statement day <b style="color:var(--text)">${tmp.statementDay}</b> + <b style="color:var(--text)">${tmp.dueDays}</b> days → ` : '';
-  pv.innerHTML = `${pre}Next payment due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${dl<=0?'today':dl+' day'+(dl===1?'':'s')+' away'}`;
+  const tmp={paymentDay:Math.min(31,Math.max(1,+$('#c_day').value||1)), statementDay:(+$('#c_stmtday').value||0)};
+  const due=cardDueDate(tmp), dl=daysUntil(due), stmt=cardStatementDate(tmp);
+  pv.innerHTML = `Next payment due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${dl<=0?'today':dl+' day'+(dl===1?'':'s')+' away'} · statement <b style="color:var(--text)">${fmtDate(isoDate(stmt))}</b>`;
 }
 function editCard(id){
-  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:1,dueDays:21,status:'active'};
+  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active'};
   _cardTheme=c.theme||'indigo';
   openModal(`${id?'Edit':'Add'} Card`,`
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Use this for cards borrowed from friends/family so you can track each person's balance.</div></div>
     <div class="grid2">
       <div class="field"><label>Card Name *</label><input id="c_name" list="dl_cardname" value="${esc(c.name)}" placeholder="e.g. ADCB Visa Signature">${dataList('dl_cardname',allCardNames())}</div>
-      <div class="field"><label>Bank / Issuer</label><input id="c_bank" list="dl_cardbank" value="${esc(c.bank||'')}" placeholder="e.g. ADCB">${dataList('dl_cardbank',allCardBanks())}</div>
+      <div class="field"><label>Bank / Issuer</label><input id="c_bank" list="dl_cardbank" value="${esc(c.bank||'')}" placeholder="e.g. ADCB" oninput="cardBankChanged()">${dataList('dl_cardbank',allCardBanks())}</div>
     </div>
     <div class="field"><label>Card Number</label><input id="c_number" value="${esc(c.number||'')}" inputmode="numeric" placeholder="Stored on your device only — shown masked (last 4)"></div>
     <div class="field"><label>Card Colour</label>
       <div class="swatches card-swatches" id="c_themes">${CARD_THEMES.map(t=>`<button type="button" class="sw" data-k="${t.k}" style="background:${t.g}" onclick="pickCardTheme('${t.k}')"></button>`).join('')}</div>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Pick a bank you've used before and its saved colour is applied automatically — or choose any swatch to override.</div>
     </div>
     <div class="grid2">
       <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00"></div>
@@ -4584,18 +4591,10 @@ function editCard(id){
       <div class="field"><label>Cashback (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}</div>
       <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
     </div>
-    <div class="field"><label>Payment due date basis</label>
-      <select id="c_duemode" onchange="cardDueModeToggle()">
-        <option value="fixed" ${c.dueMode==='statement'?'':'selected'}>📅 Fixed payment day each month</option>
-        <option value="statement" ${c.dueMode==='statement'?'selected':''}>🧾 From statement date (statement day + grace days)</option>
-      </select>
-      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">UAE cards give an interest-free grace period — the due date is the statement date plus a number of days (e.g. 21 or 25). Choose “From statement date” to let that decide the date automatically.</div></div>
-    <div class="grid2" id="c_duefixed">
-      <div class="field"><label>Payment Day (1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}" oninput="cardDueModeToggle()"></div>
-    </div>
-    <div class="grid2" id="c_duestmt">
-      <div class="field"><label>Statement Day (1–31) *</label><input id="c_stmtday" type="number" min="1" max="31" value="${c.statementDay||1}" oninput="cardDueModeToggle()"></div>
-      <div class="field"><label>Due days after statement *</label><input id="c_duedays" type="number" min="0" max="60" value="${c.dueDays!=null&&c.dueDays!==''?c.dueDays:21}" placeholder="e.g. 21, 25" oninput="cardDueModeToggle()"></div>
+    <div class="grid2">
+      <div class="field"><label>Payment Due Date (day 1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}" oninput="cardDueModeToggle()"></div>
+      <div class="field"><label>Statement Day (1–31)</label><input id="c_stmtday" type="number" min="1" max="31" value="${c.statementDay||''}" placeholder="blank = 20 days before due" oninput="cardDueModeToggle()">
+        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Only used for the statement / cashback-credit date. Leave blank to use 20 days before the due date.</div></div>
     </div>
     <div class="li-hint" id="c_duepreview" style="margin:-4px 0 10px"></div>
     <div class="field"><label>Status</label><select id="c_status"><option value="active" ${c.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${c.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
@@ -4616,14 +4615,13 @@ function saveCard(id){
   if(!requireOnline())return;
   const name=$('#c_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
-  const dueMode=$('#c_duemode').value==='statement'?'statement':'fixed';
-  const statementDay=Math.min(31,Math.max(1,+$('#c_stmtday').value||1)), dueDays=Math.max(0,+$('#c_duedays').value||0);
-  if(dueMode==='statement' && !(+$('#c_duedays').value>=0 && $('#c_duedays').value!==''))return toast('Enter the number of days after the statement date',1);
+  const stmtRaw=$('#c_stmtday').value;
+  const statementDay=(stmtRaw!==''&&stmtRaw!=null)?Math.min(31,Math.max(1,+stmtRaw||0)):0;
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
     allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
-    paymentDay:day, dueMode, statementDay, dueDays };
+    paymentDay:day, dueMode:'fixed', statementDay };
   if(id){ Object.assign(cardById(id),data); logAct('edit','card',data.name,'card details updated'); }
   else{ const availRaw=$('#c_avail').value;   // opening outstanding is derived: Limit − Available (blank ⇒ nothing owed yet)
     data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : 0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
@@ -4681,7 +4679,7 @@ function renderCardPref(){
   if(!cards.length){ if(top)top.innerHTML=''; host.innerHTML=`<div class="panel">${emptyBox('⭐','No cards to rank','Add active credit cards (with a cashback % and limit) to get a recommendation.')}</div>`; return; }
   const best=cards[0];
   const capTxt=x=> x.capRem===Infinity?'no monthly cap':(`AED cap left ${money(x.capRem)}`);
-  const creditWhen=x=> x.c.dueMode==='statement' ? `posts around statement day ${x.c.statementDay}` : `posts by the statement (due ${fmtDate(isoDate(x.due))})`;
+  const creditWhen=x=> `posts on the statement date (${fmtDate(isoDate(cardStatementDate(x.c)))})`;
   if(top){
     const okBadge = best.fits ? '' : `<span class="tag due" style="margin-left:8px">⚠ not enough balance</span>`;
     top.innerHTML=`<div class="panel" style="border:1px solid var(--brand);background:linear-gradient(135deg,var(--brandsoft),transparent)">
@@ -4705,7 +4703,7 @@ function renderCardPref(){
       ${amount>0?`<td class="num" style="color:var(--green);font-weight:700">${x.cb>0?money(x.cb):'—'}</td>`:''}
       <td class="num">${x.capRem===Infinity?'∞':money(x.capRem)}</td>
       <td class="num" style="color:var(--gold2)">${x.pending>0?money(x.pending):'—'}</td>
-      <td style="font-size:12px;color:var(--muted)">${x.c.dueMode==='statement'?`stmt day ${x.c.statementDay}`:`due ${fmtDate(isoDate(x.due))}`}</td></tr>`).join('')}
+      <td style="font-size:12px;color:var(--muted)">stmt ${fmtDate(isoDate(cardStatementDate(x.c)))}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="li-hint" style="margin-top:10px">“Pending cashback” is what this card has earned in the current cycle — it posts to the card (and frees balance / offsets the bill) on the statement date, not at the checkout counter.</div>`;
 }
