@@ -4082,13 +4082,57 @@ function quickCardTxn(type,cardId){
   const cards=activeCards();
   if(!cards.length) return toast('No active cards — add one in Credit Cards first',1);
   if(cards.length===1){ go('cards'); setTimeout(()=>cardTxnModal(cards[0].id,type),60); return; }
-  const rows=cards.map(c=>{ const av=cardAvailable(c), out=cardOutstanding(c);
-    return `<button class="pickrow" onclick="closeModal();quickCardTxn('${type}','${c.id}')">
-      <span class="pk-main">${esc(cardLabel(c))}</span>
-      <span class="pk-sub">available ${money(av)}${out>0.005?' · due '+money(out):''}</span></button>`; }).join('');
-  openModal(type==='recharge'?'↑ Recharge which card?':type==='deposit'?'⇩ Deposit to which card?':'💵 Pay which card?',
-    `<div class="pickcol">${rows}</div>`,
-    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>`);
+  const items=cards.map(c=>{ const av=cardAvailable(c), out=cardOutstanding(c);
+    return {value:c.id, label:cardLabel(c), sub:'available '+money(av)+(out>0.005?' · due '+money(out):'')}; });
+  openMultiPick({title:type==='recharge'?'↑ Recharge which cards?':type==='deposit'?'⇩ Deposit to which cards?':'💵 Pay which cards?',
+    items, onAdd:ids=>{ go('cards'); setTimeout(()=>cardBatchTxnModal(type,ids),60); }});
+}
+/* record the same kind of entry across several cards at once — one amount per card */
+let _batchType=null;
+function cardBatchTxnModal(type,ids){
+  const cards=(ids||[]).map(cardById).filter(Boolean);
+  if(!cards.length)return;
+  if(cards.length===1){ cardTxnModal(cards[0].id,type); return; }
+  _batchType=type;
+  const pay=(type==='payment'||type==='deposit');
+  const titles={payment:'Record Card Payments',deposit:'Card Deposits',recharge:'Card Recharges'};
+  const hints={payment:'Amount paid to each bank — frees up each card’s available limit.',deposit:'Cash deposited into each card to pay down what you owe — taken from your cash box.',recharge:'Top up / load funds onto each card.'};
+  const rows=cards.map(c=>{ const out=cardOutstanding(c), av=cardAvailable(c), pre=(pay&&out>0.005)?(+out.toFixed(2)):'';
+    return `<div class="totbox" style="margin-bottom:10px" data-cid="${c.id}">
+      <div class="totrow" style="font-weight:800"><span>${esc(cardLabel(c))}</span><span class="bt-after" style="color:var(--green)">${money(av+(pre?+pre:0))}</span></div>
+      <div class="totrow"><span style="color:var(--muted);font-size:12.5px">available ${money(av)}${out>0.005?' · due '+money(out):''}</span></div>
+      <div class="field" style="margin:8px 0 0"><label>Amount (${S().currency})</label>
+        <input class="bt-amt" data-cid="${c.id}" data-base="${av}" type="number" min="0" step="any" placeholder="0.00" value="${pre}" oninput="batchCardCalc(this)"></div>
+    </div>`; }).join('');
+  openModal(titles[type]||'Card entries',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${hints[type]||''} Leave an amount blank to skip that card.</p>
+    ${rows}
+    <div class="grid2">
+      <div class="field"><label>Date</label><input id="bt_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Note (optional)</label><input id="bt_note" placeholder="applies to all cards"></div>
+    </div>
+    ${type==='deposit'?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
+      <input type="checkbox" id="bt_cash" checked disabled style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Deposited from your cash box (deducts from Cash Book)</span></label>`
+    :`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px;cursor:pointer">
+      <input type="checkbox" id="bt_cash" style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Paid from cash box (deduct from Cash Book)</span></label>`}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveBatchCardTxn()">Save ${cards.length}</button>`);
+  setTimeout(()=>$('.bt-amt')?.focus(),30);
+}
+function batchCardCalc(inp){ const base=+inp.dataset.base||0, amt=+inp.value||0, box=inp.closest('[data-cid]'), after=box&&box.querySelector('.bt-after');
+  if(after){ after.textContent=money(base+amt); after.style.color=(base+amt)<-0.005?'var(--red)':'var(--green)'; } }
+function saveBatchCardTxn(){
+  if(!requireOnline())return;
+  const type=_batchType;
+  const date=$('#bt_date')?.value||todayStr(), note=($('#bt_note')?.value||'').trim();
+  const fromCash = type==='deposit' ? true : !!$('#bt_cash')?.checked;
+  let n=0;
+  $$('.bt-amt').forEach(inp=>{ const amt=+inp.value; if(!(amt>0))return; const c=cardById(inp.dataset.cid); if(!c)return;
+    if(!c.txns)c.txns=[]; c.txns.push({id:uid(),date,type,amount:amt,note,fromCash,byId:session.id}); n++; });
+  if(!n)return toast('Enter an amount for at least one card',1);
+  logAct('add','card entries',n+' cards',`${txnLabel(type)} × ${n}`);
+  save(); toast(n+' '+(type==='recharge'?'recharge':type==='deposit'?'deposit':'payment')+(n===1?'':'s')+' saved'+(fromCash?' · cash deducted':''));
+  closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 /* recurring nudge while any card is urgent: soft chime + toast + blinking bell */
 let _urgentTimer=null;
@@ -4423,6 +4467,9 @@ views.cards=function(){
   return `
   <div class="page-head"><div><h2>Credit Cards</h2><p>Card limits, balances, monthly commission discount & payment-date reminders.</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-sm btn-ghost" onclick="quickCardTxn('recharge')" title="Top up one or more cards">↑ Recharge</button>
+      <button class="btn-sm btn-ghost" onclick="quickCardTxn('deposit')" title="Deposit cash into one or more cards">⇩ Deposit</button>
+      <button class="btn-sm btn-gold" onclick="quickCardTxn('payment')" title="Pay one or more cards">💵 Pay</button>
       <button class="btn-sm btn-ghost" onclick="unifyCardColours()" title="Repaint every card so all cards of a bank share that bank's colour">🎨 Unify colours</button>
       <button class="btn-sm" onclick="editCard()">＋ Add Card</button>
     </div></div>
@@ -4443,11 +4490,13 @@ function renderCards(){
   const all=DB.cards||[], m=ym(todayStr());
   const q=($('#cardSearch')?.value||'').toLowerCase().trim();
   const cards=q? all.filter(c=>[c.name,c.owner,c.bank,c.number].some(v=>(v||'').toLowerCase().includes(q))) : all;
+  // totals & available count reflect ACTIVE (usable) cards only — inactive cards are excluded
+  const actInView=cards.filter(cardActive), inactInView=cards.filter(c=>!cardActive(c));
   let tL=0,tA=0,tO=0,tD=0;
-  cards.forEach(c=>{ const l=+c.creditLimit||0,o=cardOutstanding(c); tL+=l; tO+=o; tA+=l-o; tD+=cardDiscountInMonth(c,m); });
+  actInView.forEach(c=>{ const l=+c.creditLimit||0,o=cardOutstanding(c); tL+=l; tO+=o; tA+=l-o; tD+=cardDiscountInMonth(c,m); });
   const cs=$('#cardStats'); if(cs)cs.innerHTML=cards.length?`
-    <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${cards.length} card${cards.length===1?'':'s'}</div></div>
-    <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div></div>
+    <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${actInView.length} active card${actInView.length===1?'':'s'}${inactInView.length?` · ${inactInView.length} inactive hidden`:''}</div></div>
+    <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div><div class="foot">active cards only</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
     <div class="stat gold"><span class="ic">％</span><div class="label">Cashback · this month</div><div class="val">${money(tD)}</div></div>`:'';
   if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
@@ -4476,14 +4525,18 @@ function renderCards(){
     host.innerHTML=(sec('🟢 Active',act,'var(--green)')+sec('⚪ Inactive',inact,'var(--muted)'))||`<div class="panel">${emptyBox('💳','No cards','—')}</div>`;
     renderBell(); return;
   }
-  // group cards by owner
-  const groups={}; cards.forEach(c=>{ const o=cardOwnerLabel(c); (groups[o]||(groups[o]=[])).push(c); });
+  // group ACTIVE cards by owner; inactive cards go to a separate section at the bottom
+  const groups={}; actInView.forEach(c=>{ const o=cardOwnerLabel(c); (groups[o]||(groups[o]=[])).push(c); });
   const owners=Object.keys(groups).sort((a,b)=>a==='My own'?-1:b==='My own'?1:a.localeCompare(b));
-  host.innerHTML=owners.map(o=>{ const g=[...groups[o]].sort((a,b)=>cardAvailable(b)-cardAvailable(a)); const gOut=g.reduce((a,c)=>a+cardOutstanding(c),0);
+  let out=owners.map(o=>{ const g=[...groups[o]].sort((a,b)=>cardAvailable(b)-cardAvailable(a)); const gOut=g.reduce((a,c)=>a+cardOutstanding(c),0);
     const safe=o.replace(/'/g,"\\'");
     return `<div class="cat-head">👤 <span class="own-name">${esc(o)}</span> <span class="cc">${g.length} card${g.length===1?'':'s'}</span> <span class="cc" style="color:${gOut>0?'var(--amber)':'var(--text)'}">owe ${money(gOut)}</span>
       <button class="mini-btn gold" style="margin-left:auto" onclick="ownerStatement('${safe}')">📄 Statement</button></div>
     <div class="ccgrid">${g.map(c=>cardCell(c)).join('')}</div>`; }).join('');
+  if(inactInView.length){ const g=[...inactInView].sort((a,b)=>cardAvailable(b)-cardAvailable(a));
+    out+=`<div class="cat-head">⚪ <span class="own-name">Inactive</span> <span class="cc" style="color:var(--muted)">${g.length} card${g.length===1?'':'s'} · hidden from totals</span></div>
+      <div class="ccgrid">${g.map(c=>cardCell(c)).join('')}</div>`; }
+  host.innerHTML=out||`<div class="panel">${emptyBox('💳','No cards','—')}</div>`;
   renderBell();
 }
 /* per-owner combined statement / ledger */
