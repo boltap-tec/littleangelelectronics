@@ -4630,6 +4630,13 @@ function cardDetail(id){
       <button class="btn-sm btn-ghost" onclick="cardTxnModal('${c.id}','oldpay')" title="Log a past payment for the record only — does not change the balance or limit">🕘 Old payment</button>
       ${isOwner()?`<button class="btn-sm btn-ghost" onclick="adjustBalanceModal('${c.id}')">✎ Edit balance</button>`:''}
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="font-weight:700;font-size:13px">Payment history</div>
+      <div class="row-actions" style="margin-left:auto">
+        <button class="btn-sm btn-green" onclick="cardDetailExcel('${c.id}')">⬇ Excel</button>
+        <button class="btn-sm btn-gold" onclick="cardDetailPdf('${c.id}')">📄 PDF</button>
+      </div>
+    </div>
     <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm btn-red" onclick="delCard('${c.id}')">Delete Card</button>
      <button class="btn-sm btn-ghost" onclick="editCard('${c.id}')">Edit</button>
@@ -6279,6 +6286,7 @@ views.cardreport=function(){
       <input id="crTo" type="date" class="mini-btn" style="padding:9px" oninput="renderCardReport()" title="To date">
       <button class="btn-sm btn-ghost" onclick="clearCrRange()">Clear</button>
       <button class="btn-sm btn-green" onclick="exportCardReportExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-gold" onclick="cardReportPdf()" title="Pick one card to download its statement as PDF">📄 PDF</button>
     </div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="crSearch" placeholder="Search note, type or amount..." oninput="renderCardReport()"></div></div>
   <div id="crStats" class="cards"></div>
@@ -6312,6 +6320,111 @@ function exportCardReportExcel(){
     asc.forEach(t=>{ if(t.type!=='oldpay') bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'',num2(signed),num2(bal)]); } }); });
   if(rows.length===1){ toast('No card transactions in this period',1); return; }
   exportExcel('card_statement_'+todayStr()+'.xlsx',[{name:'Card Statement',rows}]);
+}
+
+/* ---- single-card statement (payment history) → data, Excel & PDF ----
+   Used by the card detail popup and by the Card Statement report's PDF button.
+   Running balance mirrors cardOutstanding: purchase/oldbal add, oldpay is
+   record-only (ignored), everything else is a credit that reduces what's owed. */
+function cardStatementData(c,from,to){
+  const all=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
+  const signOf=t=> t.type==='oldpay'?0:((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0);
+  let opening=+c.openingOutstanding||0; const rows=[];
+  all.forEach(t=>{ const d=signOf(t);
+    if(from && (t.date||'')<from){ opening+=d; return; }
+    if(to && (t.date||'')>to) return;
+    rows.push({...t,signed:d}); });
+  let run=opening; rows.forEach(r=>{ run=Math.round((run+r.signed)*100)/100; r.run=run; });
+  let spend=0,pay=0,redeem=0; rows.forEach(r=>{ if(r.type==='purchase'||r.type==='oldbal')spend+=+r.amount||0; else if(r.type==='discount')redeem+=+r.amount||0; else if(r.type!=='oldpay')pay+=+r.amount||0; });
+  return {opening:Math.round(opening*100)/100, rows, spend:Math.round(spend*100)/100, pay:Math.round(pay*100)/100, redeem:Math.round(redeem*100)/100, closing:Math.round(run*100)/100, limit:+c.creditLimit||0};
+}
+function exportCardExcel(id,from,to){
+  const c=cardById(id); if(!c)return; const d=cardStatementData(c,from,to);
+  const period=(from||to)?`${from?fmtDate(from):'start'} to ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
+  const rows=[[(cardLabel(c)||c.name||'')+' — Card Statement'],['Period',period],[],
+    ['Date','Type','Note','Charge +','Payment −','Outstanding']];
+  rows.push(['','Opening balance','','','',num2(d.opening)]);
+  d.rows.forEach(r=>{ rows.push([r.date,txnLabel(r.type),r.note||'', r.signed>0?num2(r.signed):'', r.signed<0?num2(-r.signed):'', num2(r.run)]); });
+  rows.push([]);
+  rows.push(['','','','Spend (period)','',num2(d.spend)]);
+  rows.push(['','','','Payments (period)','',num2(d.pay)]);
+  rows.push(['','','','Cashback (period)','',num2(d.redeem)]);
+  rows.push(['','','','CLOSING OUTSTANDING','',num2(d.closing)]);
+  if(d.limit>0) rows.push(['','','','Available','',num2(d.limit-d.closing)]);
+  exportExcel('card_statement_'+((c.name||'card').replace(/[^\w.-]+/g,'_'))+'_'+(from||'all')+'_'+(to||todayStr())+'.xlsx',[{name:(c.name||'Card').replace(/[\\/?*\[\]:]/g,' ').slice(0,28),rows}]);
+}
+function cardStatementHtml(c,from,to){
+  const d=cardStatementData(c,from,to);
+  const period=(from||to)?`${from?fmtDate(from):'Start'} — ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
+  const cell='padding:7px 9px;border:1px solid #e6e6e6', rt='text-align:right';
+  const body=d.rows.map(r=>`<tr>
+      <td style="${cell}">${fmtDate(r.date)}</td>
+      <td style="${cell}">${esc(txnLabel(r.type))}${r.note?' · '+esc(r.note):''}</td>
+      <td style="${cell};${rt}">${r.signed>0?money(r.signed):''}</td>
+      <td style="${cell};${rt}">${r.signed<0?money(-r.signed):''}</td>
+      <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`).join('');
+  const l4=(c.number||'').replace(/\D/g,'').slice(-4);
+  return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #a9791b;padding-bottom:12px;margin-bottom:14px">
+      <div><div style="font-size:19px;font-weight:800">${esc(S().company||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().address||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().phone||'')}${S().trn?(' · TRN '+esc(S().trn)):''}</div></div>
+      <div style="text-align:right"><div style="font-size:22px;font-weight:800;color:#a9791b">CARD STATEMENT</div>
+        <div style="font-size:12px;color:#555">Generated ${fmtDate(todayStr())}</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <div><div style="font-size:11px;color:#888">CARD</div><div style="font-size:17px;font-weight:800">${esc(c.name||'')}${l4?' · ••'+l4:''}</div>
+        <div style="font-size:12px;color:#555">${esc(c.bank||'')}${c.owner&&c.owner.trim()?' · '+esc(c.owner.trim()):''}</div></div>
+      <div style="text-align:right"><div style="font-size:11px;color:#888">PERIOD</div><div style="font-size:14px;font-weight:700">${period}</div></div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#f4eeE0;color:#5a4a1e">
+        <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description</th>
+        <th style="${cell};${rt}">Charge +</th><th style="${cell};${rt}">Payment −</th><th style="${cell};${rt}">Outstanding</th></tr></thead>
+      <tbody>
+        <tr style="background:#faf7f0"><td style="${cell}" colspan="4"><b>Opening balance</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
+        ${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="5">No entries in this period</td></tr>`}
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <table style="border-collapse:collapse;font-size:13px;min-width:330px">
+        <tr><td style="padding:5px 10px;color:#555">Spend (period)</td><td style="padding:5px 10px;text-align:right">${money(d.spend)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#555">Payments (period)</td><td style="padding:5px 10px;text-align:right">${money(d.pay)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#2e7d32">Cashback (period)</td><td style="padding:5px 10px;text-align:right;color:#2e7d32">${money(d.redeem)}</td></tr>
+        <tr style="border-top:2px solid #a9791b"><td style="padding:8px 10px;font-weight:800;font-size:15px">Closing outstanding</td><td style="padding:8px 10px;text-align:right;font-weight:800;font-size:15px">${money(d.closing)}</td></tr>
+        ${d.limit>0?`<tr><td style="padding:5px 10px;color:#555">Available (of ${money(d.limit)})</td><td style="padding:5px 10px;text-align:right">${money(d.limit-d.closing)}</td></tr>`:''}
+      </table>
+    </div>
+    <div style="margin-top:22px;font-size:11px;color:#999;text-align:center">${esc(S().company||'')} · Card Statement · Computer-generated.</div>
+  </div>`;
+}
+async function buildCardStatementPdf(id,from,to){
+  const c=cardById(id); if(!c)return;
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  toast('Preparing statement…',0);
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=`<div id="cardStmtArea">${cardStatementHtml(c,from,to)}</div>`;
+  document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#cardStmtArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
+    const fn='card_statement_'+((c.name||'card').replace(/[^\w.-]+/g,'_'))+'_'+(from||'all')+'_'+(to||todayStr())+'.pdf';
+    const url=URL.createObjectURL(pdf.output('blob')); const a=document.createElement('a'); a.href=url; a.download=fn; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),5000);
+    toast('Statement ready — '+fn);
+  }catch(e){ toast('Could not build the statement PDF',1); }
+  finally{ document.body.removeChild(holder); }
+}
+/* card detail popup → download that card's full payment history */
+function cardDetailExcel(id){ exportCardExcel(id,'',''); }
+async function cardDetailPdf(id){ await buildCardStatementPdf(id,'',''); }
+/* Card Statement report → PDF of the selected card, honouring the date filter */
+async function cardReportPdf(){
+  const sel=$('#crCard')?.value||'';
+  if(!sel){ toast('Pick one card above to download a PDF statement (Excel covers all cards)',1); return; }
+  await buildCardStatementPdf(sel, $('#crFrom')?.value||'', $('#crTo')?.value||'');
 }
 
 /* ---- Card Usage report — one row per card, ordered by payment due date ---- */
