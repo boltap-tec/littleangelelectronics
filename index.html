@@ -4052,16 +4052,39 @@ function cardDueDate(c){
   if(!c) return nextDue(1);
   return nextDue(c.paymentDay);
 }
-/* the statement date for the current due cycle (shown for cashback-credit timing).
-   If no statement day is set on the card, it defaults to 20 days before the due date. */
-function cardStatementDate(c){
-  const due=cardDueDate(c);
+/* default gap (days) from statement date to due date, used when a card has no
+   explicit Statement Day. Temporary: owner will set exact statement days later. */
+const STMT_DAYS_BEFORE_DUE=24;
+/* the statement date that belongs to a given payment-due date.
+   If no statement day is set on the card, it defaults to STMT_DAYS_BEFORE_DUE days before the due date. */
+function stmtForDue(c, due){
   if(c && +c.statementDay>0){
     let s=monthDay(due.getFullYear(), due.getMonth(), c.statementDay);
-    if(s>due){ const p=new Date(due.getFullYear(), due.getMonth()-1, 1); s=monthDay(p.getFullYear(), p.getMonth(), c.statementDay); }
+    if(s>due){ s=monthDay(due.getFullYear(), due.getMonth()-1, c.statementDay); }
     return s;
   }
-  const s=new Date(due); s.setDate(s.getDate()-20); return s;
+  const s=new Date(due); s.setDate(s.getDate()-STMT_DAYS_BEFORE_DUE); return s;
+}
+/* the statement date for the current due cycle (shown for cashback-credit timing).
+   If no statement day is set on the card, it defaults to STMT_DAYS_BEFORE_DUE days before the due date. */
+function cardStatementDate(c){ return stmtForDue(c, cardDueDate(c)); }
+/* whole days from a card's statement date to its due date (the grace window). */
+function cardStmtGap(c, due, stmt){ due=due||cardDueDate(c); stmt=stmt||stmtForDue(c,due); return Math.round((due-stmt)/86400000); }
+/* the two statement cutoffs that frame TODAY's billing position:
+   • S0 = the most recent statement already generated (latest statement date ≤ today);
+   • S1 = the statement one cycle before S0.
+   Charges up to S1 are OLD due, charges in (S1,S0] are the CURRENT statement, and
+   charges after S0 are UNBILLED (they land on the next statement, not yet due). */
+function cardStatementCuts(c){
+  const t=new Date(); t.setHours(0,0,0,0);
+  const y=t.getFullYear(), m=t.getMonth(), day=(c&&+c.paymentDay)||1;
+  const stmts=[];
+  for(let k=-3;k<=2;k++){ stmts.push(stmtForDue(c, monthDay(y,m+k,day)).getTime()); }
+  const uniq=[...new Set(stmts)].sort((a,b)=>a-b).map(ms=>new Date(ms));
+  let i=uniq.length-1; while(i>0 && uniq[i]>t) i--;
+  const S0 = uniq[i]<=t ? uniq[i] : null;      // null ⇒ no statement generated yet
+  const S1 = (S0 && i>0) ? uniq[i-1] : null;
+  return { S0, S1 };
 }
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
 /* the occurrence of a card's payment day NEAREST to today — may be in the recent
@@ -4732,8 +4755,8 @@ function cardBankChanged(){ const t=bankTheme($('#c_bank')?.value); if(t)pickCar
 function cardDueModeToggle(){
   const pv=$('#c_duepreview'); if(!pv)return;
   const tmp={paymentDay:Math.min(31,Math.max(1,+$('#c_day').value||1)), statementDay:(+$('#c_stmtday').value||0)};
-  const due=cardDueDate(tmp), dl=daysUntil(due), stmt=cardStatementDate(tmp);
-  pv.innerHTML = `Next payment due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${dl<=0?'today':dl+' day'+(dl===1?'':'s')+' away'} · statement <b style="color:var(--text)">${fmtDate(isoDate(stmt))}</b>`;
+  const due=cardDueDate(tmp), dl=daysUntil(due), stmt=cardStatementDate(tmp), gap=cardStmtGap(tmp,due,stmt);
+  pv.innerHTML = `Statement <b style="color:var(--text)">${fmtDate(isoDate(stmt))}</b> → due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${gap} day${gap===1?'':'s'} to pay · due ${dl<=0?'today':'in '+dl+' day'+(dl===1?'':'s')}`;
 }
 function editCard(id){
   const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active'};
@@ -4760,8 +4783,8 @@ function editCard(id){
     </div>
     <div class="grid2">
       <div class="field"><label>Payment Due Date (day 1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}" oninput="cardDueModeToggle()"></div>
-      <div class="field"><label>Statement Day (1–31)</label><input id="c_stmtday" type="number" min="1" max="31" value="${c.statementDay||''}" placeholder="blank = 20 days before due" oninput="cardDueModeToggle()">
-        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Only used for the statement / cashback-credit date. Leave blank to use 20 days before the due date.</div></div>
+      <div class="field"><label>Statement Day (1–31)</label><input id="c_stmtday" type="number" min="1" max="31" value="${c.statementDay||''}" placeholder="blank = ${STMT_DAYS_BEFORE_DUE} days before due" oninput="cardDueModeToggle()">
+        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">The day your statement is generated. Leave blank for now to use <b>${STMT_DAYS_BEFORE_DUE} days before the due date</b> — set the exact day per card later.</div></div>
     </div>
     <div class="li-hint" id="c_duepreview" style="margin:-4px 0 10px"></div>
     <div class="field"><label>Status</label><select id="c_status"><option value="active" ${c.status!=='inactive'?'selected':''}>🟢 Active (usable for payments)</option><option value="inactive" ${c.status==='inactive'?'selected':''}>⚪ Inactive (hidden from payment lists)</option></select></div>
@@ -4771,6 +4794,13 @@ function editCard(id){
         <option value="1" ${c.allowNegative?'selected':''}>⚠️ Allow — permit a negative balance (pay it immediately)</option>
       </select>
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Only cards set to <b>Allow</b> can be swiped past the limit. Any card that goes negative triggers an immediate “pay now” alert.</div></div>
+    ${id?`<div class="field" style="border:1px solid var(--line2);border-radius:10px;padding:12px;background:var(--panel2,transparent)">
+      <label style="font-weight:700">Old statement / opening balance (${S().currency})</label>
+      <div class="grid2" style="margin-top:6px">
+        <div><input id="c_openbal" type="number" step="any" value="${c.openingOutstanding||0}" placeholder="carried-over balance"></div>
+        <div><input id="c_opendate" type="date" value="${esc((c.openingDate||'').slice(0,10))}"></div>
+      </div>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Balance owed from <b>before</b> you started tracking this card in the app — the old statement to carry over. Set the <b>as-of date</b> to a day on/before the previous statement so it shows as <b>Old Due</b>, and the current cycle starts fresh. Blank date = treated as oldest (Old Due). Leave 0 if nothing was owed.</div></div>`:''}
     ${id?'':`<div class="field"><label>Available Balance right now (${S().currency})</label>
       <input id="c_avail" type="number" step="any" value="" placeholder="how much you can still spend — blank = full limit">
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Your current spendable balance (Limit − whatever you already owe). It updates automatically as you buy &amp; pay — leave blank if nothing is owed yet.</div></div>`}`,
@@ -4789,9 +4819,10 @@ function saveCard(id){
     allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
     paymentDay:day, dueMode:'fixed', statementDay };
-  if(id){ Object.assign(cardById(id),data); logAct('edit','card',data.name,'card details updated'); }
+  if(id){ data.openingOutstanding=+$('#c_openbal').value||0; data.openingDate=($('#c_opendate').value||'').slice(0,10);
+    Object.assign(cardById(id),data); logAct('edit','card',data.name,'card details updated'); }
   else{ const availRaw=$('#c_avail').value;   // opening outstanding is derived: Limit − Available (blank ⇒ nothing owed yet)
-    data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : 0; data.txns=[]; DB.cards.push({id:uid(),...data}); }
+    data.openingOutstanding=(availRaw!=='' && availRaw!=null) ? ((+$('#c_limit').value||0)-(+availRaw||0)) : 0; data.openingDate=''; data.txns=[]; DB.cards.push({id:uid(),...data}); }
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell(); toast('Card saved');
 }
 function delCard(id){
@@ -6743,23 +6774,42 @@ views.cardusage=function(){
   <div id="cuBody"></div>`;
 };
 views._after_cardusage=()=>{ if(isOwner())renderCardUsage(); };
-/* split a card's outstanding into the CURRENT statement period's due and any OLD
-   due carried forward from before the current statement.
-   • prevCut = the statement cutoff one cycle before the current statement date.
-   • oldDue  = net balance billed up to prevCut still unpaid after every
-     payment/deposit/recharge/cashback made since prevCut (oldest cleared first).
-   • curDue  = the rest of the outstanding (this billing period).  oldDue+curDue = out. */
+/* split a card's outstanding into three real-statement buckets, cut at the STATEMENT
+   date (not the due date), so current-cycle spend is never billed early:
+   • oldDue   = net charges billed on/before the previous statement (S1) — overdue;
+   • curDue   = net charges in the current statement period (S1 < date ≤ S0) — the
+                amount printed on the latest statement, payable by the due date;
+   • unbilled = charges after the latest statement (date > S0) — not yet billed,
+                they appear on the NEXT statement (they still reduce Available).
+   The opening/old-statement balance is treated as a charge dated `openingDate`
+   (blank ⇒ oldest, so it sits in Old Due). Payments clear oldest first.
+   oldDue + curDue + unbilled = outstanding. */
 function cardDueSplit(c){
-  const out=cardOutstanding(c), stmt=cardStatementDate(c);
-  const prevIso=isoDate(monthDay(stmt.getFullYear(), stmt.getMonth()-1, stmt.getDate()));
-  let prevBal=+c.openingOutstanding||0, payAfter=0;
+  const {S0,S1}=cardStatementCuts(c);
+  const s0=S0?isoDate(S0):null, s1=S1?isoDate(S1):null;
+  let chgOld=0, chgCur=0, chgUnb=0, pay=0;
+  const bucket=(d,amt)=>{
+    if(!amt) return;
+    if(s0===null){ chgUnb+=amt; }                     // no statement yet ⇒ all unbilled
+    else if(d>s0){ chgUnb+=amt; }                      // after latest statement
+    else if(s1!==null && d<=s1){ chgOld+=amt; }        // on/before previous statement
+    else { chgCur+=amt; }                              // current statement period
+  };
+  bucket((c.openingDate||'0000-01-01').slice(0,10), +c.openingOutstanding||0);
   (c.txns||[]).forEach(t=>{
     if(t.type==='oldpay'||!t.date) return;
-    if(t.date<=prevIso){ prevBal += t.type==='purchase'?(+t.amount||0):-(+t.amount||0); }
-    else if(t.type!=='purchase'){ payAfter += (+t.amount||0); }
+    if(t.type==='purchase'||t.type==='oldbal') bucket(t.date, +t.amount||0);
+    else pay += (+t.amount||0);
   });
-  const oldDue=Math.max(0, Math.min(out, prevBal-payAfter));
-  return { oldDue, curDue:Math.max(0, out-oldDue) };
+  let p=pay;
+  const payOld=Math.min(p,chgOld); p-=payOld;
+  const payCur=Math.min(p,chgCur); p-=payCur;
+  const payUnb=Math.min(p,chgUnb);
+  return {
+    oldDue:  Math.max(0, chgOld-payOld),
+    curDue:  Math.max(0, chgCur-payCur),
+    unbilled:Math.max(0, chgUnb-payUnb)
+  };
 }
 /* shared, sorted & filtered rows for both the on-screen table and the Excel export */
 function cardUsageRows(){
@@ -6770,7 +6820,8 @@ function cardUsageRows(){
   let rows=(DB.cards||[]).map(c=>{
     const due= win==='near2' ? cardDueNearToday(c) : cardDueDate(c);
     const limit=+c.creditLimit||0, out=cardOutstanding(c), sp=cardDueSplit(c);
-    return { c, due, dleft:daysUntil(due), limit, out, curDue:sp.curDue, oldDue:sp.oldDue, avail:limit-out, usedPct: limit>0?Math.min(100,Math.max(0,out/limit*100)):0 };
+    const stmt=stmtForDue(c,due), gap=cardStmtGap(c,due,stmt);
+    return { c, due, stmt, gap, dleft:daysUntil(due), limit, out, curDue:sp.curDue, oldDue:sp.oldDue, unbilled:sp.unbilled, avail:limit-out, usedPct: limit>0?Math.min(100,Math.max(0,out/limit*100)):0 };
   });
   if(win==='near2') rows=rows.filter(r=>Math.abs(r.dleft)<=2);  // due dates 2 days before → 2 days after today
   if(onlyUsed) rows=rows.filter(r=>r.out>0.005);
@@ -6802,16 +6853,18 @@ function renderCardUsage(){
       <td class="num"${r.out>0.005?' style="color:var(--amber)"':''}>${money(r.out)}</td>
       <td class="num"${r.curDue>0.005?'':' style="color:var(--muted2)"'}>${money(r.curDue)}</td>
       <td class="num" style="color:${r.oldDue>0.005?'var(--red)':'var(--muted2)'}">${r.oldDue>0.005?money(r.oldDue):'—'}</td>
+      <td class="num"${r.unbilled>0.005?'':' style="color:var(--muted2)"'}>${r.unbilled>0.005?money(r.unbilled):'—'}</td>
       <td class="num"${r.avail<0?' style="color:var(--red)"':''}>${money(r.avail)}</td>
       <td class="num">${Math.round(r.usedPct)}%</td>
+      <td>${fmtDate(isoDate(r.stmt))}<div style="color:var(--muted2);font-size:11px">${r.gap}d to due</div></td>
       <td${dueCls?` style="color:${dueCls};font-weight:700"`:''}>${dueTxt}</td>
     </tr>`;
   }).join('');
-  const tL2=rows.reduce((s,r)=>s+r.limit,0), tO2=rows.reduce((s,r)=>s+r.out,0), tC2=rows.reduce((s,r)=>s+r.curDue,0), tOld2=rows.reduce((s,r)=>s+r.oldDue,0), tA2=rows.reduce((s,r)=>s+r.avail,0);
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tL2)}</td><td class="num">${money(tO2)}</td><td class="num">${money(tC2)}</td><td class="num"${tOld2>0.005?' style="color:var(--red)"':''}>${money(tOld2)}</td><td class="num">${money(tA2)}</td><td class="num">${tL2>0?Math.round(tO2/tL2*100):0}%</td><td></td></tr>`;
+  const tL2=rows.reduce((s,r)=>s+r.limit,0), tO2=rows.reduce((s,r)=>s+r.out,0), tC2=rows.reduce((s,r)=>s+r.curDue,0), tOld2=rows.reduce((s,r)=>s+r.oldDue,0), tU2=rows.reduce((s,r)=>s+r.unbilled,0), tA2=rows.reduce((s,r)=>s+r.avail,0);
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tL2)}</td><td class="num">${money(tO2)}</td><td class="num">${money(tC2)}</td><td class="num"${tOld2>0.005?' style="color:var(--red)"':''}>${money(tOld2)}</td><td class="num">${money(tU2)}</td><td class="num">${money(tA2)}</td><td class="num">${tL2>0?Math.round(tO2/tL2*100):0}%</td><td></td><td></td></tr>`;
   body.innerHTML=`<div class="panel">
-    <div class="table-wrap"><table style="min-width:860px"><thead><tr><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Limit</th><th class="num">Used</th><th class="num">Current Due</th><th class="num">Old Due</th><th class="num">Available</th><th class="num">Usage</th><th>Next Due</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Current Due = this statement period's charges · Old Due = unpaid balance carried from before the current statement · the two add up to Used (outstanding).</div>
+    <div class="table-wrap"><table style="min-width:1000px"><thead><tr><th>Card</th><th>Holder</th><th>Bank</th><th class="num">Limit</th><th class="num">Used</th><th class="num">Current Due</th><th class="num">Old Due</th><th class="num">Unbilled</th><th class="num">Available</th><th class="num">Usage</th><th>Statement</th><th>Next Due</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Current Due = charges up to the latest statement date (what's printed, payable by the due date) · Old Due = unpaid from before that statement · Unbilled = spend after the statement date, not yet billed (shows on the next statement). The three add up to Used (outstanding); Available subtracts all of it.</div>
   </div>`;
 }
 /* current window/cards filter as human labels + a filename stem, shared by Excel & PDF */
@@ -6829,39 +6882,39 @@ function exportCardUsageExcel(){
   const rows=cardUsageRows();
   if(!rows.length){ toast('No cards to export',1); return; }
   const m=cardUsageReportMeta();
-  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Current Statement Due','Old Due','Available','Usage %','Next Due','Days (– = overdue)']];
-  rows.forEach(r=>out.push([r.c.name,cardOwnerLabel(r.c),r.c.bank||'',maskCard(r.c.number),num2(r.limit),num2(r.out),num2(r.curDue),num2(r.oldDue),num2(r.avail),Math.round(r.usedPct),isoDate(r.due),r.dleft]));
+  const out=[['Card','Holder','Bank','Card No.','Limit','Used (Outstanding)','Current Statement Due','Old Due','Unbilled (this cycle)','Available','Usage %','Statement Date','Stmt→Due Days','Next Due','Days (– = overdue)']];
+  rows.forEach(r=>out.push([r.c.name,cardOwnerLabel(r.c),r.c.bank||'',maskCard(r.c.number),num2(r.limit),num2(r.out),num2(r.curDue),num2(r.oldDue),num2(r.unbilled),num2(r.avail),Math.round(r.usedPct),isoDate(r.stmt),r.gap,isoDate(r.due),r.dleft]));
   exportExcel(m.stem+'_'+todayStr()+'.xlsx',[{name:'Card Usage',rows:out}]);
 }
 /* printable table → PDF (same offscreen html2canvas → jsPDF pattern as the other reports) */
 function cardUsageReportHtml(){
   const rows=cardUsageRows(); if(!rows.length)return '';
   const st=S(), m=cardUsageReportMeta();
-  const tL=rows.reduce((s,r)=>s+r.limit,0), tO=rows.reduce((s,r)=>s+r.out,0), tC=rows.reduce((s,r)=>s+r.curDue,0), tOld=rows.reduce((s,r)=>s+r.oldDue,0), tA=rows.reduce((s,r)=>s+r.avail,0);
-  const head=['Card','Holder','Bank','Limit','Used','Current Due','Old Due','Available','Usage %','Next Due','Days'];
-  const isNum=idx=>(idx>=3&&idx<=8)||idx===10;   // Limit..Usage% and Days → right-aligned
+  const tL=rows.reduce((s,r)=>s+r.limit,0), tO=rows.reduce((s,r)=>s+r.out,0), tC=rows.reduce((s,r)=>s+r.curDue,0), tOld=rows.reduce((s,r)=>s+r.oldDue,0), tU=rows.reduce((s,r)=>s+r.unbilled,0), tA=rows.reduce((s,r)=>s+r.avail,0);
+  const head=['Card','Holder','Bank','Limit','Used','Current Due','Old Due','Unbilled','Available','Usage %','Statement','Stmt→Due','Next Due','Days'];
+  const isNum=idx=>(idx>=3&&idx<=9)||idx===11||idx===13;   // Limit..Usage%, Stmt→Due days, Days → right-aligned
   const cell=(v,idx,tag,extra)=>`<${tag} style="text-align:${isNum(idx)?'right':'left'};padding:6px 9px;border-bottom:1px solid #e3e3e3;font-size:11px;white-space:nowrap${extra||''}">${esc(String(v))}</${tag}>`;
   const th=head.map((h,idx)=>cell(h,idx,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
   const trs=rows.map(r=>{
-    const cells=[r.c.name,cardOwnerLabel(r.c),r.c.bank||'—',money(r.limit),money(r.out),money(r.curDue),r.oldDue>0.005?money(r.oldDue):'—',money(r.avail),Math.round(r.usedPct)+'%',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)];
+    const cells=[r.c.name,cardOwnerLabel(r.c),r.c.bank||'—',money(r.limit),money(r.out),money(r.curDue),r.oldDue>0.005?money(r.oldDue):'—',r.unbilled>0.005?money(r.unbilled):'—',money(r.avail),Math.round(r.usedPct)+'%',fmtDate(isoDate(r.stmt)),r.gap+'d',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)];
     return '<tr>'+cells.map((v,idx)=>cell(v,idx,'td')).join('')+'</tr>';
   }).join('');
   const bt=';border-top:2px solid #222';
-  const foot=`<tr style="font-weight:800">${cell('Total · '+rows.length+' card'+(rows.length===1?'':'s'),0,'td',bt)}${cell('',1,'td',bt)}${cell('',2,'td',bt)}${cell(money(tL),3,'td',bt)}${cell(money(tO),4,'td',bt)}${cell(money(tC),5,'td',bt)}${cell(money(tOld),6,'td',bt)}${cell(money(tA),7,'td',bt)}${cell((tL>0?Math.round(tO/tL*100):0)+'%',8,'td',bt)}${cell('',9,'td',bt)}${cell('',10,'td',bt)}</tr>`;
-  return `<div id="usagePdfArea" style="width:820px;background:#fff;color:#111;padding:24px;font-family:Arial,Helvetica,sans-serif">
+  const foot=`<tr style="font-weight:800">${cell('Total · '+rows.length+' card'+(rows.length===1?'':'s'),0,'td',bt)}${cell('',1,'td',bt)}${cell('',2,'td',bt)}${cell(money(tL),3,'td',bt)}${cell(money(tO),4,'td',bt)}${cell(money(tC),5,'td',bt)}${cell(money(tOld),6,'td',bt)}${cell(money(tU),7,'td',bt)}${cell(money(tA),8,'td',bt)}${cell((tL>0?Math.round(tO/tL*100):0)+'%',9,'td',bt)}${cell('',10,'td',bt)}${cell('',11,'td',bt)}${cell('',12,'td',bt)}${cell('',13,'td',bt)}</tr>`;
+  return `<div id="usagePdfArea" style="width:1000px;background:#fff;color:#111;padding:24px;font-family:Arial,Helvetica,sans-serif">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px">
       <div><div style="font-size:20px;font-weight:800">📊 Card Usage</div>
         <div style="font-size:12px;color:#666">${esc(m.windowLabel)} · ${esc(m.cardsLabel)} · ${rows.length} card(s)</div></div>
       <div style="text-align:right;font-size:12px;color:#444"><b>${esc(st.company||'')}</b><br>${fmtDate(todayStr())}</div>
     </div>
     <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${foot}</tbody></table>
-    <div style="margin-top:14px;color:#888;font-size:10px">Current Due = this statement period's charges · Old Due = unpaid balance carried from before the current statement (the two add up to Used). Due date = the card's payment day; "Days" is relative to today — a negative value means the due date has passed.</div>
+    <div style="margin-top:14px;color:#888;font-size:10px">Current Due = charges up to the latest statement date (printed amount, payable by the due date) · Old Due = unpaid from before that statement · Unbilled = spend after the statement date, billed next cycle. The three add up to Used; Available subtracts all of it. Statement = the upcoming cycle's statement date (currently ${STMT_DAYS_BEFORE_DUE} days before due unless a Statement Day is set); Stmt→Due = days from statement to due. "Days" is relative to today — a negative value means the due date has passed.</div>
   </div>`;
 }
 async function buildCardUsagePdf(){
   if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
   const html=cardUsageReportHtml(); if(!html){ toast('No cards to export',1); return null; }
-  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:860px;background:#fff;z-index:-1';
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:1040px;background:#fff;z-index:-1';
   holder.innerHTML=html; document.body.appendChild(holder);
   try{
     const canvas=await html2canvas(holder.querySelector('#usagePdfArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
