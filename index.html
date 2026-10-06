@@ -4189,9 +4189,26 @@ function cardStatementCuts(c){
   let i=uniq.length-1; while(i>0 && uniq[i]>t) i--;
   const S0 = uniq[i]<=t ? uniq[i] : null;      // null ⇒ no statement generated yet
   const S1 = (S0 && i>0) ? uniq[i-1] : null;
-  return { S0, S1 };
+  const Snext = uniq.find(d=>d>t) || null;     // the next statement still to be generated
+  return { S0, S1, Snext };
 }
 function daysUntil(d){ const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000); }
+/* the first payment-due day strictly AFTER a given date (used to date the next cycle's due). */
+function firstDueAfter(c, d){ const day=(c&&+c.paymentDay)||1; let y=d.getFullYear(), m=d.getMonth(), cand=monthDay(y,m,day);
+  while(cand<=d){ if(++m>11){m=0;y++;} cand=monthDay(y,m,day); } return cand; }
+/* what a card actually owes on its UPCOMING due date, vs. what is still unbilled.
+   • billedDue (oldDue+curDue) is payable on cardDueDate — this is what triggers a due alert.
+   • unbilled spend (after the last statement) is NOT due until the NEXT statement's due date.
+   payDue/payDleft point at whichever payment the card is really waiting on next. */
+function cardDueInfo(c){
+  const sp=cardDueSplit(c), billedDue=sp.oldDue+sp.curDue, unbilled=sp.unbilled;
+  const hasBilled=billedDue>0.005, due=cardDueDate(c);
+  const cuts=cardStatementCuts(c);
+  const nextCycleDue = cuts.Snext ? firstDueAfter(c, cuts.Snext) : firstDueAfter(c, due);
+  const payDue = hasBilled ? due : (unbilled>0.005 ? nextCycleDue : due);
+  return { oldDue:sp.oldDue, curDue:sp.curDue, billedDue, unbilled, hasBilled,
+           due, dleft:daysUntil(due), payDue, payDleft:daysUntil(payDue), amount:hasBilled?billedDue:unbilled };
+}
 /* the occurrence of a card's payment day NEAREST to today — may be in the recent
    past (unlike cardDueDate, which always rolls to the next upcoming cycle). Used by
    the "due within ±N days" window so a due date that just passed still shows up. */
@@ -4201,8 +4218,9 @@ function cardDueNearToday(c){ const t=new Date(); t.setHours(0,0,0,0);
   let best=cands[0]; cands.forEach(d=>{ if(Math.abs(d-t)<Math.abs(best-t)) best=d; }); return best; }
 /* human label for signed "days left": negative = overdue, 0 = today, positive = upcoming */
 function dueLeftTxt(dleft){ return dleft<0 ? (Math.abs(dleft)+'d ago') : (dleft===0?'today':('in '+dleft+'d')); }
-/* due reminders: only UNPAID cards (outstanding>0), soonest due first; paid cards never show */
-function cardReminders(){ return (DB.cards||[]).map(c=>{ const due=cardDueDate(c); return {c,due,dleft:daysUntil(due),out:cardOutstanding(c)}; })
+/* due reminders: cards with a BILLED amount due soon (old + current statement), soonest
+   first. Unbilled current-cycle spend is NOT yet due, so it never raises a reminder. */
+function cardReminders(){ return (DB.cards||[]).map(c=>{ const i=cardDueInfo(c); return {c,due:i.payDue,dleft:i.payDleft,out:i.billedDue}; })
   .filter(r=>r.out>0.005 && r.dleft<=10).sort((a,b)=>a.dleft-b.dleft); }
 function lowBalanceCards(){ return (DB.cards||[]).filter(c=>{ const al=+c.balanceLimitAlert||0; return al>0 && cardAvailable(c)<=al; }); }
 /* cards charged past their limit — the negative amount must be cleared before midnight */
@@ -4607,7 +4625,7 @@ function cardPickResolve(idBase){
 function cardVisual(c){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
   const usedPct=limit>0?Math.min(100,Math.max(0,out/limit*100)):0;
-  const due=cardDueDate(c), dleft=daysUntil(due), warn=dleft<=3;
+  const info=cardDueInfo(c), due=info.payDue, dleft=info.payDleft, warn=info.hasBilled && info.dleft<=3;
   const low=(+c.balanceLimitAlert>0)&&avail<=+c.balanceLimitAlert;
   const l4=(c.number||'').replace(/\D/g,'').slice(-4);
   const holder=(c.owner&&c.owner.trim())?c.owner.trim():'';
@@ -4743,7 +4761,7 @@ function ownerStatement(owner){
 /* ---- card detail + ledger ---- */
 function cardDetail(id){
   const c=cardById(id); if(!c)return;
-  const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out;
+  const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, info=cardDueInfo(c);
   const _cbcfg=cardCashbackCfg(c), discUsed=cardCashbackUsed(c,todayStr()), cap=_cbcfg.cap;
   const txns=[...(c.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
   const rows=txns.length? txns.map(t=>`<tr>
@@ -4757,7 +4775,7 @@ function cardDetail(id){
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
     <div class="grid3" style="margin-bottom:16px">
       <div class="stat green"><div class="label">Available</div><div class="val">${money(avail)}</div><div class="foot">of ${money(limit)} limit</div></div>
-      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">due ${fmtDate(isoDate(cardDueDate(c)))} · stmt ${fmtDate(isoDate(cardStatementDate(c)))}</div></div>
+      <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">${info.hasBilled?`${money(info.billedDue)} due by ${fmtDate(isoDate(info.due))}`:(out>0.005?'nothing due now':'paid up')}${info.unbilled>0.005?` · ${money(info.unbilled)} unbilled`:''} · stmt ${fmtDate(isoDate(cardStatementDate(c)))}</div></div>
       <div class="stat gold"><div class="label">Cashback · pending cycle</div><div class="val">${money(discUsed)}</div><div class="foot">${_cbcfg.pct||0}% · ${cap>0?'cap '+money(cap):'no cap'} · ${_cbcfg.capPeriod==='month'?'monthly':'per statement'}${_cbcfg.ruleName?' · '+esc(_cbcfg.ruleName):''}</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:16px">
