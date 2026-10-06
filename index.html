@@ -1302,6 +1302,16 @@ function updateOnlineUI(){
 if(typeof window!=='undefined'){
   window.addEventListener('offline', updateOnlineUI);
   window.addEventListener('online', ()=>{ updateOnlineUI(); if(isOnline()){ try{ toast('✅ Back online — syncing latest data'); }catch(e){} cloudRefresh().catch(()=>{}); } });
+  /* Pull the latest cloud copy whenever this tab comes back to the foreground.
+     Realtime (the only other live-sync path) is dropped by mobile browsers when a
+     tab is backgrounded, so a phone/tab left open would otherwise keep showing
+     stale data — e.g. a gift card or credit card added on another device wouldn't
+     appear in the payment pickers until a full reload. cloudRefresh() no-ops when
+     updated_at is unchanged, so this is cheap. Throttled to avoid double-pulls. */
+  let _fgPullAt=0;
+  const _foregroundPull=()=>{ if(!isOnline())return; const now=Date.now(); if(now-_fgPullAt<1500)return; _fgPullAt=now; cloudRefresh().catch(()=>{}); };
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _foregroundPull(); });
+  window.addEventListener('focus', _foregroundPull);
 }
 /* migrate old records to include payment ledger */
 function migrate(){
