@@ -7188,6 +7188,7 @@ function reportAreaHtml(o){
     </div>
     <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${foot}</tbody></table>
     ${o.note?`<div style="margin-top:14px;color:#888;font-size:10px">${o.note}</div>`:''}
+    ${o.extra||''}
   </div>`;
 }
 /* build a PDF from a report area, choosing portrait if the content fits upright else landscape */
@@ -7225,11 +7226,11 @@ function creditReportStats(rows){
 views.rcard=function(){
   if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
   return `
-  <div class="page-head"><div><h2>💳 Recent Credit Card</h2><p>One row per card — holder, number, available, used, old &amp; new dues and the payment due date. Most recent due date first.</p></div>
+  <div class="page-head"><div><h2>💳 Recent Credit Card</h2><p>One row per card — holder, number, available, used, old &amp; new dues and the payment due date. Nearest due date first.</p></div>
     <div class="row-actions">
       <select id="rcOrder" class="mini-btn srch" style="padding:9px" onchange="renderRcard()">
-        <option value="far">Due date · most recent first</option>
         <option value="near">Due date · nearest first</option>
+        <option value="far">Due date · most recent first</option>
       </select>
       <button class="btn-sm btn-green" onclick="exportRcardExcel()">⬇ Excel</button>
       <button class="btn-sm btn-ghost" onclick="pdfRcard()">📄 PDF</button>
@@ -7239,7 +7240,7 @@ views.rcard=function(){
   <div id="rcBody"></div>`;
 };
 views._after_rcard=()=>{ if(isOwner())renderRcard(); };
-function rcardRows(){ return creditSearchSort(creditReportRows(), ($('#rcSearch')?.value||'').trim(), $('#rcOrder')?.value||'far'); }
+function rcardRows(){ return creditSearchSort(creditReportRows(), ($('#rcSearch')?.value||'').trim(), $('#rcOrder')?.value||'near'); }
 function renderRcard(){
   if(!isOwner())return;
   const all=DB.cards||[], cs=$('#rcStats'); if(cs)cs.innerHTML= all.length?creditReportStats(creditReportRows()):'';
@@ -7273,7 +7274,7 @@ function rcardReportHtml(){
   const head=['Card','Holder','Card No.','Available','Used','Old Dues','New Dues','Due Date','Days'];
   const body=rows.map(r=>[r.c.name,cardOwnerLabel(r.c),maskCard(r.c.number),money(r.avail),money(r.used),r.old>0.005?money(r.old):'—',r.cur>0.005?money(r.cur):'—',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)]);
   const foot=['Total · '+rows.length+' card'+(rows.length===1?'':'s'),'','',money(rows.reduce((s,r)=>s+r.avail,0)),money(rows.reduce((s,r)=>s+r.used,0)),money(rows.reduce((s,r)=>s+r.old,0)),money(rows.reduce((s,r)=>s+r.cur,0)),'',''];
-  return reportAreaHtml({areaId:'rcardPdfArea',width:820,icon:'💳',title:'Recent Credit Card',sub:rows.length+' card(s) · most recent due date first',
+  return reportAreaHtml({areaId:'rcardPdfArea',width:820,icon:'💳',title:'Recent Credit Card',sub:rows.length+' card(s) · nearest due date first',
     head, numCols:[3,4,5,6,8], rows:body, foot,
     note:'Old Dues = unpaid from before the last statement · New Dues = current statement amount, payable by the due date · Days is relative to today (negative = overdue).'});
 }
@@ -7465,6 +7466,36 @@ function invMoveRows(){
   return {rows,from,to};
 }
 function invMoveRangeLabel(from,to){ return (from?fmtDate(from):'start')+' → '+(to?fmtDate(to):fmtDate(todayStr())); }
+/* consolidated purchase & sale line items within the current range + product search */
+function invMoveDetails(from,to){
+  const q=($('#imSearch')?.value||'').trim().toLowerCase();
+  const inWin=d=>(!from||d>=from)&&(!to||d<=to);
+  const match=pid=>{ if(!q)return true; const pr=productById(pid); return pr&&[pr.name,pr.category].some(v=>(v||'').toLowerCase().includes(q)); };
+  const buys=[]; DB.purchases.forEach(p=>{ const d=p.date||''; if(!inWin(d))return; purchaseItems(p).forEach(it=>{ if(!match(it.productId))return;
+    const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0;
+    buys.push({date:d,name:pr?pr.name:'—',where:p.supplier||'',orderNo:p.orderNo||p.ref||'',qty,rate,amt:qty*rate}); }); });
+  const sells=[]; DB.sales.forEach(s=>{ const d=s.date||''; if(!inWin(d))return; (s.items||[]).forEach(it=>{ if(!match(it.productId))return;
+    const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0;
+    sells.push({date:d,name:pr?pr.name:'—',where:s.customer||'Walk-in',inv:s.invoiceNo||'',qty,rate,amt:qty*rate}); }); });
+  const byDate=(a,b)=>a.date<b.date?1:(a.date>b.date?-1:0);
+  buys.sort(byDate); sells.sort(byDate);
+  return {buys,sells};
+}
+function invMoveDetailTablesHtml(from,to){
+  const {buys,sells}=invMoveDetails(from,to);
+  const bQ=buys.reduce((s,r)=>s+r.qty,0), bA=buys.reduce((s,r)=>s+r.amt,0);
+  const sQ=sells.reduce((s,r)=>s+r.qty,0), sA=sells.reduce((s,r)=>s+r.amt,0);
+  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Product</th><th>Where Purchased</th><th>Order No</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+    <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><b>${esc(b.name)}</b></td><td>${esc(b.where||'—')}</td><td>${esc(b.orderNo||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.amt)}</td></tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${buys.length} line${buys.length===1?'':'s'}</td><td class="num">${num(bQ)}</td><td class="num">—</td><td class="num">${money(bA)}</td></tr></tbody></table></div>`
+    :emptyBox('📥','No purchases','No purchase lines in this range.');
+  const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Product</th><th>Customer</th><th>Invoice</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+    <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.where||'—')}</td><td>${esc(s.inv||'—')}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.amt)}</td></tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${sells.length} line${sells.length===1?'':'s'}</td><td class="num">${num(sQ)}</td><td class="num">—</td><td class="num">${money(sA)}</td></tr></tbody></table></div>`
+    :emptyBox('🧾','No sales','No sale lines in this range.');
+  return `<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">📥 Purchase Details — ${num(bQ)} pcs · ${money(bA)}</h4>${buyTbl}</div>
+    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}</h4>${sellTbl}</div>`;
+}
 function renderInvMove(){
   if(!isOwner())return;
   const {rows,from,to}=invMoveRows();
@@ -7488,22 +7519,50 @@ function renderInvMove(){
   body.innerHTML=`<div class="panel">
     <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
     <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>`;
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
+    ${invMoveDetailTablesHtml(from,to)}`;
 }
 function exportInvMoveExcel(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return toast('No movement to export',1);
   const out=[['Inventory Movement'],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Closing']];
   rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
   out.push(['Total','',num2(rows.reduce((s,r)=>s+r.opening,0)),num2(rows.reduce((s,r)=>s+r.purchased,0)),num2(rows.reduce((s,r)=>s+r.sold,0)),num2(rows.reduce((s,r)=>s+r.closing,0))]);
-  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Inventory Movement',rows:out}]);
+  const {buys,sells}=invMoveDetails(from,to);
+  const buyOut=[['Purchase Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Where Purchased','Order No','Qty','Price','Amount']];
+  buys.forEach(b=>buyOut.push([b.date,b.name,b.where||'',b.orderNo||'',num2(b.qty),num2(b.rate),num2(b.amt)]));
+  buyOut.push(['Total','','','',num2(buys.reduce((s,b)=>s+b.qty,0)),'',num2(buys.reduce((s,b)=>s+b.amt,0))]);
+  const sellOut=[['Sales Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Customer','Invoice','Qty','Price','Amount']];
+  sells.forEach(s=>sellOut.push([s.date,s.name,s.where||'',s.inv||'',num2(s.qty),num2(s.rate),num2(s.amt)]));
+  sellOut.push(['Total','','','',num2(sells.reduce((s,r)=>s+r.qty,0)),'',num2(sells.reduce((s,r)=>s+r.amt,0))]);
+  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}]);
 }
 function invMoveReportHtml(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return '';
   const head=['Product','Opening','Purchased','Sold','Closing'];
   const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
   const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
+  const {buys,sells}=invMoveDetails(from,to);
+  const pdfTbl=(title,heads,numCols,lines,footLabel,footQty,footAmt)=>{
+    const isN=i=>numCols.includes(i);
+    const cell=(v,i,tag,ex)=>`<${tag} style="text-align:${isN(i)?'right':'left'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
+    const th=heads.map((h,i)=>cell(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
+    const trs=lines.map(r=>'<tr>'+r.map((v,i)=>cell(v,i,'td')).join('')+'</tr>').join('');
+    const ft=`<tr style="font-weight:800">${cell(footLabel,0,'td',';border-top:2px solid #222')}`+heads.slice(1).map((h,i)=>{const i2=i+1;const v=i2===heads.length-1?footAmt:(h==='Qty'?footQty:'');return cell(v,i2,'td',';border-top:2px solid #222');}).join('')+'</tr>';
+    return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:800;margin-bottom:6px">${title}</div>
+      <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${lines.length?ft:''}</tbody></table>
+      ${lines.length?'':'<div style="color:#888;font-size:10.5px;padding:4px 2px">None in this range.</div>'}</div>`;
+  };
+  const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt)]);
+  const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt)]);
+  const extra=
+    pdfTbl('📥 Purchase Details — '+num(buys.reduce((s,b)=>s+b.qty,0))+' pcs · '+money(buys.reduce((s,b)=>s+b.amt,0)),
+      ['Date','Product','Where Purchased','Order No','Qty','Price','Amount'],[4,5,6],buyLines,
+      'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)))+
+    pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0)),
+      ['Date','Product','Customer','Invoice','Qty','Price','Amount'],[4,5,6],sellLines,
+      'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)));
   return reportAreaHtml({areaId:'invMovePdfArea',width:720,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
-    head, numCols:[1,2,3,4], rows:body, foot,
+    head, numCols:[1,2,3,4], rows:body, foot, extra,
     note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
 }
 function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
