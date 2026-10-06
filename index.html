@@ -1011,7 +1011,9 @@ const NAV_GROUPS=[
     {v:'cardusage',  ic:'📊', lab:'Card Usage', owner:true},
     {v:'rcard',      ic:'💳', lab:'Recent Credit Card', owner:true},
     {v:'cusage',     ic:'📈', lab:'Card Usage & Cashback', owner:true},
-    {v:'cprefrep',   ic:'⭐', lab:'Card Preference', owner:true} ]},
+    {v:'cprefrep',   ic:'⭐', lab:'Card Preference', owner:true},
+    {v:'invmove',    ic:'📦', lab:'Inventory Movement', owner:true},
+    {v:'invtoday',   ic:'📋', lab:"Today's Inventory", owner:true} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'activity',  ic:'🧾', lab:'Activity Log', owner:true},
@@ -5688,18 +5690,30 @@ function setProductImage(pid,url){
    DETAIL VIEWS — click a product / invoice / purchase ref
    ========================================================= */
 function miniStat(label,val,color){ return `<div style="flex:1;min-width:118px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px 12px"><div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">${label}</div><div style="font-size:15.5px;font-weight:800;margin-top:3px;color:${color||'var(--text)'}">${val}</div></div>`; }
+/* describe the card(s) / pay method(s) used on a purchase — for the history "Remarks" column */
+function purchaseCardRemark(pays){
+  const parts=[];
+  (pays||[]).forEach(pm=>{
+    const c=pm.cardId?cardById(pm.cardId):null, g=pm.giftId?giftById(pm.giftId):null;
+    if(c) parts.push(cardLabel(c));
+    else if(g) parts.push('🎁 '+giftLabel(g));
+    else if(pm.method==='cardborrow'&&pm.lenderId){ const l=lenderById(pm.lenderId); parts.push('Borrowed'+(l?' · '+l.name:'')); }
+    else parts.push(payMethodInfo(pm.method).label||pm.method||'cash');
+  });
+  return [...new Set(parts)].join(', ');
+}
 /* per-product purchase + sales history */
 function productHistory(pid){
   const pr=productById(pid); if(!pr)return; const eng=computeEngine();
-  const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
+  const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,orderNo:p.orderNo||p.ref||'',supplier:p.supplier||'',remark:purchaseCardRemark(p.payments),id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
   const sells=[]; DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===pid) sells.push({date:s.date,inv:s.invoiceNo,id:s.id,cust:s.customer||'Walk-in',qty:+it.qty||0,rate:+it.rate||0}); }));
   buys.sort((a,b)=>a.date<b.date?1:-1); sells.sort((a,b)=>a.date<b.date?1:-1);
   const bal=stockOf(pid,eng), avg=avgCostOf(pid,eng), owner=isOwner();
   const buyAmt=buys.reduce((a,x)=>a+x.qty*x.rate,0), sellAmt=sells.reduce((a,x)=>a+x.qty*x.rate,0);
   const buyQ=buys.reduce((a,x)=>a+x.qty,0), sellQ=sells.reduce((a,x)=>a+x.qty,0);
   const prof=owner? sells.reduce((a,x)=>a+x.qty*(x.rate-avg),0) : null;   // profit/loss = revenue − sold×avg cost
-  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:440px"><thead><tr><th>Date</th><th>Ref</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead>
-    <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><span class="rowlink" onclick="closeModal();purchaseDetail('${b.id}')">${esc(b.ref)}</span></td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.qty*b.rate)}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📥','No purchases','Not bought yet.');
+  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>Order No</th><th>Ref No</th><th>Where Purchased</th><th class="num">Qty</th><th class="num">Amount</th><th>Remarks</th></tr></thead>
+    <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td>${esc(b.orderNo||'—')}</td><td><span class="rowlink" onclick="closeModal();purchaseDetail('${b.id}')">${esc(b.ref)}</span></td><td>${esc(b.supplier||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.qty*b.rate)}</td><td style="color:var(--muted)">${esc(b.remark||'—')}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📥','No purchases','Not bought yet.');
   const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:${owner?560:470}px"><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>${owner?'<th class="num">Profit</th>':''}</tr></thead>
     <tbody>${sells.map(s=>{const pl=s.qty*(s.rate-avg);return `<tr><td>${fmtDate(s.date)}</td><td><span class="rowlink" onclick="closeModal();saleDetail('${s.id}')">${esc(s.inv)}</span></td><td>${esc(s.cust)}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.qty*s.rate)}</td>${owner?`<td class="num" style="color:${pl>=0?'var(--green)':'var(--red)'};font-weight:700">${money(pl)}</td>`:''}</tr>`;}).join('')}</tbody></table></div>`:emptyBox('🧾','No sales','Not sold yet.');
   openModal('📦 '+esc(pr.name),`
