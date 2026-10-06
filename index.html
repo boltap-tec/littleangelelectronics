@@ -7309,6 +7309,174 @@ function cprefReportHtml(){
 function pdfCprefrep(){ downloadReportPdf(cprefReportHtml(),'cprefPdfArea','card_preference_'+todayStr()+'.pdf'); }
 
 /* =========================================================
+   INVENTORY REPORTS (owner):
+   • Inventory Movement — opening / purchased / sold / closing per product over a
+     chosen date range. Opening = net stock before the "from" date, so the closing
+     of one period is the opening of the next (continuous running record).
+   • Today's Inventory — product, last bought cost, stock available (+ value).
+   ========================================================= */
+/* per-product movement over [from,to] (inclusive ISO; blank from = from the start,
+   blank to = up to today). Opening is the net quantity (bought − sold) dated before
+   `from`; purchased/sold are within the window; closing = opening + purchased − sold. */
+function inventoryMovement(from,to){
+  const map={}, ensure=pid=>map[pid]||(map[pid]={opening:0,purchased:0,sold:0});
+  const inWin=d=>(!from||d>=from)&&(!to||d<=to);
+  DB.purchases.forEach(p=>{ const d=p.date||''; purchaseItems(p).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
+    if(from&&d<from) m.opening+=q; else if(inWin(d)) m.purchased+=q; }); });
+  DB.sales.forEach(s=>{ const d=s.date||''; (s.items||[]).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
+    if(from&&d<from) m.opening-=q; else if(inWin(d)) m.sold+=q; }); });
+  return map;
+}
+/* unit rate of the most recent purchase line for a product (what it cost last time) */
+function lastBoughtCost(pid){ let best=null;
+  DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid && (!best || (p.date||'')>=best.date)) best={date:p.date||'',rate:+it.rate||0}; }));
+  return best?best.rate:0; }
+
+/* ============ Report · Inventory Movement ============ */
+views.invmove=function(){
+  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Inventory reports are restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>📦 Inventory Movement</h2><p>Opening stock, purchased, sold &amp; closing stock per product for a date range. Opening = closing of the day before the start, so each period continues from the last.</p></div>
+    <div class="row-actions">
+      <input id="imFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderInvMove()" title="From date">
+      <input id="imTo" type="date" class="mini-btn" style="padding:9px" oninput="renderInvMove()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearInvMoveRange()">Clear</button>
+      <label class="chk" style="align-self:center;white-space:nowrap"><input type="checkbox" id="imAll" onchange="renderInvMove()"> Show all products</label>
+      <button class="btn-sm btn-green" onclick="exportInvMoveExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfInvMove()">📄 PDF</button>
+    </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="imSearch" placeholder="Search product or category..." oninput="renderInvMove()"></div></div>
+  <div id="imStats" class="cards"></div>
+  <div id="imBody"></div>`;
+};
+views._after_invmove=()=>{ if(!isOwner())return; const f=$('#imFrom'),t=$('#imTo');
+  if(t&&!t.value)t.value=todayStr();
+  if(f&&!f.value){ const d=new Date(); d.setDate(1); f.value=isoDate(d); }   // default: this month to date
+  renderInvMove(); };
+function clearInvMoveRange(){ if($('#imFrom'))$('#imFrom').value=''; if($('#imTo'))$('#imTo').value=''; renderInvMove(); }
+function invMoveRows(){
+  const from=$('#imFrom')?.value||'', to=$('#imTo')?.value||'';
+  const all=!!$('#imAll')?.checked, q=($('#imSearch')?.value||'').trim().toLowerCase();
+  const mv=inventoryMovement(from,to);
+  let rows=DB.products.map(p=>{ const m=mv[p.id]||{opening:0,purchased:0,sold:0};
+    return { p, opening:m.opening, purchased:m.purchased, sold:m.sold, closing:m.opening+m.purchased-m.sold }; });
+  if(!all) rows=rows.filter(r=> Math.abs(r.opening)>1e-9||Math.abs(r.purchased)>1e-9||Math.abs(r.sold)>1e-9||Math.abs(r.closing)>1e-9);
+  if(q) rows=rows.filter(r=>[r.p.name,r.p.category].some(v=>(v||'').toLowerCase().includes(q)));
+  rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
+  return {rows,from,to};
+}
+function invMoveRangeLabel(from,to){ return (from?fmtDate(from):'start')+' → '+(to?fmtDate(to):fmtDate(todayStr())); }
+function renderInvMove(){
+  if(!isOwner())return;
+  const {rows,from,to}=invMoveRows();
+  const tO=rows.reduce((s,r)=>s+r.opening,0), tP=rows.reduce((s,r)=>s+r.purchased,0), tS=rows.reduce((s,r)=>s+r.sold,0), tC=rows.reduce((s,r)=>s+r.closing,0);
+  const cs=$('#imStats'); if(cs)cs.innerHTML=`
+    <div class="stat blue"><span class="ic">📥</span><div class="label">Opening Units</div><div class="val">${num(tO)}</div><div class="foot">before ${from?fmtDate(from):'start'}</div></div>
+    <div class="stat green"><span class="ic">🛒</span><div class="label">Purchased</div><div class="val">${num(tP)}</div></div>
+    <div class="stat amber"><span class="ic">🧾</span><div class="label">Sold</div><div class="val">${num(tS)}</div></div>
+    <div class="stat gold"><span class="ic">📦</span><div class="label">Closing Units</div><div class="val">${num(tC)}</div></div>`;
+  const body=$('#imBody'); if(!body)return;
+  if(!DB.products.length){ body.innerHTML=`<div class="panel">${emptyBox('📦','No products','Add products in Products first.')}</div>`; return; }
+  if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No movement','No stock movement for this range/filter. Tick “Show all products” to list everything.')}</div>`; return; }
+  const tr=rows.map(r=>`<tr>
+      <td><b>${esc(r.p.name)}</b>${r.p.category?`<div style="color:var(--muted2);font-size:11.5px">${esc(r.p.category)}</div>`:''}</td>
+      <td class="num">${num(r.opening)}</td>
+      <td class="num"${r.purchased>0?' style="color:var(--green)"':''}>${r.purchased?num(r.purchased):'—'}</td>
+      <td class="num"${r.sold>0?' style="color:var(--amber)"':''}>${r.sold?num(r.sold):'—'}</td>
+      <td class="num" style="font-weight:700${r.closing<0?';color:var(--red)':''}">${num(r.closing)}</td>
+    </tr>`).join('');
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(tO)}</td><td class="num">${num(tP)}</td><td class="num">${num(tS)}</td><td class="num">${num(tC)}</td></tr>`;
+  body.innerHTML=`<div class="panel">
+    <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
+    <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>`;
+}
+function exportInvMoveExcel(){
+  const {rows,from,to}=invMoveRows(); if(!rows.length)return toast('No movement to export',1);
+  const out=[['Inventory Movement'],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Closing']];
+  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
+  out.push(['Total','',num2(rows.reduce((s,r)=>s+r.opening,0)),num2(rows.reduce((s,r)=>s+r.purchased,0)),num2(rows.reduce((s,r)=>s+r.sold,0)),num2(rows.reduce((s,r)=>s+r.closing,0))]);
+  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Inventory Movement',rows:out}]);
+}
+function invMoveReportHtml(){
+  const {rows,from,to}=invMoveRows(); if(!rows.length)return '';
+  const head=['Product','Opening','Purchased','Sold','Closing'];
+  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
+  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
+  return reportAreaHtml({areaId:'invMovePdfArea',width:720,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
+    head, numCols:[1,2,3,4], rows:body, foot,
+    note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
+}
+function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
+
+/* ============ Report · Today's Inventory ============ */
+function invTodayRows(){
+  const eng=computeEngine(), q=($('#itSearch')?.value||'').trim().toLowerCase();
+  const inStockOnly=($('#itFilter')?.value||'instock')==='instock';
+  let rows=DB.products.map(p=>{ const stock=stockOf(p.id,eng), last=lastBoughtCost(p.id);
+    return { p, last, stock, value:(stock>0?stock:0)*last }; });
+  if(inStockOnly) rows=rows.filter(r=>r.stock>1e-9);
+  if(q) rows=rows.filter(r=>[r.p.name,r.p.category].some(v=>(v||'').toLowerCase().includes(q)));
+  rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
+  return rows;
+}
+views.invtoday=function(){
+  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Inventory reports are restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>📋 Today's Inventory</h2><p>Current stock on hand per product, with the cost it was last bought at and the stock value. As of ${fmtDate(todayStr())}.</p></div>
+    <div class="row-actions">
+      <select id="itFilter" class="mini-btn srch" style="padding:9px" onchange="renderInvToday()">
+        <option value="instock">In-stock products only</option>
+        <option value="all">All products</option>
+      </select>
+      <button class="btn-sm btn-green" onclick="exportInvTodayExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfInvToday()">📄 PDF</button>
+    </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="itSearch" placeholder="Search product or category..." oninput="renderInvToday()"></div></div>
+  <div id="itStats" class="cards"></div>
+  <div id="itBody"></div>`;
+};
+views._after_invtoday=()=>{ if(isOwner())renderInvToday(); };
+function renderInvToday(){
+  if(!isOwner())return;
+  const rows=invTodayRows();
+  const tUnits=rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0), tVal=rows.reduce((s,r)=>s+r.value,0);
+  const cs=$('#itStats'); if(cs)cs.innerHTML=`
+    <div class="stat blue"><span class="ic">📋</span><div class="label">Products</div><div class="val">${num(rows.length)}</div></div>
+    <div class="stat green"><span class="ic">📦</span><div class="label">Units in Stock</div><div class="val">${num(tUnits)}</div></div>
+    <div class="stat gold"><span class="ic">💰</span><div class="label">Stock Value</div><div class="val">${money(tVal)}</div><div class="foot">at last bought cost</div></div>`;
+  const body=$('#itBody'); if(!body)return;
+  if(!DB.products.length){ body.innerHTML=`<div class="panel">${emptyBox('📋','No products','Add products in Products first.')}</div>`; return; }
+  if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match — try “All products” or clear the search.')}</div>`; return; }
+  const tr=rows.map(r=>`<tr>
+      <td><b>${esc(r.p.name)}</b>${r.p.category?`<div style="color:var(--muted2);font-size:11.5px">${esc(r.p.category)}</div>`:''}</td>
+      <td class="num">${r.last>0?money(r.last):'—'}</td>
+      <td class="num" style="font-weight:700${r.stock<=0?';color:var(--muted2)':(r.stock<=(+S().lowStockLevel||0)?';color:var(--amber)':'')}">${num(r.stock)}</td>
+      <td class="num">${r.value>0?money(r.value):'—'}</td>
+    </tr>`).join('');
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td></td><td class="num">${num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0))}</td><td class="num">${money(rows.reduce((s,r)=>s+r.value,0))}</td></tr>`;
+  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Product</th><th class="num">Last Bought Cost</th><th class="num">Stock Available</th><th class="num">Stock Value</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Last Bought Cost = unit price on the most recent purchase of each product · Stock Value = stock × last bought cost · low stock shown in amber.</div></div>`;
+}
+function exportInvTodayExcel(){
+  const rows=invTodayRows(); if(!rows.length)return toast('No products to export',1);
+  const out=[['Product','Category','Last Bought Cost','Stock Available','Stock Value']];
+  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.last),num2(r.stock),num2(r.value)]));
+  out.push(['Total','','',num2(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),num2(rows.reduce((s,r)=>s+r.value,0))]);
+  exportExcel('today_inventory_'+todayStr()+'.xlsx',[{name:"Today's Inventory",rows:out}]);
+}
+function invTodayReportHtml(){
+  const rows=invTodayRows(); if(!rows.length)return '';
+  const head=['Product','Last Bought Cost','Stock Available','Stock Value'];
+  const body=rows.map(r=>[r.p.name,r.last>0?money(r.last):'—',num(r.stock),r.value>0?money(r.value):'—']);
+  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),'',num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),money(rows.reduce((s,r)=>s+r.value,0))];
+  return reportAreaHtml({areaId:'invTodayPdfArea',width:680,icon:'📋',title:"Today's Inventory",sub:'As of '+fmtDate(todayStr())+' · '+rows.length+' product(s)',
+    head, numCols:[1,2,3], rows:body, foot,
+    note:'Last Bought Cost = unit price on the most recent purchase · Stock Value = stock × last bought cost.'});
+}
+function pdfInvToday(){ downloadReportPdf(invTodayReportHtml(),'invTodayPdfArea','today_inventory_'+todayStr()+'.pdf'); }
+
+/* =========================================================
    SETTINGS
    ========================================================= */
 views.settings=function(){
