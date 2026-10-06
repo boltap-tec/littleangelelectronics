@@ -1904,6 +1904,7 @@ function renderProducts(){
       <td class="num">${s<=S().lowStockLevel?`<span class="tag low">${num(s)}</span>`:num(s)}</td>
       <td class="num">${money(avgCostOf(p.id,eng))}</td>
       <td class="num"><button class="mini-btn" onclick="editProduct('${p.id}')">Edit</button>
+      ${isOwner()?`<button class="mini-btn" onclick="mergeProduct('${p.id}')" title="Combine a duplicate into another product">Merge</button>`:''}
       <button class="mini-btn red" onclick="delProduct('${p.id}')">Del</button></td></tr>`}).join('')}
     </tbody></table></div>`;
 }
@@ -1984,6 +1985,40 @@ function delProduct(id){
   const used=DB.purchases.some(p=>purchaseItems(p).some(it=>it.productId===id))||DB.sales.some(s=>s.items.some(i=>i.productId===id));
   if(used)return toast('Cannot delete: product used in purchases/sales',1);
   confirmBox('Delete product?','This cannot be undone.',()=>{const p=productById(id);logAct('delete','product',p?p.name:'');DB.products=DB.products.filter(p=>p.id!==id);save();renderProducts();toast('Product deleted');});
+}
+/* Merge a duplicate product into another: move all purchases/sales/online orders
+   & competitor prices onto the kept product, then remove this one. Stock and the
+   moving-average buying cost recalculate automatically across the combined history.
+   Owner-only — it rewrites historical records that workers would normally need approval for. */
+function mergeProduct(id){
+  if(!requireOnline())return;
+  if(!isOwner())return toast('Only the owner can merge products',1);
+  const src=productById(id); if(!src)return;
+  const eng=computeEngine();
+  const others=DB.products.filter(p=>p.id!==id).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!others.length)return toast('Add another product to merge into first',1);
+  const bought=totalBought(id), sold=totalSold(id), comps=(src.compPrices||[]).length;
+  openModal('Merge product',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13.5px">Move everything recorded under <b style="color:var(--text)">${esc(src.name)}</b> into the product you keep, then remove this one. Use it when the same item was entered twice — e.g. the wrong product was picked during a purchase.</p>
+    <div class="field"><label>Keep this product (merge “${esc(src.name)}” into it) *</label>
+      <select id="mg_target" class="srch"><option value="">— choose the product to keep —</option>${others.map(p=>`<option value="${p.id}">${esc(p.name)} — stock ${num(stockOf(p.id,eng))} · avg ${money(avgCostOf(p.id,eng))}</option>`).join('')}</select></div>
+    <div class="li-hint" style="margin-top:2px">Moving <b>${num(bought)}</b> bought · <b>${num(sold)}</b> sold${comps?` · ${comps} competitor price${comps===1?'':'s'}`:''}. Stock &amp; average buying cost recalculate across the combined history. This cannot be undone.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="mergeProductConfirm('${id}')">Merge</button>`);
+}
+function mergeProductConfirm(id){
+  const tid=$('#mg_target')?.value||''; if(!tid)return toast('Choose the product to keep',1);
+  const src=productById(id), tgt=productById(tid); if(!src||!tgt||src===tgt)return;
+  confirmBox('Merge products?',`Move all history from <b>${esc(src.name)}</b> into <b>${esc(tgt.name)}</b>, then delete <b>${esc(src.name)}</b>? This cannot be undone.`,()=>{
+    const repoint=it=>{ if(it&&it.productId===id)it.productId=tid; };
+    DB.purchases.forEach(p=>{ if(p.productId===id)p.productId=tid; purchaseItems(p).forEach(repoint); });
+    DB.sales.forEach(s=>(s.items||[]).forEach(repoint));
+    (DB.online||[]).forEach(o=>(o.items||[]).forEach(repoint));
+    if(src.compPrices&&src.compPrices.length) tgt.compPrices=(tgt.compPrices||[]).concat(src.compPrices);
+    DB.products=DB.products.filter(p=>p.id!==id);
+    logAct('merge','product',tgt.name,`${src.name} → ${tgt.name}`);
+    save(); closeModal(); renderProducts(); toast(`Merged “${src.name}” into “${tgt.name}”`);
+  },'Merge');
 }
 
 /* =========================================================
