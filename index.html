@@ -406,6 +406,10 @@ body.light .req-star{color:#e11d48}
 .scrollx.scrollable:not(.at-start) .sx-arrow.left{opacity:1;pointer-events:auto}
 @keyframes sxnudge{0%,100%{transform:translateY(-50%) translateX(0)}50%{transform:translateY(-50%) translateX(3px)}}
 @media(prefers-reduced-motion:reduce){.scrollx .sx-arrow.right{animation:none}}
+/* inside a modal/report popup, keep a wide (or tall) table in its own bounded box
+   so the ‹ › scroll arrows and the horizontal bar stay in view — no need to scroll
+   the whole modal down to reach them */
+.modal-body .table-wrap{max-height:58vh;overflow:auto}
 /* keep list-table product names from hogging the row on desktop/tablet so action columns stay in view */
 @media(min-width:861px){
   #buyList .prodcell b,#saleList .prodcell b{display:inline-block;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
@@ -3949,9 +3953,12 @@ function enhanceScrollx(){
 }
 if(!window._sxResize){ window._sxResize=1; window.addEventListener('resize',()=>{ try{enhanceScrollx();}catch(e){} }); }
 /* re-run whenever #main content changes (view switch, search filter, etc.) */
-function initScrollxObserver(){ const main=document.getElementById('main'); if(!main||window._sxObs)return; window._sxObs=1;
-  let raf=0; new MutationObserver(()=>{ cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ try{enhanceScrollx();}catch(e){} }); })
-    .observe(main,{childList:true,subtree:true}); }
+function initScrollxObserver(){ if(window._sxObs)return;
+  let raf=0; const obs=new MutationObserver(()=>{ cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ try{enhanceScrollx();}catch(e){} }); });
+  const main=document.getElementById('main'); const mr=document.getElementById('modalRoot');
+  if(main){ obs.observe(main,{childList:true,subtree:true}); }
+  if(mr){ obs.observe(mr,{childList:true,subtree:true}); }   // modals/report popups get arrows too
+  if(main||mr) window._sxObs=1; }
 views.payments=function(){
   return `
   <div class="page-head"><div><h2>Payments</h2><p>Money in from sales, money out for purchases, and outstanding credit — cash, card & bank.</p></div></div>
@@ -8073,6 +8080,8 @@ function openModal(title,body,foot){
     <div class="modal"><div class="modal-head"><h3>${title}</h3><button class="close-x" onclick="closeModal()">×</button></div>
     <div class="modal-body">${body}</div><div class="modal-foot">${foot||''}</div></div></div>`;
   markRequired($('#modalRoot'));
+  /* give any wide table inside the modal the same ‹ › horizontal-scroll arrows as the main views */
+  try{ enhanceScrollx(); requestAnimationFrame(()=>{ try{enhanceScrollx();}catch(e){} }); }catch(e){}
 }
 /* highlight every field whose label ends with "*": bright star + brightened label + accented input */
 function markRequired(scope){ if(!scope)return;
