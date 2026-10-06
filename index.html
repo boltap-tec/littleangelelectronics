@@ -5720,17 +5720,37 @@ function purchaseCardRemark(pays){
   });
   return [...new Set(parts)].join(', ');
 }
-/* per-product purchase + sales history */
-function productHistory(pid){
-  const pr=productById(pid); if(!pr)return; const eng=computeEngine();
-  const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,orderNo:p.orderNo||p.ref||'',supplier:p.supplier||'',remark:purchaseCardRemark(p.payments),id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
+/* mode of payment + the exact card/gift used, per purchase — e.g. "Card · HDFC ••1234, Cash" */
+function purchasePayFull(pays){
+  const parts=[];
+  (pays||[]).forEach(pm=>{
+    const info=payMethodInfo(pm.method), label=(info&&info.label)||(pm.method||'cash');
+    const c=pm.cardId?cardById(pm.cardId):null, g=pm.giftId?giftById(pm.giftId):null;
+    let detail='';
+    if(c) detail=cardLabel(c);
+    else if(g) detail='🎁 '+giftLabel(g);
+    else if(pm.method==='cardborrow'&&pm.lenderId){ const l=lenderById(pm.lenderId); detail='Borrowed'+(l?' · '+l.name:''); }
+    else if((pm.payRef||pm.ref||'').trim()) detail=(pm.payRef||pm.ref).trim();
+    parts.push(detail? (label+' · '+detail) : label);
+  });
+  return [...new Set(parts)].join(', ') || '—';
+}
+/* shared data for the product-history modal + its Excel/PDF exports */
+function productHistoryData(pid){
+  const pr=productById(pid); if(!pr)return null; const eng=computeEngine();
+  const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,orderNo:p.orderNo||p.ref||'',supplier:p.supplier||'',remark:purchasePayFull(p.payments),id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
   const sells=[]; DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===pid) sells.push({date:s.date,inv:s.invoiceNo,id:s.id,cust:s.customer||'Walk-in',qty:+it.qty||0,rate:+it.rate||0}); }));
   buys.sort((a,b)=>a.date<b.date?1:-1); sells.sort((a,b)=>a.date<b.date?1:-1);
-  const bal=stockOf(pid,eng), avg=avgCostOf(pid,eng), owner=isOwner();
+  return {pr,eng,buys,sells,bal:stockOf(pid,eng),avg:avgCostOf(pid,eng),owner:isOwner()};
+}
+/* per-product purchase + sales history */
+function productHistory(pid){
+  const d=productHistoryData(pid); if(!d)return;
+  const {pr,buys,sells,bal,avg,owner}=d;
   const buyAmt=buys.reduce((a,x)=>a+x.qty*x.rate,0), sellAmt=sells.reduce((a,x)=>a+x.qty*x.rate,0);
   const buyQ=buys.reduce((a,x)=>a+x.qty,0), sellQ=sells.reduce((a,x)=>a+x.qty,0);
   const prof=owner? sells.reduce((a,x)=>a+x.qty*(x.rate-avg),0) : null;   // profit/loss = revenue − sold×avg cost
-  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>Order No</th><th>Ref No</th><th>Where Purchased</th><th class="num">Qty</th><th class="num">Amount</th><th>Remarks</th></tr></thead>
+  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:680px"><thead><tr><th>Date</th><th>Order No</th><th>Ref No</th><th>Where Purchased</th><th class="num">Qty</th><th class="num">Amount</th><th>Payment / Card</th></tr></thead>
     <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td>${esc(b.orderNo||'—')}</td><td><span class="rowlink" onclick="closeModal();purchaseDetail('${b.id}')">${esc(b.ref)}</span></td><td>${esc(b.supplier||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.qty*b.rate)}</td><td style="color:var(--muted)">${esc(b.remark||'—')}</td></tr>`).join('')}</tbody></table></div>`:emptyBox('📥','No purchases','Not bought yet.');
   const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:${owner?560:470}px"><thead><tr><th>Date</th><th>Invoice</th><th>Customer</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>${owner?'<th class="num">Profit</th>':''}</tr></thead>
     <tbody>${sells.map(s=>{const pl=s.qty*(s.rate-avg);return `<tr><td>${fmtDate(s.date)}</td><td><span class="rowlink" onclick="closeModal();saleDetail('${s.id}')">${esc(s.inv)}</span></td><td>${esc(s.cust)}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.qty*s.rate)}</td>${owner?`<td class="num" style="color:${pl>=0?'var(--green)':'var(--red)'};font-weight:700">${money(pl)}</td>`:''}</tr>`;}).join('')}</tbody></table></div>`:emptyBox('🧾','No sales','Not sold yet.');
@@ -5746,9 +5766,63 @@ function productHistory(pid){
     <h4 style="margin:4px 0 8px;font-size:13px;color:var(--muted)">📥 Purchases — ${num(buyQ)} pcs · ${money(buyAmt)}</h4>${buyTbl}
     <h4 style="margin:18px 0 8px;font-size:13px;color:var(--muted)">🧾 Sales — ${num(sellQ)} pcs · ${money(sellAmt)}</h4>${sellTbl}`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     ${(buys.length||sells.length)?`<button class="btn-sm btn-green" onclick="exportProductHistExcel('${pid}')">⬇ Excel</button>
+     <button class="btn-sm btn-ghost" onclick="pdfProductHist('${pid}')">📄 PDF</button>`:''}
      ${canView('purchases')?`<button class="btn-sm btn-gold" onclick="closeModal();newPurchase('','${pid}')">＋ Buy</button>`:''}
      ${canView('sales')?`<button class="btn-sm" onclick="closeModal();newSale('','${pid}')">Sell</button>`:''}`);
 }
+/* ---- product-history Excel (.xlsx): one sheet of purchases, one of sales ---- */
+function exportProductHistExcel(pid){
+  const d=productHistoryData(pid); if(!d){ toast('Nothing to export',1); return; }
+  const {pr,buys,sells,avg,owner}=d;
+  const buyHead=['Date','Order No','Ref No','Where Purchased','Qty','Cost/Unit','Amount','Payment / Card'];
+  const buyRows=[buyHead,...buys.map(b=>[b.date,b.orderNo||'',b.ref||'',b.supplier||'',num2(b.qty),num2(b.rate),num2(b.qty*b.rate),b.remark||''])];
+  const sellHead=['Date','Invoice','Customer','Qty','Rate','Amount']; if(owner)sellHead.push('Profit / Loss');
+  const sellRows=[sellHead,...sells.map(s=>{const r=[s.date,s.inv||'',s.cust||'',num2(s.qty),num2(s.rate),num2(s.qty*s.rate)]; if(owner)r.push(num2(s.qty*(s.rate-avg))); return r;})];
+  const safe=(pr.name||'product').replace(/[\\/?*\[\]:]/g,' ').slice(0,24).trim();
+  exportExcel(safe+'_history_'+todayStr()+'.xlsx',[{name:'Purchases',rows:buyRows},{name:'Sales',rows:sellRows}]);
+}
+/* ---- product-history printable HTML → PDF (same offscreen html2canvas → jsPDF pattern) ---- */
+function productHistReportHtml(pid){
+  const d=productHistoryData(pid); if(!d)return ''; const {pr,buys,sells,bal,avg,owner}=d; const st=S();
+  const buyAmt=buys.reduce((a,x)=>a+x.qty*x.rate,0), sellAmt=sells.reduce((a,x)=>a+x.qty*x.rate,0);
+  const buyQ=buys.reduce((a,x)=>a+x.qty,0), sellQ=sells.reduce((a,x)=>a+x.qty,0);
+  const prof=owner? sells.reduce((a,x)=>a+x.qty*(x.rate-avg),0) : null;
+  const cell='padding:6px 9px;border-bottom:1px solid #e3e3e3;font-size:11px', rcell=cell+';text-align:right';
+  const th=(t,r)=>`<th style="text-align:${r?'right':'left'};padding:7px 9px;border-bottom:2px solid #222;font-size:11px;white-space:nowrap">${esc(t)}</th>`;
+  const buyTbl=buys.length?`<table style="width:100%;border-collapse:collapse;margin-bottom:6px"><thead><tr>${th('Date')}${th('Order No')}${th('Ref No')}${th('Where Purchased')}${th('Qty',1)}${th('Amount',1)}${th('Payment / Card')}</tr></thead>
+    <tbody>${buys.map(b=>`<tr><td style="${cell}">${fmtDate(b.date)}</td><td style="${cell}">${esc(b.orderNo||'—')}</td><td style="${cell}">${esc(b.ref||'')}</td><td style="${cell}">${esc(b.supplier||'—')}</td><td style="${rcell}">${num(b.qty)}</td><td style="${rcell}">${money(b.qty*b.rate)}</td><td style="${cell}">${esc(b.remark||'—')}</td></tr>`).join('')}</tbody></table>`:'<div style="font-size:11px;color:#888;margin-bottom:6px">No purchases.</div>';
+  const sellTbl=sells.length?`<table style="width:100%;border-collapse:collapse;margin-bottom:6px"><thead><tr>${th('Date')}${th('Invoice')}${th('Customer')}${th('Qty',1)}${th('Rate',1)}${th('Amount',1)}${owner?th('Profit / Loss',1):''}</tr></thead>
+    <tbody>${sells.map(s=>{const pl=s.qty*(s.rate-avg);return `<tr><td style="${cell}">${fmtDate(s.date)}</td><td style="${cell}">${esc(s.inv||'')}</td><td style="${cell}">${esc(s.cust||'')}</td><td style="${rcell}">${num(s.qty)}</td><td style="${rcell}">${money(s.rate)}</td><td style="${rcell}">${money(s.qty*s.rate)}</td>${owner?`<td style="${rcell}">${money(pl)}</td>`:''}</tr>`;}).join('')}</tbody></table>`:'<div style="font-size:11px;color:#888;margin-bottom:6px">No sales.</div>';
+  return `<div id="prodHistPdfArea" style="width:760px;background:#fff;color:#111;padding:24px;font-family:Arial,Helvetica,sans-serif">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px">
+      <div><div style="font-size:20px;font-weight:800">📦 ${esc(pr.name)}</div>
+        <div style="font-size:12px;color:#666">Balance ${num(bal)} ${esc(pr.unit||'')} · Avg cost ${money(avg)}${owner&&prof!=null?' · Profit/Loss '+money(prof):''}</div></div>
+      <div style="text-align:right;font-size:12px;color:#444"><b>${esc(st.company||'')}</b><br>${fmtDate(todayStr())}</div>
+    </div>
+    <div style="font-size:13px;font-weight:700;margin:4px 0 6px">📥 Purchases — ${num(buyQ)} pcs · ${money(buyAmt)}</div>${buyTbl}
+    <div style="font-size:13px;font-weight:700;margin:12px 0 6px">🧾 Sales — ${num(sellQ)} pcs · ${money(sellAmt)}</div>${sellTbl}
+  </div>`;
+}
+async function buildProductHistPdf(pid){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
+  const html=productHistReportHtml(pid); if(!html){ toast('Nothing to export',1); return null; }
+  const pr=productById(pid);
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#prodHistPdfArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    const safe=((pr&&pr.name)||'product').replace(/[\\/?*\[\]:]/g,' ').slice(0,24).trim();
+    return {blob:pdf.output('blob'), filename:safe+'_history_'+todayStr()+'.pdf'};
+  }catch(e){ toast('Could not build the PDF',1); return null; }
+  finally{ document.body.removeChild(holder); }
+}
+async function pdfProductHist(pid){ toast('Preparing PDF…',0); const r=await buildProductHistPdf(pid); if(!r)return;
+  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
 /* full detail of one sales bill */
 function saleDetail(id){
   const s=DB.sales.find(x=>x.id===id); if(!s)return; const eng=isOwner()?computeEngine():null;
