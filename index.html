@@ -467,6 +467,14 @@ thead th{background:var(--panel2);text-align:left;padding:12px 14px;font-size:11
 tbody td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}
 tbody tr:hover{background:rgba(255,255,255,.02)}
 td.num,th.num{text-align:right}
+/* compact detail tables (Inventory Movement · purchase/sales details) — fit to screen */
+.im-det-t{min-width:0!important;width:100%}
+.im-det-t thead th{padding:8px 9px;font-size:10.5px;letter-spacing:.4px}
+.im-det-t tbody td{padding:7px 9px;font-size:11px}
+.im-det-t th:nth-child(2),.im-det-t td:nth-child(2){white-space:normal;word-break:break-word;max-width:150px}
+.im-det-t th:nth-child(3),.im-det-t td:nth-child(3){white-space:normal;word-break:break-word;max-width:140px}
+.im-det-t th:nth-child(4),.im-det-t td:nth-child(4){white-space:normal;word-break:break-word;max-width:90px}
+.im-det-t td.num{white-space:nowrap}
 /* clickable ref / invoice / product cells that open a detail view */
 .rowlink{cursor:pointer;color:var(--brand2);border-bottom:1px dashed rgba(129,140,248,.5);text-decoration:none}
 .rowlink:hover{border-bottom-style:solid;filter:brightness(1.15)}
@@ -7485,11 +7493,11 @@ function invMoveDetailTablesHtml(from,to){
   const {buys,sells}=invMoveDetails(from,to);
   const bQ=buys.reduce((s,r)=>s+r.qty,0), bA=buys.reduce((s,r)=>s+r.amt,0);
   const sQ=sells.reduce((s,r)=>s+r.qty,0), sA=sells.reduce((s,r)=>s+r.amt,0);
-  const buyTbl=buys.length?`<div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Product</th><th>Where Purchased</th><th>Order No</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+  const buyTbl=buys.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Where Purchased</th><th>Order No</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
     <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><b>${esc(b.name)}</b></td><td>${esc(b.where||'—')}</td><td>${esc(b.orderNo||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.amt)}</td></tr>`).join('')}
     <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${buys.length} line${buys.length===1?'':'s'}</td><td class="num">${num(bQ)}</td><td class="num">—</td><td class="num">${money(bA)}</td></tr></tbody></table></div>`
     :emptyBox('📥','No purchases','No purchase lines in this range.');
-  const sellTbl=sells.length?`<div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Product</th><th>Customer</th><th>Invoice</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+  const sellTbl=sells.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Customer</th><th>Invoice</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
     <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.where||'—')}</td><td>${esc(s.inv||'—')}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.amt)}</td></tr>`).join('')}
     <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${sells.length} line${sells.length===1?'':'s'}</td><td class="num">${num(sQ)}</td><td class="num">—</td><td class="num">${money(sA)}</td></tr></tbody></table></div>`
     :emptyBox('🧾','No sales','No sale lines in this range.');
@@ -7561,7 +7569,7 @@ function invMoveReportHtml(){
     pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0)),
       ['Date','Product','Customer','Invoice','Qty','Price','Amount'],[4,5,6],sellLines,
       'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)));
-  return reportAreaHtml({areaId:'invMovePdfArea',width:720,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
+  return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
     head, numCols:[1,2,3,4], rows:body, foot, extra,
     note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
 }
