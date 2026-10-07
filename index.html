@@ -997,6 +997,10 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
 const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+/* Report screens an admin can grant to a worker (otherwise owner-only). Stored in a
+   worker's perms just like any other screen; granted workers see the report but any
+   owner-only profit columns inside it stay hidden. */
+const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cprefrep','invmove','invtoday'];
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -1018,16 +1022,16 @@ const NAV_GROUPS=[
     {v:'cards',     ic:'💳', lab:'Credit Cards', owner:true},
     {v:'cardpref',  ic:'⭐', lab:'Card Preference', owner:true},
     {v:'lenders',   ic:'🤝', lab:'Card Lenders', owner:true, badge:'lenderBadge'} ]},
-  {tag:'Reports', ic:'📈', color:'#fbbf24', owner:true, items:[
-    {v:'bsreport',   ic:'🛒', lab:'Buy & Sell Report', owner:true},
-    {v:'daybook',    ic:'📅', lab:'Daily Summary', owner:true},
-    {v:'cardreport', ic:'💳', lab:'Card Statement', owner:true},
-    {v:'cardusage',  ic:'📊', lab:'Card Usage', owner:true},
-    {v:'rcard',      ic:'💳', lab:'Recent Credit Card', owner:true},
-    {v:'cusage',     ic:'📈', lab:'Card Usage & Cashback', owner:true},
-    {v:'cprefrep',   ic:'⭐', lab:'Card Preference', owner:true},
-    {v:'invmove',    ic:'📦', lab:'Inventory Movement', owner:true},
-    {v:'invtoday',   ic:'📋', lab:"Today's Inventory", owner:true} ]},
+  {tag:'Reports', ic:'📈', color:'#fbbf24', items:[
+    {v:'bsreport',   ic:'🛒', lab:'Buy & Sell Report'},
+    {v:'daybook',    ic:'📅', lab:'Daily Summary'},
+    {v:'cardreport', ic:'💳', lab:'Card Statement'},
+    {v:'cardusage',  ic:'📊', lab:'Card Usage'},
+    {v:'rcard',      ic:'💳', lab:'Recent Credit Card'},
+    {v:'cusage',     ic:'📈', lab:'Card Usage & Cashback'},
+    {v:'cprefrep',   ic:'⭐', lab:'Card Preference'},
+    {v:'invmove',    ic:'📦', lab:'Inventory Movement'},
+    {v:'invtoday',   ic:'📋', lab:"Today's Inventory"} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'activity',  ic:'🧾', lab:'Activity Log', owner:true},
@@ -6604,7 +6608,7 @@ function dayCard(g,idx,eng,owner){
   </div>`;
 }
 views.daybook=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The daily summary is restricted to the owner account.</p></div>`;
+  if(!canView('daybook'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The daily summary is restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>📅 Daily Summary</h2><p>Day-by-day account — every invoice, purchase, cash &amp; card movement, newest day first. Tap a day to expand.</p></div>
     <div class="row-actions">
@@ -6616,10 +6620,10 @@ views.daybook=function(){
   <div id="dbStats" class="cards"></div>
   <div id="dbBody"></div>`;
 };
-views._after_daybook=()=>{ if(isOwner())renderDaybook(); };
+views._after_daybook=()=>{ if(canView('daybook'))renderDaybook(); };
 function clearDbRange(){ if($('#dbFrom'))$('#dbFrom').value=''; if($('#dbTo'))$('#dbTo').value=''; renderDaybook(); }
 function renderDaybook(){
-  if(!isOwner())return;
+  if(!canView('daybook'))return;
   const from=$('#dbFrom')?.value, to=$('#dbTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
   const {dates,day,totals,eng}=daybookData(inR); const owner=isOwner();
   const cs=$('#dbStats'); if(cs)cs.innerHTML=`
@@ -6833,7 +6837,7 @@ function bsSalesTable(d){
     <tbody>${rows}</tbody></table></div></div>`;
 }
 views.bsreport=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The Buy &amp; Sell report is restricted to the owner account.</p></div>`;
+  if(!canView('bsreport'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The Buy &amp; Sell report is restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>🛒 Buy &amp; Sell Report</h2><p>Today's purchases &amp; sales at a glance — payment mode, credit-card usage, profit &amp; balances. Pick a day or a range.</p></div>
     <div class="row-actions">
@@ -6853,7 +6857,7 @@ views.bsreport=function(){
   <div id="bsStats" class="cards"></div>
   <div id="bsBody"></div>`;
 };
-views._after_bsreport=()=>{ if(!isOwner())return; const f=$('#bsFrom'),t=$('#bsTo'); if(f&&!f.value)f.value=todayStr(); if(t&&!t.value)t.value=todayStr(); renderBsReport(); };
+views._after_bsreport=()=>{ if(!canView('bsreport'))return; const f=$('#bsFrom'),t=$('#bsTo'); if(f&&!f.value)f.value=todayStr(); if(t&&!t.value)t.value=todayStr(); renderBsReport(); };
 function bsPreset(which){ const f=$('#bsFrom'),t=$('#bsTo'); if(!f||!t)return; const d=new Date(), today=todayStr();
   if(which==='today'){ f.value=today; t.value=today; }
   else if(which==='yday'){ const y=new Date(d); y.setDate(d.getDate()-1); f.value=isoDate(y); t.value=isoDate(y); }
@@ -6862,7 +6866,7 @@ function bsPreset(which){ const f=$('#bsFrom'),t=$('#bsTo'); if(!f||!t)return; c
   renderBsReport(); }
 function clearBsRange(){ if($('#bsFrom'))$('#bsFrom').value=''; if($('#bsTo'))$('#bsTo').value=''; renderBsReport(); }
 function renderBsReport(){
-  if(!isOwner())return;
+  if(!canView('bsreport'))return;
   const from=$('#bsFrom')?.value, to=$('#bsTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
   const d=bsReportData(inR); const owner=isOwner();
   const pl=$('#bsPeriod'); if(pl)pl.textContent='📅 '+bsPeriodLabel(from,to);
@@ -6889,7 +6893,7 @@ function renderBsReport(){
     ${bsSalesTable(d)}`;
 }
 function exportBsReportExcel(){
-  if(!isOwner())return;
+  if(!canView('bsreport'))return;
   const from=$('#bsFrom')?.value, to=$('#bsTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
   const d=bsReportData(inR);
   if(!d.purch.length&&!d.sales.length){ toast('Nothing to export in this period',1); return; }
@@ -7034,7 +7038,7 @@ function cardStatementPanel(c,inR,q){
   </div>`;
 }
 views.cardreport=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card statements are restricted to the owner account.</p></div>`;
+  if(!canView('cardreport'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card statements are restricted to the owner account.</p></div>`;
   const opts=(DB.cards||[]).map(c=>`<option value="${c.id}">${esc(cardLabel(c))}</option>`).join('');
   return `
   <div class="page-head"><div><h2>💳 Card Statement</h2><p>Per-card statement, usage &amp; running balance. Filter by card and period.</p></div>
@@ -7050,10 +7054,10 @@ views.cardreport=function(){
   <div id="crStats" class="cards"></div>
   <div id="crBody"></div>`;
 };
-views._after_cardreport=()=>{ if(isOwner())renderCardReport(); };
+views._after_cardreport=()=>{ if(canView('cardreport'))renderCardReport(); };
 function clearCrRange(){ if($('#crCard'))$('#crCard').value=''; if($('#crFrom'))$('#crFrom').value=''; if($('#crTo'))$('#crTo').value=''; if($('#crSearch'))$('#crSearch').value=''; renderCardReport(); }
 function renderCardReport(){
-  if(!isOwner())return;
+  if(!canView('cardreport'))return;
   const from=$('#crFrom')?.value, to=$('#crTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
   const sel=$('#crCard')?.value||''; const all=DB.cards||[]; const cards= sel? all.filter(c=>c.id===sel): all;
   let tL=0,tO=0; all.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); }); const tA=tL-tO;
@@ -7189,7 +7193,7 @@ async function cardReportPdf(){
 
 /* ---- Card Usage report — one row per card, ordered by payment due date ---- */
 views.cardusage=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card usage reports are restricted to the owner account.</p></div>`;
+  if(!canView('cardusage'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card usage reports are restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>📊 Card Usage</h2><p>One row per card — limit, used, available, usage &amp; the next payment due date. Ordered by due date.</p></div>
     <div class="row-actions">
@@ -7212,7 +7216,7 @@ views.cardusage=function(){
   <div id="cuStats" class="cards"></div>
   <div id="cuBody"></div>`;
 };
-views._after_cardusage=()=>{ if(isOwner())renderCardUsage(); };
+views._after_cardusage=()=>{ if(canView('cardusage'))renderCardUsage(); };
 /* split a card's outstanding into three real-statement buckets, cut at the STATEMENT
    date (not the due date), so current-cycle spend is never billed early:
    • oldDue   = net charges billed on/before the previous statement (S1) — overdue;
@@ -7269,7 +7273,7 @@ function cardUsageRows(){
   return rows;
 }
 function renderCardUsage(){
-  if(!isOwner())return;
+  if(!canView('cardusage'))return;
   const all=DB.cards||[];
   let tL=0,tO=0; all.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); });
   const usedCount=all.filter(c=>cardOutstanding(c)>0.005).length;
@@ -7439,7 +7443,7 @@ function creditReportStats(rows){
 
 /* ============ Report 1 · Recent Credit Card ============ */
 views.rcard=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
+  if(!canView('rcard'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>💳 Recent Credit Card</h2><p>One row per card — holder, number, available, used, old &amp; new dues and the payment due date. Nearest due date first.</p></div>
     <div class="row-actions">
@@ -7454,10 +7458,10 @@ views.rcard=function(){
   <div id="rcStats" class="cards"></div>
   <div id="rcBody"></div>`;
 };
-views._after_rcard=()=>{ if(isOwner())renderRcard(); };
+views._after_rcard=()=>{ if(canView('rcard'))renderRcard(); };
 function rcardRows(){ return creditSearchSort(creditReportRows(), ($('#rcSearch')?.value||'').trim(), $('#rcOrder')?.value||'near'); }
 function renderRcard(){
-  if(!isOwner())return;
+  if(!canView('rcard'))return;
   const all=DB.cards||[], cs=$('#rcStats'); if(cs)cs.innerHTML= all.length?creditReportStats(creditReportRows()):'';
   const body=$('#rcBody'); if(!body)return;
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards first.')}</div>`; return; }
@@ -7497,7 +7501,7 @@ function pdfRcard(){ downloadReportPdf(rcardReportHtml(),'rcardPdfArea','recent_
 
 /* ============ Report 2 · Card Usage & Cashback ============ */
 views.cusage=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
+  if(!canView('cusage'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>📈 Card Usage &amp; Cashback</h2><p>Card usage with the statement date, cashback % and the cashback availed so far. Most recent due date first.</p></div>
     <div class="row-actions">
@@ -7512,10 +7516,10 @@ views.cusage=function(){
   <div id="cuxStats" class="cards"></div>
   <div id="cuxBody"></div>`;
 };
-views._after_cusage=()=>{ if(isOwner())renderCusage(); };
+views._after_cusage=()=>{ if(canView('cusage'))renderCusage(); };
 function cusageRows(){ return creditSearchSort(creditReportRows(), ($('#cuxSearch')?.value||'').trim(), $('#cuxOrder')?.value||'far'); }
 function renderCusage(){
-  if(!isOwner())return;
+  if(!canView('cusage'))return;
   const all=DB.cards||[], cs=$('#cuxStats');
   if(cs){ const base=creditReportRows(); const tCb=base.reduce((s,r)=>s+r.cbTotal,0);
     cs.innerHTML= all.length? creditReportStats(base)+`<div class="stat gold"><span class="ic">🎁</span><div class="label">Cashback availed</div><div class="val">${money(tCb)}</div><div class="foot">all time</div></div>`:''; }
@@ -7571,7 +7575,7 @@ function cprefRows(){
   return rows;
 }
 views.cprefrep=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
+  if(!canView('cprefrep'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Credit-card reports are restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>⭐ Card Preference</h2><p>Which card to use next — ranked first by cashback %, then by available limit. Includes statement &amp; due dates. Cards that have hit their cashback cap drop to the bottom.</p></div>
     <div class="row-actions">
@@ -7581,9 +7585,9 @@ views.cprefrep=function(){
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cpSearch" placeholder="Search card, holder or bank..." oninput="renderCprefrep()"></div></div>
   <div id="cpBody"></div>`;
 };
-views._after_cprefrep=()=>{ if(isOwner())renderCprefrep(); };
+views._after_cprefrep=()=>{ if(canView('cprefrep'))renderCprefrep(); };
 function renderCprefrep(){
-  if(!isOwner())return;
+  if(!canView('cprefrep'))return;
   const body=$('#cpBody'); if(!body)return;
   if(!activeCards().length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No active cards','Add or activate credit cards in Credit Cards first.')}</div>`; return; }
   const rows=cprefRows();
@@ -7649,7 +7653,7 @@ function lastBoughtCost(pid){ let best=null;
 
 /* ============ Report · Inventory Movement ============ */
 views.invmove=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Inventory reports are restricted to the owner account.</p></div>`;
+  if(!canView('invmove'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Inventory reports are restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>📦 Inventory Movement</h2><p>Opening stock, purchased, sold &amp; closing stock per product for a date range. Opening = closing of the day before the start, so each period continues from the last.</p></div>
     <div class="row-actions">
@@ -7664,7 +7668,7 @@ views.invmove=function(){
   <div id="imStats" class="cards"></div>
   <div id="imBody"></div>`;
 };
-views._after_invmove=()=>{ if(!isOwner())return; const f=$('#imFrom'),t=$('#imTo');
+views._after_invmove=()=>{ if(!canView('invmove'))return; const f=$('#imFrom'),t=$('#imTo');
   if(t&&!t.value)t.value=todayStr();
   if(f&&!f.value){ const d=new Date(); d.setDate(1); f.value=isoDate(d); }   // default: this month to date
   renderInvMove(); };
@@ -7686,33 +7690,41 @@ function invMoveDetails(from,to){
   const q=($('#imSearch')?.value||'').trim().toLowerCase();
   const inWin=d=>(!from||d>=from)&&(!to||d<=to);
   const match=pid=>{ if(!q)return true; const pr=productById(pid); return pr&&[pr.name,pr.category].some(v=>(v||'').toLowerCase().includes(q)); };
-  const buys=[]; DB.purchases.forEach(p=>{ const d=p.date||''; if(!inWin(d))return; purchaseItems(p).forEach(it=>{ if(!match(it.productId))return;
-    const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0;
-    buys.push({date:d,name:pr?pr.name:'—',where:p.supplier||'',orderNo:p.orderNo||p.ref||'',qty,rate,amt:qty*rate}); }); });
-  const sells=[]; DB.sales.forEach(s=>{ const d=s.date||''; if(!inWin(d))return; (s.items||[]).forEach(it=>{ if(!match(it.productId))return;
-    const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0;
-    sells.push({date:d,name:pr?pr.name:'—',where:s.customer||'Walk-in',inv:s.invoiceNo||'',qty,rate,amt:qty*rate}); }); });
+  /* pending (unpaid) is tracked per bill — spread it across the bill's lines in
+     proportion to each line's gross amount, so the per-line columns still sum to
+     the bill's real unpaid balance. */
+  const buys=[]; DB.purchases.forEach(p=>{ const d=p.date||''; if(!inWin(d))return;
+    const gross=purchaseGross(p), pend=Math.max(0,purchaseTotal(p)-(+p.paid||0)), pf=gross>0?pend/gross:0;
+    purchaseItems(p).forEach(it=>{ if(!match(it.productId))return;
+      const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0, amt=qty*rate;
+      buys.push({date:d,name:pr?pr.name:'—',where:p.supplier||'',orderNo:p.orderNo||p.ref||'',qty,rate,amt,pending:amt*pf}); }); });
+  const sells=[]; DB.sales.forEach(s=>{ const d=s.date||''; if(!inWin(d))return;
+    const gross=(s.items||[]).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0), pend=Math.max(0,(+s.total||0)-(+s.paid||0)), pf=gross>0?pend/gross:0;
+    (s.items||[]).forEach(it=>{ if(!match(it.productId))return;
+      const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0, amt=qty*rate;
+      sells.push({date:d,name:pr?pr.name:'—',where:s.customer||'Walk-in',inv:s.invoiceNo||'',qty,rate,amt,pending:amt*pf}); }); });
   const byDate=(a,b)=>a.date<b.date?1:(a.date>b.date?-1:0);
   buys.sort(byDate); sells.sort(byDate);
   return {buys,sells};
 }
 function invMoveDetailTablesHtml(from,to){
   const {buys,sells}=invMoveDetails(from,to);
-  const bQ=buys.reduce((s,r)=>s+r.qty,0), bA=buys.reduce((s,r)=>s+r.amt,0);
-  const sQ=sells.reduce((s,r)=>s+r.qty,0), sA=sells.reduce((s,r)=>s+r.amt,0);
-  const buyTbl=buys.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Where Purchased</th><th>Order No</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
-    <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><b>${esc(b.name)}</b></td><td>${esc(b.where||'—')}</td><td>${esc(b.orderNo||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.amt)}</td></tr>`).join('')}
-    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${buys.length} line${buys.length===1?'':'s'}</td><td class="num">${num(bQ)}</td><td class="num">—</td><td class="num">${money(bA)}</td></tr></tbody></table></div>`
+  const bQ=buys.reduce((s,r)=>s+r.qty,0), bA=buys.reduce((s,r)=>s+r.amt,0), bP=buys.reduce((s,r)=>s+r.pending,0);
+  const sQ=sells.reduce((s,r)=>s+r.qty,0), sA=sells.reduce((s,r)=>s+r.amt,0), sP=sells.reduce((s,r)=>s+r.pending,0);
+  const pendCell=v=>v>0.005?`<td class="num" style="color:var(--amber);font-weight:600">${money(v)}</td>`:`<td class="num" style="color:var(--muted2)">—</td>`;
+  const buyTbl=buys.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Where Purchased</th><th>Order No</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th><th class="num">Pending</th></tr></thead>
+    <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><b>${esc(b.name)}</b></td><td>${esc(b.where||'—')}</td><td>${esc(b.orderNo||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.amt)}</td>${pendCell(b.pending)}</tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${buys.length} line${buys.length===1?'':'s'}</td><td class="num">${num(bQ)}</td><td class="num">—</td><td class="num">${money(bA)}</td><td class="num"${bP>0.005?' style="color:var(--amber)"':''}>${bP>0.005?money(bP):'—'}</td></tr></tbody></table></div>`
     :emptyBox('📥','No purchases','No purchase lines in this range.');
-  const sellTbl=sells.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Customer</th><th>Invoice</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
-    <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.where||'—')}</td><td>${esc(s.inv||'—')}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.amt)}</td></tr>`).join('')}
-    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${sells.length} line${sells.length===1?'':'s'}</td><td class="num">${num(sQ)}</td><td class="num">—</td><td class="num">${money(sA)}</td></tr></tbody></table></div>`
+  const sellTbl=sells.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Customer</th><th>Invoice</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th><th class="num">Pending</th></tr></thead>
+    <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.where||'—')}</td><td>${esc(s.inv||'—')}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.amt)}</td>${pendCell(s.pending)}</tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${sells.length} line${sells.length===1?'':'s'}</td><td class="num">${num(sQ)}</td><td class="num">—</td><td class="num">${money(sA)}</td><td class="num"${sP>0.005?' style="color:var(--amber)"':''}>${sP>0.005?money(sP):'—'}</td></tr></tbody></table></div>`
     :emptyBox('🧾','No sales','No sale lines in this range.');
-  return `<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">📥 Purchase Details — ${num(bQ)} pcs · ${money(bA)}</h4>${buyTbl}</div>
-    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}</h4>${sellTbl}</div>`;
+  return `<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">📥 Purchase Details — ${num(bQ)} pcs · ${money(bA)}${bP>0.005?` · <span style="color:var(--amber)">${money(bP)} pending</span>`:''}</h4>${buyTbl}</div>
+    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}${sP>0.005?` · <span style="color:var(--amber)">${money(sP)} pending</span>`:''}</h4>${sellTbl}</div>`;
 }
 function renderInvMove(){
-  if(!isOwner())return;
+  if(!canView('invmove'))return;
   const {rows,from,to}=invMoveRows();
   const tO=rows.reduce((s,r)=>s+r.opening,0), tP=rows.reduce((s,r)=>s+r.purchased,0), tS=rows.reduce((s,r)=>s+r.sold,0), tC=rows.reduce((s,r)=>s+r.closing,0);
   const cs=$('#imStats'); if(cs)cs.innerHTML=`
@@ -7743,12 +7755,12 @@ function exportInvMoveExcel(){
   rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
   out.push(['Total','',num2(rows.reduce((s,r)=>s+r.opening,0)),num2(rows.reduce((s,r)=>s+r.purchased,0)),num2(rows.reduce((s,r)=>s+r.sold,0)),num2(rows.reduce((s,r)=>s+r.closing,0))]);
   const {buys,sells}=invMoveDetails(from,to);
-  const buyOut=[['Purchase Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Where Purchased','Order No','Qty','Price','Amount']];
-  buys.forEach(b=>buyOut.push([b.date,b.name,b.where||'',b.orderNo||'',num2(b.qty),num2(b.rate),num2(b.amt)]));
-  buyOut.push(['Total','','','',num2(buys.reduce((s,b)=>s+b.qty,0)),'',num2(buys.reduce((s,b)=>s+b.amt,0))]);
-  const sellOut=[['Sales Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Customer','Invoice','Qty','Price','Amount']];
-  sells.forEach(s=>sellOut.push([s.date,s.name,s.where||'',s.inv||'',num2(s.qty),num2(s.rate),num2(s.amt)]));
-  sellOut.push(['Total','','','',num2(sells.reduce((s,r)=>s+r.qty,0)),'',num2(sells.reduce((s,r)=>s+r.amt,0))]);
+  const buyOut=[['Purchase Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending']];
+  buys.forEach(b=>buyOut.push([b.date,b.name,b.where||'',b.orderNo||'',num2(b.qty),num2(b.rate),num2(b.amt),num2(b.pending)]));
+  buyOut.push(['Total','','','',num2(buys.reduce((s,b)=>s+b.qty,0)),'',num2(buys.reduce((s,b)=>s+b.amt,0)),num2(buys.reduce((s,b)=>s+b.pending,0))]);
+  const sellOut=[['Sales Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending']];
+  sells.forEach(s=>sellOut.push([s.date,s.name,s.where||'',s.inv||'',num2(s.qty),num2(s.rate),num2(s.amt),num2(s.pending)]));
+  sellOut.push(['Total','','','',num2(sells.reduce((s,r)=>s+r.qty,0)),'',num2(sells.reduce((s,r)=>s+r.amt,0)),num2(sells.reduce((s,r)=>s+r.pending,0))]);
   exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}]);
 }
 function invMoveReportHtml(){
@@ -7757,25 +7769,26 @@ function invMoveReportHtml(){
   const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
   const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
   const {buys,sells}=invMoveDetails(from,to);
-  const pdfTbl=(title,heads,numCols,lines,footLabel,footQty,footAmt)=>{
+  const pdfTbl=(title,heads,numCols,lines,footLabel,footQty,footAmt,footPend)=>{
     const isN=i=>numCols.includes(i);
     const cell=(v,i,tag,ex)=>`<${tag} style="text-align:${isN(i)?'right':'left'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
     const th=heads.map((h,i)=>cell(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
     const trs=lines.map(r=>'<tr>'+r.map((v,i)=>cell(v,i,'td')).join('')+'</tr>').join('');
-    const ft=`<tr style="font-weight:800">${cell(footLabel,0,'td',';border-top:2px solid #222')}`+heads.slice(1).map((h,i)=>{const i2=i+1;const v=i2===heads.length-1?footAmt:(h==='Qty'?footQty:'');return cell(v,i2,'td',';border-top:2px solid #222');}).join('')+'</tr>';
+    const ft=`<tr style="font-weight:800">${cell(footLabel,0,'td',';border-top:2px solid #222')}`+heads.slice(1).map((h,i)=>{const i2=i+1;const v=h==='Qty'?footQty:(h==='Amount'?footAmt:(h==='Pending'?footPend:''));return cell(v,i2,'td',';border-top:2px solid #222');}).join('')+'</tr>';
     return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:800;margin-bottom:6px">${title}</div>
       <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${lines.length?ft:''}</tbody></table>
       ${lines.length?'':'<div style="color:#888;font-size:10.5px;padding:4px 2px">None in this range.</div>'}</div>`;
   };
-  const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt)]);
-  const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt)]);
+  const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt),b.pending>0.005?money(b.pending):'—']);
+  const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt),s.pending>0.005?money(s.pending):'—']);
+  const bP=buys.reduce((s,b)=>s+b.pending,0), sP=sells.reduce((s,r)=>s+r.pending,0);
   const extra=
-    pdfTbl('📥 Purchase Details — '+num(buys.reduce((s,b)=>s+b.qty,0))+' pcs · '+money(buys.reduce((s,b)=>s+b.amt,0)),
-      ['Date','Product','Where Purchased','Order No','Qty','Price','Amount'],[4,5,6],buyLines,
-      'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)))+
-    pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0)),
-      ['Date','Product','Customer','Invoice','Qty','Price','Amount'],[4,5,6],sellLines,
-      'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)));
+    pdfTbl('📥 Purchase Details — '+num(buys.reduce((s,b)=>s+b.qty,0))+' pcs · '+money(buys.reduce((s,b)=>s+b.amt,0))+(bP>0.005?' · '+money(bP)+' pending':''),
+      ['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending'],[4,5,6,7],buyLines,
+      'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)),bP>0.005?money(bP):'—')+
+    pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0))+(sP>0.005?' · '+money(sP)+' pending':''),
+      ['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending'],[4,5,6,7],sellLines,
+      'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—');
   return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
     head, numCols:[1,2,3,4], rows:body, foot, extra,
     note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
@@ -7794,7 +7807,7 @@ function invTodayRows(){
   return rows;
 }
 views.invtoday=function(){
-  if(!isOwner())return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Inventory reports are restricted to the owner account.</p></div>`;
+  if(!canView('invtoday'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Inventory reports are restricted to the owner account.</p></div>`;
   return `
   <div class="page-head"><div><h2>📋 Today's Inventory</h2><p>Current stock on hand per product, with the cost it was last bought at and the stock value. As of ${fmtDate(todayStr())}.</p></div>
     <div class="row-actions">
@@ -7809,9 +7822,9 @@ views.invtoday=function(){
   <div id="itStats" class="cards"></div>
   <div id="itBody"></div>`;
 };
-views._after_invtoday=()=>{ if(isOwner())renderInvToday(); };
+views._after_invtoday=()=>{ if(canView('invtoday'))renderInvToday(); };
 function renderInvToday(){
-  if(!isOwner())return;
+  if(!canView('invtoday'))return;
   const rows=invTodayRows();
   const tUnits=rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0), tVal=rows.reduce((s,r)=>s+r.value,0);
   const cs=$('#itStats'); if(cs)cs.innerHTML=`
@@ -8126,8 +8139,10 @@ function renderUsers(){
 function editUser(id){
   const u=id?DB.users.find(x=>x.id===id):{name:'',phone:'',pin:'1234',role:'worker',perms:WORKER_DEFAULT.slice()};
   const perms=userPerms(u);
-  const permBoxes=ALL_VIEWS.filter(v=>v!=='profit'&&v!=='settings').map(v=>`<label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);padding:9px 11px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600">
-      <input type="checkbox" class="u_perm" value="${v}" ${perms.includes(v)?'checked':''} style="width:16px;height:16px;accent-color:var(--brand)"> ${VIEW_LABELS[v]}</label>`).join('');
+  const permBox=v=>`<label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);padding:9px 11px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600">
+      <input type="checkbox" class="u_perm" value="${v}" ${perms.includes(v)?'checked':''} style="width:16px;height:16px;accent-color:var(--brand)"> ${VIEW_LABELS[v]||v}</label>`;
+  const permBoxes=ALL_VIEWS.filter(v=>v!=='profit'&&v!=='settings').map(permBox).join('');
+  const reportBoxes=REPORT_VIEWS.map(permBox).join('');
   openModal(`${id?'Edit':'Add'} User`,`
     <div class="grid2">
       <div class="field"><label>Full Name *</label><input id="u_name" value="${esc(u.name)}"></div>
@@ -8142,7 +8157,9 @@ function editUser(id){
     <div class="field" id="u_permWrap" style="${u.role==='owner'?'display:none':''}">
       <label>Worker can access these screens</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">${permBoxes}</div>
-      <div style="color:var(--muted2);font-size:11.5px;margin-top:7px">Profit & Reports and Settings stay owner-only. Owners always see everything.</div>
+      <label style="margin-top:14px">Reports this worker can open <span style="color:var(--muted2);font-weight:500">(optional)</span></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">${reportBoxes}</div>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:7px">Reports are owner-only until ticked here. Profit sub-totals inside a report stay hidden from workers. Profit &amp; Reports and Settings stay owner-only. Owners always see everything.</div>
     </div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveUser('${id||''}')">Save User</button>`);
