@@ -49,5 +49,8 @@ The entire app state is stored as **one JSON row** in the `app_state` table. loc
 
 Product photos are stored as **URLs or small thumbnails** (auto-shrunk to ~512px) rather than large blobs, to stay well within the 500 MB free tier.
 
-### Pending
-- Convert the web app to an Android **APK** (use web + APK together)
+### Android app / APK
+The app is an installable **PWA** — gold app icon, splash screen, standalone full-screen, offline use,
+and home-screen shortcuts (New Sale, Dashboard, Payments, Cards). To install it or build a signed
+`.apk` / `.aab` with **PWABuilder** (no Android Studio needed), see **[BUILD_APK.md](BUILD_APK.md)**.
+Web and app share the same Supabase data, so you can use them together.

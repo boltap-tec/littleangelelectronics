@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <meta name="theme-color" content="#0f172a" />
 <title>Little Angel Electronics</title>
+<!-- PWA / installable app (wrap into an APK with PWABuilder — see BUILD_APK.md) -->
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/svg+xml" href="icon.svg" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="application-name" content="Little Angel" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Little Angel" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -922,6 +932,8 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
     <div class="field"><label>PIN</label><input id="loginPass" type="password" inputmode="numeric" placeholder="Enter PIN" onkeydown="if(event.key==='Enter')doLogin()" /></div>
     <button class="btn" onclick="doLogin()">Sign In →</button>
     <div class="err" id="loginErr"></div>
+    <button id="installBtn" onclick="laInstall()" style="display:none;margin-top:12px;width:100%;padding:11px 14px;border-radius:12px;border:1px solid var(--line2);background:var(--panel);color:var(--text);font:inherit;font-weight:600;cursor:pointer;display:none;align-items:center;justify-content:center;gap:8px">⬇️ <span>Install app on this device</span></button>
+    <div id="iosHint" style="display:none;margin-top:12px;font-size:12.5px;line-height:1.5;color:var(--muted);text-align:center">Install on iPhone/iPad: tap <b style="color:var(--text)">Share</b> <span style="font-size:14px">⬆️</span> then <b style="color:var(--text)">Add to Home Screen</b>.</div>
   </div>
 </div>
 
@@ -1700,7 +1712,12 @@ function enterApp(){
   try{ if(session)localStorage.setItem(SKEY,session.id); }catch(e){}   // remember this login across refreshes
   $('#login').style.display='none'; $('#app').style.display='block';
   $('#who').innerHTML=`<b style="color:var(--text)">${esc(session.name)}</b> · ${session.role==='owner'?'Owner':'Worker'}`;
-  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess(); go(canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales')); renderBell(); renderApprovalsBadge(); renderOnlineBadge(); renderLenderBadge();
+  renderSidebar(); initScrollxObserver(); initImgZoom(); applyBrand(); applyAccess();
+  // Honour an app-shortcut / deep link (?screen=sales) once, else land on the default screen.
+  let _start = canView('dashboard')?'dashboard':(userPerms(session)[0]||'sales');
+  try{ const want=new URLSearchParams(location.search).get('screen');
+    if(want && canView(want)) _start=want; }catch(e){}
+  go(_start); renderBell(); renderApprovalsBadge(); renderOnlineBadge(); renderLenderBadge();
   checkNegativeOnBoot();   // 🚨 alert immediately if any card is already over its limit
   syncSoundBtn(); startUrgentWatch();   // typing-sound icon + recurring urgent-card nudge
 }
@@ -7638,12 +7655,16 @@ function pdfCprefrep(){ downloadReportPdf(cprefReportHtml(),'cprefPdfArea','card
    blank to = up to today). Opening is the net quantity (bought − sold) dated before
    `from`; purchased/sold are within the window; closing = opening + purchased − sold. */
 function inventoryMovement(from,to){
-  const map={}, ensure=pid=>map[pid]||(map[pid]={opening:0,purchased:0,sold:0});
+  const map={}, ensure=pid=>map[pid]||(map[pid]={opening:0,purchased:0,sold:0,returned:0});
   const inWin=d=>(!from||d>=from)&&(!to||d<=to);
   DB.purchases.forEach(p=>{ const d=p.date||''; purchaseItems(p).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
     if(from&&d<from) m.opening+=q; else if(inWin(d)) m.purchased+=q; }); });
   DB.sales.forEach(s=>{ const d=s.date||''; (s.items||[]).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
     if(from&&d<from) m.opening-=q; else if(inWin(d)) m.sold+=q; }); });
+  /* purchase returns send stock back to the supplier — a negative buy: it lowers
+     opening if it happened before the range, else it's the Returned column. */
+  (DB.returns||[]).forEach(r=>{ const d=r.date||''; (r.items||[]).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
+    if(from&&d<from) m.opening-=q; else if(inWin(d)) m.returned+=q; }); });
   return map;
 }
 /* unit rate of the most recent purchase line for a product (what it cost last time) */
@@ -7677,9 +7698,9 @@ function invMoveRows(){
   const from=$('#imFrom')?.value||'', to=$('#imTo')?.value||'';
   const all=!!$('#imAll')?.checked, q=($('#imSearch')?.value||'').trim().toLowerCase();
   const mv=inventoryMovement(from,to);
-  let rows=DB.products.map(p=>{ const m=mv[p.id]||{opening:0,purchased:0,sold:0};
-    return { p, opening:m.opening, purchased:m.purchased, sold:m.sold, closing:m.opening+m.purchased-m.sold }; });
-  if(!all) rows=rows.filter(r=> Math.abs(r.opening)>1e-9||Math.abs(r.purchased)>1e-9||Math.abs(r.sold)>1e-9||Math.abs(r.closing)>1e-9);
+  let rows=DB.products.map(p=>{ const m=mv[p.id]||{opening:0,purchased:0,sold:0,returned:0};
+    return { p, opening:m.opening, purchased:m.purchased, sold:m.sold, returned:m.returned||0, closing:m.opening+m.purchased-(m.returned||0)-m.sold }; });
+  if(!all) rows=rows.filter(r=> Math.abs(r.opening)>1e-9||Math.abs(r.purchased)>1e-9||Math.abs(r.sold)>1e-9||Math.abs(r.returned)>1e-9||Math.abs(r.closing)>1e-9);
   if(q) rows=rows.filter(r=>[r.p.name,r.p.category].some(v=>(v||'').toLowerCase().includes(q)));
   rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
   return {rows,from,to};
@@ -7703,14 +7724,19 @@ function invMoveDetails(from,to){
     (s.items||[]).forEach(it=>{ if(!match(it.productId))return;
       const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0, amt=qty*rate;
       sells.push({date:d,name:pr?pr.name:'—',where:s.customer||'Walk-in',inv:s.invoiceNo||'',qty,rate,amt,pending:amt*pf}); }); });
+  /* purchase returns — stock sent back to suppliers (a negative buy) */
+  const rets=[]; (DB.returns||[]).forEach(r=>{ const d=r.date||''; if(!inWin(d))return; (r.items||[]).forEach(it=>{ if(!match(it.productId))return;
+    const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0;
+    rets.push({date:d,name:pr?pr.name:'—',where:r.supplier||'',ref:r.ref||'',qty,rate,amt:qty*rate}); }); });
   const byDate=(a,b)=>a.date<b.date?1:(a.date>b.date?-1:0);
-  buys.sort(byDate); sells.sort(byDate);
-  return {buys,sells};
+  buys.sort(byDate); sells.sort(byDate); rets.sort(byDate);
+  return {buys,sells,rets};
 }
 function invMoveDetailTablesHtml(from,to){
-  const {buys,sells}=invMoveDetails(from,to);
+  const {buys,sells,rets}=invMoveDetails(from,to);
   const bQ=buys.reduce((s,r)=>s+r.qty,0), bA=buys.reduce((s,r)=>s+r.amt,0), bP=buys.reduce((s,r)=>s+r.pending,0);
   const sQ=sells.reduce((s,r)=>s+r.qty,0), sA=sells.reduce((s,r)=>s+r.amt,0), sP=sells.reduce((s,r)=>s+r.pending,0);
+  const rQ=rets.reduce((s,r)=>s+r.qty,0), rA=rets.reduce((s,r)=>s+r.amt,0);
   const pendCell=v=>v>0.005?`<td class="num" style="color:var(--amber);font-weight:600">${money(v)}</td>`:`<td class="num" style="color:var(--muted2)">—</td>`;
   const buyTbl=buys.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Where Purchased</th><th>Order No</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th><th class="num">Pending</th></tr></thead>
     <tbody>${buys.map(b=>`<tr><td>${fmtDate(b.date)}</td><td><b>${esc(b.name)}</b></td><td>${esc(b.where||'—')}</td><td>${esc(b.orderNo||'—')}</td><td class="num">${num(b.qty)}</td><td class="num">${money(b.rate)}</td><td class="num">${money(b.amt)}</td>${pendCell(b.pending)}</tr>`).join('')}
@@ -7720,16 +7746,21 @@ function invMoveDetailTablesHtml(from,to){
     <tbody>${sells.map(s=>`<tr><td>${fmtDate(s.date)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.where||'—')}</td><td>${esc(s.inv||'—')}</td><td class="num">${num(s.qty)}</td><td class="num">${money(s.rate)}</td><td class="num">${money(s.amt)}</td>${pendCell(s.pending)}</tr>`).join('')}
     <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${sells.length} line${sells.length===1?'':'s'}</td><td class="num">${num(sQ)}</td><td class="num">—</td><td class="num">${money(sA)}</td><td class="num"${sP>0.005?' style="color:var(--amber)"':''}>${sP>0.005?money(sP):'—'}</td></tr></tbody></table></div>`
     :emptyBox('🧾','No sales','No sale lines in this range.');
+  const retTbl=rets.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th>Supplier</th><th>Return Ref</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+    <tbody>${rets.map(r=>`<tr><td>${fmtDate(r.date)}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.where||'—')}</td><td>${esc(r.ref||'—')}</td><td class="num">${num(r.qty)}</td><td class="num">${money(r.rate)}</td><td class="num">${money(r.amt)}</td></tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${rets.length} line${rets.length===1?'':'s'}</td><td class="num">${num(rQ)}</td><td class="num">—</td><td class="num">${money(rA)}</td></tr></tbody></table></div>`:'';
   return `<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">📥 Purchase Details — ${num(bQ)} pcs · ${money(bA)}${bP>0.005?` · <span style="color:var(--amber)">${money(bP)} pending</span>`:''}</h4>${buyTbl}</div>
-    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}${sP>0.005?` · <span style="color:var(--amber)">${money(sP)} pending</span>`:''}</h4>${sellTbl}</div>`;
+    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}${sP>0.005?` · <span style="color:var(--amber)">${money(sP)} pending</span>`:''}</h4>${sellTbl}</div>
+    ${rets.length?`<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">↩ Returns Details — ${num(rQ)} pcs · ${money(rA)}</h4>${retTbl}</div>`:''}`;
 }
 function renderInvMove(){
   if(!canView('invmove'))return;
   const {rows,from,to}=invMoveRows();
-  const tO=rows.reduce((s,r)=>s+r.opening,0), tP=rows.reduce((s,r)=>s+r.purchased,0), tS=rows.reduce((s,r)=>s+r.sold,0), tC=rows.reduce((s,r)=>s+r.closing,0);
+  const tO=rows.reduce((s,r)=>s+r.opening,0), tP=rows.reduce((s,r)=>s+r.purchased,0), tR=rows.reduce((s,r)=>s+r.returned,0), tS=rows.reduce((s,r)=>s+r.sold,0), tC=rows.reduce((s,r)=>s+r.closing,0);
   const cs=$('#imStats'); if(cs)cs.innerHTML=`
     <div class="stat blue"><span class="ic">📥</span><div class="label">Opening Units</div><div class="val">${num(tO)}</div><div class="foot">before ${from?fmtDate(from):'start'}</div></div>
     <div class="stat green"><span class="ic">🛒</span><div class="label">Purchased</div><div class="val">${num(tP)}</div></div>
+    <div class="stat red"><span class="ic">↩</span><div class="label">Returned</div><div class="val">${num(tR)}</div><div class="foot">to supplier</div></div>
     <div class="stat amber"><span class="ic">🧾</span><div class="label">Sold</div><div class="val">${num(tS)}</div></div>
     <div class="stat gold"><span class="ic">📦</span><div class="label">Closing Units</div><div class="val">${num(tC)}</div></div>`;
   const body=$('#imBody'); if(!body)return;
@@ -7739,36 +7770,42 @@ function renderInvMove(){
       <td><b>${esc(r.p.name)}</b>${r.p.category?`<div style="color:var(--muted2);font-size:11.5px">${esc(r.p.category)}</div>`:''}</td>
       <td class="num">${num(r.opening)}</td>
       <td class="num"${r.purchased>0?' style="color:var(--green)"':''}>${r.purchased?num(r.purchased):'—'}</td>
+      <td class="num"${r.returned>0?' style="color:var(--red)"':''}>${r.returned?num(r.returned):'—'}</td>
       <td class="num"${r.sold>0?' style="color:var(--amber)"':''}>${r.sold?num(r.sold):'—'}</td>
       <td class="num" style="font-weight:700${r.closing<0?';color:var(--red)':''}">${num(r.closing)}</td>
     </tr>`).join('');
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(tO)}</td><td class="num">${num(tP)}</td><td class="num">${num(tS)}</td><td class="num">${num(tC)}</td></tr>`;
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(tO)}</td><td class="num">${num(tP)}</td><td class="num">${num(tR)}</td><td class="num">${num(tS)}</td><td class="num">${num(tC)}</td></tr>`;
   body.innerHTML=`<div class="panel">
     <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
-    <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
+    <div class="table-wrap"><table style="min-width:680px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Returned</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − returned − sold) before the start date · Returned = stock sent back to suppliers · Closing = Opening + Purchased − Returned − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
     ${invMoveDetailTablesHtml(from,to)}`;
 }
 function exportInvMoveExcel(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return toast('No movement to export',1);
-  const out=[['Inventory Movement'],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Closing']];
-  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
-  out.push(['Total','',num2(rows.reduce((s,r)=>s+r.opening,0)),num2(rows.reduce((s,r)=>s+r.purchased,0)),num2(rows.reduce((s,r)=>s+r.sold,0)),num2(rows.reduce((s,r)=>s+r.closing,0))]);
-  const {buys,sells}=invMoveDetails(from,to);
+  const out=[['Inventory Movement'],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Returned','Sold','Closing']];
+  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.returned),num2(r.sold),num2(r.closing)]));
+  out.push(['Total','',num2(rows.reduce((s,r)=>s+r.opening,0)),num2(rows.reduce((s,r)=>s+r.purchased,0)),num2(rows.reduce((s,r)=>s+r.returned,0)),num2(rows.reduce((s,r)=>s+r.sold,0)),num2(rows.reduce((s,r)=>s+r.closing,0))]);
+  const {buys,sells,rets}=invMoveDetails(from,to);
   const buyOut=[['Purchase Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending']];
   buys.forEach(b=>buyOut.push([b.date,b.name,b.where||'',b.orderNo||'',num2(b.qty),num2(b.rate),num2(b.amt),num2(b.pending)]));
   buyOut.push(['Total','','','',num2(buys.reduce((s,b)=>s+b.qty,0)),'',num2(buys.reduce((s,b)=>s+b.amt,0)),num2(buys.reduce((s,b)=>s+b.pending,0))]);
   const sellOut=[['Sales Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending']];
   sells.forEach(s=>sellOut.push([s.date,s.name,s.where||'',s.inv||'',num2(s.qty),num2(s.rate),num2(s.amt),num2(s.pending)]));
   sellOut.push(['Total','','','',num2(sells.reduce((s,r)=>s+r.qty,0)),'',num2(sells.reduce((s,r)=>s+r.amt,0)),num2(sells.reduce((s,r)=>s+r.pending,0))]);
-  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}]);
+  const sheets=[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}];
+  if(rets.length){ const retOut=[['Returns Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Supplier','Return Ref','Qty','Price','Amount']];
+    rets.forEach(r=>retOut.push([r.date,r.name,r.where||'',r.ref||'',num2(r.qty),num2(r.rate),num2(r.amt)]));
+    retOut.push(['Total','','','',num2(rets.reduce((s,r)=>s+r.qty,0)),'',num2(rets.reduce((s,r)=>s+r.amt,0))]);
+    sheets.push({name:'Returns Details',rows:retOut}); }
+  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',sheets);
 }
 function invMoveReportHtml(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return '';
-  const head=['Product','Opening','Purchased','Sold','Closing'];
-  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
-  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
-  const {buys,sells}=invMoveDetails(from,to);
+  const head=['Product','Opening','Purchased','Returned','Sold','Closing'];
+  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.returned?num(r.returned):'—',r.sold?num(r.sold):'—',num(r.closing)]);
+  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.returned,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
+  const {buys,sells,rets}=invMoveDetails(from,to);
   const pdfTbl=(title,heads,numCols,lines,footLabel,footQty,footAmt,footPend)=>{
     const isN=i=>numCols.includes(i);
     const cell=(v,i,tag,ex)=>`<${tag} style="text-align:${isN(i)?'right':'left'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
@@ -7788,10 +7825,13 @@ function invMoveReportHtml(){
       'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)),bP>0.005?money(bP):'—')+
     pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0))+(sP>0.005?' · '+money(sP)+' pending':''),
       ['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending'],[4,5,6,7],sellLines,
-      'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—');
+      'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—')+
+    (rets.length?pdfTbl('↩ Returns Details — '+num(rets.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(rets.reduce((s,r)=>s+r.amt,0)),
+      ['Date','Product','Supplier','Return Ref','Qty','Price','Amount'],[4,5,6],rets.map(r=>[fmtDate(r.date),r.name,r.where||'—',r.ref||'—',num(r.qty),money(r.rate),money(r.amt)]),
+      'Total · '+rets.length+' line'+(rets.length===1?'':'s'),num(rets.reduce((s,r)=>s+r.qty,0)),money(rets.reduce((s,r)=>s+r.amt,0))):'');
   return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
-    head, numCols:[1,2,3,4], rows:body, foot, extra,
-    note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
+    head, numCols:[1,2,3,4,5], rows:body, foot, extra,
+    note:'Opening = net stock (bought − returned − sold) before the start date · Returned = stock sent back to suppliers · Closing = Opening + Purchased − Returned − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
 }
 function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
 
@@ -8560,6 +8600,49 @@ cloudPull().then(ok=>{
   applyTheme();
   reSync();                       // cloud data merged in — re-point session & refresh the screen
 }).finally(()=>updateOnlineUI());
+</script>
+
+<!-- ============ Installable app (PWA) + offline service worker ============ -->
+<script>
+(function(){
+  // Already running as an installed app? (standalone display or iOS home-screen)
+  var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
+                 || window.navigator.standalone === true;
+
+  // 1) Register the service worker so the app works offline & qualifies for install / APK.
+  if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('sw.js').catch(function(){ /* ignore in unsupported wrappers */ });
+    });
+  }
+
+  // 2) Native install button (Chrome / Edge / Android). Shown only when the browser offers it.
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault(); deferred = e;
+    var b = document.getElementById('installBtn');
+    if (b && !standalone) b.style.display = 'flex';
+  });
+  window.laInstall = async function(){
+    var b = document.getElementById('installBtn');
+    if (!deferred){ if (b) b.style.display='none'; return; }
+    deferred.prompt();
+    try { await deferred.userChoice; } catch(e){}
+    deferred = null; if (b) b.style.display = 'none';
+  };
+  window.addEventListener('appinstalled', function(){
+    var b = document.getElementById('installBtn'); if (b) b.style.display='none';
+    if (typeof toast === 'function') toast('App installed ✓');
+  });
+
+  // 3) iOS / iPadOS have no install button — show a short "Add to Home Screen" hint instead.
+  var ua = navigator.userAgent || '';
+  var isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  var isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
+  if (isIOS && isSafari && !standalone){
+    var h = document.getElementById('iosHint'); if (h) h.style.display = 'block';
+  }
+})();
 </script>
 </body>
 </html>

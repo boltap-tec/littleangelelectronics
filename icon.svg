@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Little Angel Electronics">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2a54"/>
+      <stop offset="100%" stop-color="#0a1120"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe49a"/>
+      <stop offset=".55" stop-color="#edc154"/>
+      <stop offset="1" stop-color="#b07f2c"/>
+    </linearGradient>
+    <mask id="bolt">
+      <rect width="120" height="120" fill="#fff"/>
+      <path d="M66 33 L47 74 L60 74 L52 101 L83 55 L66 55 Z" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g transform="translate(37.99,32.54) scale(3.6335)">
+    <path d="M48 35 L60 15 L72 35 L112 108 L8 108 Z" fill="url(#gold)" mask="url(#bolt)"/>
+  </g>
+</svg>
