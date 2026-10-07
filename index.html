@@ -501,6 +501,8 @@ body.light #invList tr.sc-done{background:rgba(31,138,76,.08)}
 .tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700}
 .tag.cash{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.card{background:var(--brandsoft);color:#c7c9ff;border:1px solid #4338ca}
+.tag.return{background:#0f3a2a;color:#86efac;border:1px solid #1f5136}
+.tag.discount{background:#2a2410;color:#f3d98b;border:1px solid #6b5518}
 .tag.bank{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
 .tag.cheque{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
 body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
@@ -1372,6 +1374,8 @@ function migrate(){
   if(!Array.isArray(DB.cash))DB.cash=[];
   if(!Array.isArray(DB.online))DB.online=[];
   if(!DB.counters.online)DB.counters.online=0;
+  if(!Array.isArray(DB.returns))DB.returns=[];
+  if(!DB.counters.ret)DB.counters.ret=0;
   if(!Array.isArray(DB.lenders))DB.lenders=[];
   (DB.lenders||[]).forEach(l=>{ if(!Array.isArray(l.cards))l.cards=[]; if(!Array.isArray(l.txns))l.txns=[]; if(l.status===undefined)l.status='active';
     if(l.feePct===undefined){ const fc=(l.cards||[]).find(c=>c.feePct!=null&&c.feePct!==''); l.feePct=fc?(+fc.feePct||0):((DB.settings&&+DB.settings.lenderCardFeePct)||2.3); }   // fee moved from per-card to lender level
@@ -1596,6 +1600,8 @@ function computeEngine(){
   const tx=[];
   DB.purchases.forEach(p=>{const f=purchaseCostFactor(p);purchaseItems(p).forEach(it=>tx.push({t:'buy',date:p.date,seq:p.id,productId:it.productId,qty:+it.qty,rate:(+it.rate||0)*f}));});
   DB.sales.forEach(s=>s.items.forEach(it=>tx.push({t:'sell',date:s.date,seq:s.id,productId:it.productId,qty:+it.qty,rate:+it.rate,saleId:s.id})));
+  /* purchase returns remove stock (goods go back to the supplier) — a negative buy at the item's net cost */
+  (DB.returns||[]).forEach(r=>{ const f=+r.factor||1; (r.items||[]).forEach(it=>tx.push({t:'buy',date:r.date,seq:r.id,productId:it.productId,qty:-(+it.qty||0),rate:(+it.rate||0)*f})); });
   tx.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : (a.t==='buy'&&b.t==='sell'?-1 : a.t==='sell'&&b.t==='buy'?1 : (a.seq<b.seq?-1:1)));
   const stock={}, saleCost={};
   for(const e of tx){
@@ -1776,6 +1782,7 @@ function _go(v,vt){
   const main=$('#main');
   main.innerHTML = (views[v]||views.dashboard)();
   if(views['_after_'+v]) views['_after_'+v]();
+  try{ enhanceScrollx(); }catch(e){}   // wrap wide tables + add ‹ › arrows now, deterministically (the MutationObserver's rAF is paused on hidden tabs / skipped during view transitions)
   if(!vt){ main.classList.remove('anim'); void main.offsetWidth; main.classList.add('anim'); } // replay enter animation (fallback path)
   animateCounts(main); staggerReveal(main); initImgSkel(main);
   if(window.innerWidth<=860) closeNav();
@@ -2080,6 +2087,7 @@ function renderPurchases(){
       <td>${esc(p.supplier||'—')}</td><td>${payMethodTag(p.payment||'cash')}</td>
       <td>${statusTag(tot,p.paid)}</td>
       <td class="num">${payStatus(tot,p.paid)!=='paid'?`<button class="mini-btn gold" onclick="recordPay('purchase','${p.id}')">Pay</button>`:''}
+      ${isOwner()&&purchaseReturnable(p)?`<button class="mini-btn" style="color:var(--amber);border-color:#7a5a12" onclick="openReturnModal('${p.id}')" title="Return item(s) to supplier — refund the card & reverse cashback">↩ Return</button>`:''}
       <button class="mini-btn" onclick="newPurchase('${p.id}')">Edit</button>
       <button class="mini-btn red" onclick="delPurchase('${p.id}')">Del</button></td></tr>`}).join('')}
     </tbody></table></div>`;
@@ -2362,6 +2370,161 @@ function delPurchase(id){
   const rec=DB.purchases.find(p=>p.id===id); const ref=rec?rec.ref:'';
   if(!isOwner()) return confirmBox('Send for approval?',`Deleting purchase <b>${esc(ref)}</b> needs admin approval. Send this delete request to the admin?`,()=>queueApproval('purchase','delete',id,ref,null),'Send');
   confirmBox('Delete purchase?',`Delete <b>${esc(ref)}</b>? Inventory, cost, card balance & payments will recalculate. This cannot be undone.`,()=>{commitPurchaseDelete(id);save();renderPurchases();renderBell();toast('Purchase deleted');},'Delete');
+}
+
+/* =========================================================
+   PURCHASE RETURNS  — send goods back to the supplier.
+   ---------------------------------------------------------
+   The original purchase bill stays intact (it keeps its debit entries). A
+   return posts separate CREDIT adjustments: a card credit for the refund
+   (you choose which card(s) receive it), a proportional cashback reversal on
+   the card(s) that originally earned it, and it removes the returned stock.
+   Partial returns are supported — return one product, or part of a quantity.
+   ========================================================= */
+const round2 = n => Math.round((+n||0)*100)/100;
+function purchaseReturns(pid){ return (DB.returns||[]).filter(r=>r.srcPurchaseId===pid); }
+/* qty of one product already returned from a purchase (across all its returns) */
+function returnedQtyOf(pid, productId){ let q=0; purchaseReturns(pid).forEach(r=>(r.items||[]).forEach(it=>{ if(it.productId===productId)q+=+it.qty||0; })); return q; }
+/* total value already refunded against a purchase */
+function purchaseRefundedTotal(pid){ return purchaseReturns(pid).reduce((a,r)=>a+(+r.refundTotal||0),0); }
+/* cashback the purchase originally earned, per card id */
+function purchaseEarnedCashback(pid){ const m={}; (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.type==='discount'&&t.srcPurchaseId===pid&&(+t.amount>0)) m[c.id]=(m[c.id]||0)+(+t.amount||0); })); return m; }
+/* cashback already reversed against a purchase's returns, per card id */
+function purchaseReversedCashback(pid){ const ids=new Set(purchaseReturns(pid).map(r=>r.id)); const m={};
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.type==='discount'&&t.srcReturnId&&ids.has(t.srcReturnId)) m[c.id]=(m[c.id]||0)+Math.abs(+t.amount||0); })); return m; }
+/* amount charged to each card on a purchase (from its payment splits) */
+function purchaseCardCharges(p){ const m={}; (p.payments||[]).forEach(pm=>{ if(pm.method==='card'&&pm.cardId)m[pm.cardId]=(m[pm.cardId]||0)+(+pm.amount||0); }); return m; }
+/* amount already refunded to each card against a purchase */
+function purchaseCardRefunded(pid){ const m={}; purchaseReturns(pid).forEach(r=>(r.refunds||[]).forEach(f=>{ if(f.method==='card'&&f.cardId)m[f.cardId]=(m[f.cardId]||0)+(+f.amount||0); })); return m; }
+/* is anything on this purchase still returnable? */
+function purchaseReturnable(p){ return purchaseItems(p).some(it=>(+it.qty||0)-returnedQtyOf(p.id,it.productId)>1e-9); }
+/* remove a deleted purchase's returns + their card credit / cashback-reversal entries */
+function unlinkReturnsOfPurchase(pid){ const ids=new Set(purchaseReturns(pid).map(r=>r.id));
+  (DB.cards||[]).forEach(c=>{ if(c.txns)c.txns=c.txns.filter(t=>!(t.srcReturnId&&ids.has(t.srcReturnId))); });
+  DB.returns=(DB.returns||[]).filter(r=>r.srcPurchaseId!==pid); }
+
+let _retDraft=[], _retRefunds=[], _retPurchaseId='', _retOriginRef='', _retOnlineId='', _retAutoRefund=true;
+function openReturnModal(pid, originRef, onlineId){
+  if(!requireOnline())return;
+  if(!isOwner())return toast('Returns are owner-only — they credit cards & reverse cashback.',1);
+  const p=DB.purchases.find(x=>x.id===pid); if(!p)return toast('Purchase not found',1);
+  if(!purchaseReturnable(p))return toast('Everything on this bill has already been returned',1);
+  _retPurchaseId=pid; _retOriginRef=originRef||p.ref; _retOnlineId=onlineId||''; _retAutoRefund=true;
+  const eng=computeEngine();
+  _retDraft=purchaseItems(p).map(it=>{ const already=returnedQtyOf(pid,it.productId);
+    const billRemain=Math.max(0,(+it.qty||0)-already), stock=stockOf(it.productId,eng);
+    return {productId:it.productId, rate:+it.rate||0, billQty:+it.qty||0, already, stock, max:Math.max(0,Math.min(billRemain,stock)), qty:0}; });
+  _retRefunds=[];
+  renderReturnModal(p);
+}
+function renderReturnModal(p){
+  const itemRows=_retDraft.map((l,i)=>{ const pr=productById(l.productId);
+    const cap = l.already>0 ? ` · ${num(l.already)} already returned` : '';
+    const stocklow = l.max<l.billQty-l.already ? ` · only ${num(l.stock)} in stock` : '';
+    return `<tr>
+      <td>${esc(pr?pr.name:'Item')}</td>
+      <td class="num">${num(l.billQty)}</td>
+      <td class="num">${num(l.max)}<div style="color:var(--muted2);font-size:11px">returnable${cap}${stocklow}</div></td>
+      <td class="num">${money(l.rate)}</td>
+      <td><input type="number" min="0" max="${l.max}" step="any" value="" placeholder="0" style="width:90px;text-align:right" ${l.max<=0?'disabled':''} oninput="_retDraft[${i}].qty=+this.value;_retAutoRefund=true;retCalc()"></td>
+    </tr>`; }).join('');
+  openModal('↩ Return items · '+esc(_retOriginRef),`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Returning goods to <b style="color:var(--text)">${esc(p.supplier||'supplier')}</b> from bill <b>${esc(p.ref)}</b>. The original bill is kept — this posts credit adjustments and removes the returned stock.</p>
+    <div class="grid3"><div class="field"><label>Return date</label><input id="ret_date" type="date" value="${todayStr()}"></div><div></div><div></div></div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Products to return *</label>
+    <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Product</th><th class="num">Bill qty</th><th class="num">Returnable</th><th class="num">Cost/unit</th><th class="num">Return qty</th></tr></thead><tbody>${itemRows}</tbody></table></div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:14px;display:block">Refund goes back to — choose the card(s) / cash *</label>
+    <div class="line-items"><div id="ret_refunds"></div></div>
+    <div class="row-actions" style="margin:6px 0 10px">
+      <button class="mini-btn" onclick="retAddRefund('card')">＋ Card refund</button>
+      <button class="mini-btn" onclick="retAddRefund('cash')">＋ Cash refund</button>
+      <button class="mini-btn gold" onclick="_retAutoRefund=true;retCalc()" title="Split the refund back to the cards that paid this bill">⟲ Auto to original card(s)</button>
+    </div>
+    <div class="totbox" id="ret_tot"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-gold" onclick="saveReturn()">↩ Record Return</button>`);
+  retCalc();
+}
+function retUsedCardOpts(sel){ const p=DB.purchases.find(x=>x.id===_retPurchaseId); const used=Object.keys(purchaseCardCharges(p||{}));
+  const list=(DB.cards||[]).filter(c=>used.includes(c.id)); const pool=list.length?list:(DB.cards||[]).filter(c=>c.status!=='inactive');
+  return `<option value="">— pick card —</option>`+pool.map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(cardLabel(c))}</option>`).join(''); }
+function retRenderRefunds(){ const host=$('#ret_refunds'); if(!host)return;
+  if(!_retRefunds.length){ host.innerHTML=`<div style="color:var(--muted2);font-size:12.5px;padding:6px 2px">No refund rows — use “Auto to original card(s)” or add one.</div>`; return; }
+  host.innerHTML=_retRefunds.map((f,i)=>`<div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+    <select style="max-width:120px" onchange="_retRefunds[${i}].method=this.value;_retRefunds[${i}].cardId='';_retAutoRefund=false;retRenderRefunds();retCalc()">
+      <option value="card" ${f.method==='card'?'selected':''}>Card</option>
+      <option value="cash" ${f.method==='cash'?'selected':''}>Cash</option></select>
+    ${f.method==='card'?`<select class="srch" style="flex:1" onchange="_retRefunds[${i}].cardId=this.value;_retAutoRefund=false;retCalc()">${retUsedCardOpts(f.cardId)}</select>`:`<input disabled value="Cash back to wallet" style="flex:1">`}
+    <input type="number" min="0" step="any" value="${f.amount!=null&&f.amount!==''?f.amount:''}" placeholder="Amount" style="width:120px;text-align:right" oninput="_retRefunds[${i}].amount=+this.value;_retAutoRefund=false;retCalc()">
+    <button class="li-x" onclick="_retRefunds.splice(${i},1);_retAutoRefund=false;retRenderRefunds();retCalc()">✕</button>
+  </div>`).join('');
+}
+function retAddRefund(method){ _retAutoRefund=false; _retRefunds.push({method:method||'card',cardId:'',amount:''}); retRenderRefunds(); retCalc(); }
+function retAutoFill(refundTotal,p){ const charges=purchaseCardCharges(p), refunded=purchaseCardRefunded(_retPurchaseId);
+  const cards=Object.keys(charges).map(cid=>({cid,avail:round2(charges[cid]-(refunded[cid]||0))})).filter(x=>x.avail>0.009);
+  const totAvail=cards.reduce((a,c)=>a+c.avail,0); const rows=[]; let left=round2(refundTotal);
+  cards.forEach((c,idx)=>{ let amt= idx===cards.length-1 ? Math.min(c.avail,left) : round2(refundTotal*(c.avail/totAvail)); amt=round2(Math.min(amt,c.avail,left)); if(amt>0){ rows.push({method:'card',cardId:c.cid,amount:amt}); left=round2(left-amt); } });
+  if(left>0.009) rows.push({method:'cash',cardId:'',amount:left});
+  if(!rows.length&&refundTotal>0) rows.push({method:'cash',cardId:'',amount:round2(refundTotal)});
+  return rows;
+}
+function retRefundTotals(p){ const factor=purchaseCostFactor(p);
+  const returnedValue=round2(_retDraft.reduce((a,l)=>a+(+l.qty||0)*l.rate,0)*factor);
+  const paidRemain=round2((p.paid||0)-purchaseRefundedTotal(_retPurchaseId));
+  const refundCap=round2(Math.min(returnedValue,Math.max(0,paidRemain)));
+  const ptot=purchaseTotal(p); const ratio=ptot>0?Math.min(1,returnedValue/ptot):0;
+  return {factor,returnedValue,paidRemain,refundCap,ptot,ratio};
+}
+function retCalc(){ const p=DB.purchases.find(x=>x.id===_retPurchaseId); if(!p)return;
+  const T=retRefundTotals(p);
+  if(_retAutoRefund){ _retRefunds=retAutoFill(T.refundCap,p); retRenderRefunds(); }
+  const refundSum=round2(_retRefunds.reduce((a,f)=>a+(+f.amount||0),0));
+  // cashback reversal preview
+  const earned=purchaseEarnedCashback(_retPurchaseId), already=purchaseReversedCashback(_retPurchaseId);
+  let cbRev=0; Object.keys(earned).forEach(cid=>{ const cap=round2(earned[cid]-(already[cid]||0)); cbRev+=round2(Math.min(round2(earned[cid]*T.ratio),Math.max(0,cap))); });
+  cbRev=round2(cbRev);
+  const over=refundSum-T.refundCap>0.01;
+  const box=$('#ret_tot'); if(!box)return;
+  box.innerHTML=`<div class="totrow"><span>Returned goods value</span><span>${money(T.returnedValue)}</span></div>
+    ${T.paidRemain<T.returnedValue-0.01?`<div class="totrow" style="color:var(--amber)"><span>Refundable (capped to amount paid)</span><span>${money(T.refundCap)}</span></div>`:''}
+    <div class="totrow grand"><span>Refund to allocate</span><span>${money(T.refundCap)}</span></div>
+    <div class="totrow" style="color:${over?'var(--red)':(Math.abs(refundSum-T.refundCap)<0.01?'var(--green)':'var(--muted)')}"><span>Allocated to card(s)/cash</span><span>${money(refundSum)}${over?' · exceeds refund!':''}</span></div>
+    ${cbRev>0?`<div class="totrow" style="color:var(--gold2)"><span>⟳ Cashback to reverse</span><span>− ${money(cbRev)}</span></div>`:''}`;
+}
+function saveReturn(){
+  if(!requireOnline())return;
+  const p=DB.purchases.find(x=>x.id===_retPurchaseId); if(!p)return;
+  const items=_retDraft.filter(l=>+l.qty>1e-9).map(l=>({productId:l.productId,qty:round2(l.qty),rate:l.rate}));
+  if(!items.length)return toast('Enter a return quantity for at least one product',1);
+  for(const l of _retDraft){ if(+l.qty>l.max+1e-9){ const pr=productById(l.productId); return toast(`Can't return ${num(l.qty)} ${pr?pr.name:'item'} — only ${num(l.max)} returnable`,1); } }
+  const T=retRefundTotals(p);
+  const refunds=_retRefunds.filter(f=>+f.amount>0.009).map(f=>({method:f.method==='cash'?'cash':'card',cardId:f.method==='card'?(f.cardId||''):'',amount:round2(+f.amount)}));
+  if(refunds.some(f=>f.method==='card'&&!f.cardId))return toast('Pick a card for each card refund',1);
+  const refundSum=round2(refunds.reduce((a,f)=>a+f.amount,0));
+  if(refundSum-T.refundCap>0.01)return toast(`Refund ${money(refundSum)} exceeds the refundable amount ${money(T.refundCap)} — reduce it.`,1);
+  const date=$('#ret_date')?.value||todayStr();
+  const doIt=()=>{
+    if(!Array.isArray(DB.returns))DB.returns=[]; if(!DB.counters.ret)DB.counters.ret=0;
+    DB.counters.ret++; const rid=uid(), ref='RET-'+String(DB.counters.ret).padStart(4,'0');
+    // cashback reversal — proportional to the returned share, from the card(s) that earned it
+    const earned=purchaseEarnedCashback(_retPurchaseId), already=purchaseReversedCashback(_retPurchaseId), cashbackRev=[];
+    Object.keys(earned).forEach(cid=>{ const cap=round2(earned[cid]-(already[cid]||0)); let rev=round2(Math.min(round2(earned[cid]*T.ratio),Math.max(0,cap)));
+      if(rev>0.009){ const c=cardById(cid); if(c){ if(!c.txns)c.txns=[]; c.txns.push({id:uid(),date,type:'discount',amount:-rev,note:'Cashback reversed · '+ref,srcReturnId:rid}); cashbackRev.push({cardId:cid,amount:rev}); } } });
+    // refund credits
+    refunds.forEach(f=>{ if(f.method==='card'&&f.cardId){ const c=cardById(f.cardId); if(c){ if(!c.txns)c.txns=[]; c.txns.push({id:uid(),date,type:'return',amount:f.amount,note:'Return '+ref+(p.supplier?' · '+p.supplier:''),srcReturnId:rid}); } } });
+    // record (cash refunds flow into the wallet via cashEntries)
+    DB.returns.push({id:rid,ref,date,byId:session.id,srcPurchaseId:_retPurchaseId,srcOnlineId:_retOnlineId||'',supplier:p.supplier||'',items,factor:T.factor,refundTotal:refundSum,refunds,cashbackRev});
+    // if this return clears the whole bill and it came from an online order, mark that order returned
+    if(_retOnlineId){ const o=(DB.online||[]).find(x=>x.id===_retOnlineId);
+      if(o && purchaseItems(p).every(it=>returnedQtyOf(_retPurchaseId,it.productId)>=(+it.qty||0)-1e-9)){ o.status='returned'; o.returnedDate=date; } }
+    logAct('return','purchase',ref,`${num(items.reduce((a,i)=>a+i.qty,0))} unit(s) from ${p.ref} · refund ${money(refundSum)}${cashbackRev.length?' · cashback −'+money(cashbackRev.reduce((a,x)=>a+x.amount,0)):''}`);
+    save(); closeModal();
+    if(typeof renderPurchases==='function')renderPurchases();
+    if(typeof renderOnline==='function')renderOnline(); renderOnlineBadge&&renderOnlineBadge(); renderBell&&renderBell();
+    toast('↩ '+ref+' recorded · refund '+money(refundSum)+(cashbackRev.length?' · cashback reversed':''));
+  };
+  const cbNote = (()=>{ const earned=purchaseEarnedCashback(_retPurchaseId); let s=0; Object.values(earned).forEach(v=>s+=v*T.ratio); s=round2(s); return s>0?`<br>Cashback reversed: <b style="color:var(--gold2)">− ${money(s)}</b>.`:''; })();
+  confirmBox('Record this return?',`Return ${num(items.reduce((a,i)=>a+i.qty,0))} unit(s) from <b>${esc(p.ref)}</b>?<br>Refund credited: <b style="color:var(--green)">${money(refundSum)}</b>${refunds.some(f=>f.method==='card')?' to the chosen card(s)':''}. Stock is removed.${cbNote}`,doIt,'Record Return');
 }
 
 /* =========================================================
@@ -2864,7 +3027,7 @@ async function buildLenderStatementPdf(id,from,to){
     const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
     if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
     const fn='statement_'+(l.name||'lender').replace(/[^\w.-]+/g,'_')+'_'+(from||'all')+'_'+(to||todayStr())+'.pdf';
-    const url=URL.createObjectURL(pdf.output('blob')); const a=document.createElement('a'); a.href=url; a.download=fn; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),5000);
+    await saveExport(pdf.output('blob'), fn);
     toast('Statement ready — '+fn);
   }catch(e){ toast('Could not build the statement PDF',1); }
   finally{ document.body.removeChild(holder); }
@@ -3264,6 +3427,10 @@ function returnOnline(id){
   if(!requireOnline())return;
   const o=(DB.online||[]).find(x=>x.id===id); if(!o||o.status!=='delivered')return;
   const linked=o.purchaseId&&DB.purchases.some(p=>p.id===o.purchaseId);
+  /* delivered orders are real purchases now — use the full partial-return flow (pick products,
+     choose which card to refund, reverse cashback). Falls back to the simple full revert below
+     for legacy orders that never linked to a purchase. */
+  if(linked && isOwner()) return openReturnModal(o.purchaseId, o.ref, o.id);
   const paid=(+o.payAmt>0)?money(+o.payAmt):'the amount paid';
   confirmBox('Return this order?',`Return online order <b>${esc(o.ref)}</b>? The stocked goods are removed from inventory and ${paid} is reverted to its original pay mode — a card charge is removed, cash goes back to the wallet, a gift-card balance is restored, or a vendor-card swipe is reversed.`+(isOwner()?'':' The admin will be notified.'),()=>{
     if(linked) commitPurchaseDelete(o.purchaseId);   // reverses stock + every card/gift/lender/cash charge of the purchase
@@ -3958,8 +4125,22 @@ function enhanceScrollx(){
       sx.classList.toggle('at-end', w.scrollLeft+w.clientWidth>=w.scrollWidth-2);
       sx.classList.toggle('at-start', w.scrollLeft<=2); };
     upd(); if(!w._sxBound){ w._sxBound=1; w.addEventListener('scroll',upd,{passive:true}); } });
+  positionScrollArrows();
+}
+/* Keep the ‹ › arrows inside the viewport: a long table (e.g. Card Preference's
+   160+ rows) is taller than the screen, so a plain top:50% would park the arrows
+   thousands of px below the fold where nobody sees them. Float each arrow at the
+   middle of the table's *currently visible* slice instead, and follow page scroll. */
+function positionScrollArrows(){
+  const vh=window.innerHeight||document.documentElement.clientHeight;
+  $$('.scrollx').forEach(sx=>{ const w=sx.querySelector('.table-wrap'); if(!w)return;
+    const r=w.getBoundingClientRect();
+    const top=Math.max(r.top,8), bot=Math.min(r.bottom,vh-8);
+    const mid=(bot>top? (top+bot)/2 : r.top+r.height/2) - r.top;   // centre of the visible band, relative to the wrap
+    sx.querySelectorAll('.sx-arrow').forEach(b=>{ b.style.top=Math.round(mid)+'px'; }); });
 }
 if(!window._sxResize){ window._sxResize=1; window.addEventListener('resize',()=>{ try{enhanceScrollx();}catch(e){} }); }
+if(!window._sxScroll){ window._sxScroll=1; window.addEventListener('scroll',()=>{ try{positionScrollArrows();}catch(e){} },{passive:true}); }
 /* re-run whenever #main content changes (view switch, search filter, etc.) */
 function initScrollxObserver(){ if(window._sxObs)return;
   let raf=0; const obs=new MutationObserver(()=>{ cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ try{enhanceScrollx();}catch(e){} }); });
@@ -4434,6 +4615,7 @@ function commitSale(id,data){ const rec=DB.sales.find(x=>x.id===id); if(!rec)ret
   logAct('edit','sale',rec.invoiceNo,`total ${money(beforeT)} → ${money(data.total)} · received ${money(data.paid||0)}${rec.customer?' · '+rec.customer:''}`); }
 function commitPurchaseDelete(id){ const rec=DB.purchases.find(p=>p.id===id);
   if(rec)logAct('delete','purchase',rec.ref,`total ${money(purchaseTotal(rec))}, ${purchaseItems(rec).length} item(s)${rec.supplier?' · '+rec.supplier:''}`);
+  unlinkReturnsOfPurchase(id);
   unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id); unlinkPurchaseFromLenders(id); DB.purchases=DB.purchases.filter(p=>p.id!==id); }
 function commitSaleDelete(id){ const rec=DB.sales.find(s=>s.id===id);
   if(rec)logAct('delete','sale',rec.invoiceNo,`total ${money(rec.total)}${rec.customer?' · '+rec.customer:''}`);
@@ -4528,7 +4710,7 @@ function exportActivityExcel(){
 }
 
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
-const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND',oldpay:'OLD PAYMENT',oldbal:'OLD BALANCE'};
+const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND',oldpay:'OLD PAYMENT',oldbal:'OLD BALANCE',return:'RETURN'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
 function txnAmtCell(t){
   /* cashback never moves the balance — it has its own Cashback column, so the Amount
@@ -4538,7 +4720,8 @@ function txnAmtCell(t){
   return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
 /* dedicated Cashback column cell — shows the cashback amount only on CASHBACK rows, blank otherwise.
    Cashback is tracked separately and never changes the balance or limit. */
-function txnCbCell(t){ return `<td class="num" style="color:var(--gold2);font-weight:700;white-space:nowrap">${t.type==='discount'?('⟳ '+money(Math.abs(+t.amount||0))):''}</td>`; }
+function txnCbCell(t){ if(t.type!=='discount')return '<td class="num"></td>'; const neg=(+t.amount||0)<0;
+  return `<td class="num" style="color:${neg?'var(--muted2)':'var(--gold2)'};font-weight:700;white-space:nowrap">⟳ ${neg?'− ':''}${money(Math.abs(+t.amount||0))}</td>`; }
 function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && ![1,2,3,4,5].includes(pct);
   return `<select id="${idSel}" onchange="redeemToggle('${idSel}','${idOther}')">
       <option value="0" ${pct===0?'selected':''}>None</option>
@@ -4795,7 +4978,7 @@ function cardDetail(id){
       <td>${esc(t.note||'')}</td>
       ${txnAmtCell(t)}
       ${txnCbCell(t)}
-      <td class="num" style="white-space:nowrap">${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button></td></tr>`).join('')
+      <td class="num" style="white-space:nowrap">${t.srcReturnId?`<span style="color:var(--muted2);font-size:11px" title="From a purchase return — undo it in Purchases">from return</span>`:`${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button>`}</td></tr>`).join('')
     : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(c.name),`
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
@@ -4879,6 +5062,7 @@ function saveCardTxn(id,type,txnId){
   if(txnId){                                   // EDIT — update in place; statement recalculates
     const t=(c.txns||[]).find(x=>x.id===txnId); if(!t)return toast('Entry not found',1);
     if(t.srcPurchaseId)return toast('This entry comes from a purchase — edit it there',1);
+    if(t.srcReturnId)return toast('This entry comes from a purchase return — undo the return in Purchases',1);
     t.amount=amt; t.date=date; t.note=note;
     if(type==='recharge'||type==='payment'||type==='deposit') t.fromCash=fromCash;
     t.editedBy=session.id; t.editedAt=todayStr();
@@ -4891,6 +5075,7 @@ function saveCardTxn(id,type,txnId){
   cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 function delCardTxn(cid,tid){ if(!requireOnline())return; const c=cardById(cid); if(!c)return;
+  const _t=(c.txns||[]).find(x=>x.id===tid); if(_t&&_t.srcReturnId)return toast('This entry comes from a purchase return — undo the return in Purchases',1);
   confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
     const t=(c.txns||[]).find(x=>x.id===tid); logAct('delete','card entry',c.name,t?`${txnLabel(t.type)} ${money(t.amount)}`:'');
     c.txns=(c.txns||[]).filter(t=>t.id!==tid); save(); cardDetail(cid); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
@@ -5070,8 +5255,7 @@ async function buildCardPrefPdf(){
   finally{ document.body.removeChild(holder); }
 }
 async function pdfCardPref(){ toast('Preparing PDF…',0); const r=await buildCardPrefPdf(); if(!r)return;
-  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
+  await saveExport(r.blob, r.filename); toast('PDF ready — '+r.filename); }
 views.cardpref=function(){
   return `
   <div class="page-head"><div><h2>⭐ Card Preference</h2><p>Which card to use next — ranked by the cashback it earns, with enough balance to cover the spend. Cashback isn't given at the till; it posts in the statement cycle, so it's shown here as <b>pending</b> with its credit date.</p></div>
@@ -5852,8 +6036,7 @@ async function buildProductHistPdf(pid){
   finally{ document.body.removeChild(holder); }
 }
 async function pdfProductHist(pid){ toast('Preparing PDF…',0); const r=await buildProductHistPdf(pid); if(!r)return;
-  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
+  await saveExport(r.blob, r.filename); toast('PDF ready — '+r.filename); }
 /* full detail of one sales bill */
 function saleDetail(id){
   const s=DB.sales.find(x=>x.id===id); if(!s)return; const eng=isOwner()?computeEngine():null;
@@ -5915,9 +6098,16 @@ function purchaseDetail(id){
       <div class="totrow"><span>Paid</span><span>${money(p.paid||0)}</span></div>
       ${bal>0.01?`<div class="totrow" style="color:var(--red);font-weight:700"><span>Balance Due</span><span>${money(bal)}</span></div>`:''}
     </div>
-    <h4 style="margin:16px 0 8px;font-size:13px;color:var(--muted)">💳 Payments</h4>${payTbl}`,
+    <h4 style="margin:16px 0 8px;font-size:13px;color:var(--muted)">💳 Payments</h4>${payTbl}
+    ${(()=>{ const rets=purchaseReturns(p.id); if(!rets.length)return '';
+      const rows=rets.map(r=>{ const units=(r.items||[]).reduce((a,i)=>a+(+i.qty||0),0);
+        const to=(r.refunds||[]).map(f=>f.method==='card'?(cardById(f.cardId)?cardLabel(cardById(f.cardId)):'card'):'cash').join(', ');
+        const cb=(r.cashbackRev||[]).reduce((a,x)=>a+(+x.amount||0),0);
+        return `<tr><td>${esc(r.ref)}</td><td>${fmtDate(r.date)}</td><td class="num">${num(units)}</td><td>${esc(to||'—')}</td><td class="num" style="color:var(--green)">${money(r.refundTotal)}</td><td class="num" style="color:var(--gold2)">${cb>0?'− '+money(cb):'—'}</td></tr>`; }).join('');
+      return `<h4 style="margin:16px 0 8px;font-size:13px;color:var(--amber)">↩ Returns</h4><div class="table-wrap"><table style="min-width:420px"><thead><tr><th>Ref</th><th>Date</th><th class="num">Units</th><th>Refund to</th><th class="num">Refund</th><th class="num">Cashback</th></tr></thead><tbody>${rows}</tbody></table></div>`; })()}`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
      ${bal>0.01&&canView('payments')?`<button class="btn-sm btn-green" onclick="closeModal();recordPay('purchase','${p.id}')">Pay</button>`:''}
+     ${isOwner()&&purchaseReturnable(p)?`<button class="btn-sm" style="color:var(--amber);border-color:#7a5a12" onclick="closeModal();openReturnModal('${p.id}')">↩ Return</button>`:''}
      ${canView('purchases')?`<button class="btn-sm btn-gold" onclick="closeModal();newPurchase('${p.id}')">Edit</button>`:''}`);
 }
 views.inventory=function(){
@@ -5996,6 +6186,8 @@ function cashEntries(){
      Once delivered it becomes a real purchase (counted above); once cancelled the cash reverts by being dropped here. */
   (DB.online||[]).forEach(o=>{ if(o.status==='delivered'||o.status==='cancelled'||o.status==='returned')return; const pm=onlPayObj(o); const net=pmCashNet(pm); if(pm&&pm.method==='cash'&&net>0) e.push({date:pm.date||o.orderDate,dir:'out',amount:net,cat:'purchase',desc:'Online order '+(o.ref||'')+(o.platform?' · '+o.platform:'')+(+pm.deductPct>0?` · ${(+pm.deductPct)}% cash disc.`:''),who:o.byId||''}); });
   (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.fromCash&&(t.type==='recharge'||t.type==='payment'||t.type==='deposit')&&(+t.amount)>0) e.push({date:t.date,dir:'out',amount:+t.amount,cat:'card',desc:(t.type==='recharge'?'Card recharge · ':t.type==='deposit'?'Card deposit · ':'Card payment · ')+c.name,who:t.byId||''}); }));
+  /* purchase-return cash refunds come back into the wallet */
+  (DB.returns||[]).forEach(r=>(r.refunds||[]).forEach(f=>{ if(f.method==='cash'&&+f.amount>0) e.push({date:r.date,dir:'in',amount:+f.amount,cat:'return',desc:'Return '+(r.ref||'')+(r.supplier?' · '+r.supplier:''),who:r.byId||''}); }));
   e.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return e;
 }
@@ -6525,8 +6717,7 @@ async function buildDayPdf(dstr){
   finally{ document.body.removeChild(holder); }
 }
 async function pdfDay(dstr){ toast('Preparing PDF…',0); const r=await buildDayPdf(dstr); if(!r)return;
-  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
+  await saveExport(r.blob, r.filename); toast('PDF ready — '+r.filename); }
 /* =========================================================
    BUY & SELL REPORT  — today's (or any period's) purchases &
    sales with payment-mode breakdown and credit-card details.
@@ -6801,8 +6992,8 @@ async function bsReportPdf(){
     const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
     if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
     const filename='buy_sell_report_'+(from||'all')+'.pdf';
-    const url=URL.createObjectURL(pdf.output('blob')); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+filename);
+    await saveExport(pdf.output('blob'), filename);
+    toast('PDF ready — '+filename);
   }catch(e){ toast('Could not build the PDF',1); }
   finally{ document.body.removeChild(holder); }
 }
@@ -6981,7 +7172,7 @@ async function buildCardStatementPdf(id,from,to){
     const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
     if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
     const fn='card_statement_'+((c.name||'card').replace(/[^\w.-]+/g,'_'))+'_'+(from||'all')+'_'+(to||todayStr())+'.pdf';
-    const url=URL.createObjectURL(pdf.output('blob')); const a=document.createElement('a'); a.href=url; a.download=fn; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),5000);
+    await saveExport(pdf.output('blob'), fn);
     toast('Statement ready — '+fn);
   }catch(e){ toast('Could not build the statement PDF',1); }
   finally{ document.body.removeChild(holder); }
@@ -7174,8 +7365,7 @@ async function buildCardUsagePdf(){
   finally{ document.body.removeChild(holder); }
 }
 async function pdfCardUsage(){ toast('Preparing PDF…',0); const r=await buildCardUsagePdf(); if(!r)return;
-  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
+  await saveExport(r.blob, r.filename); toast('PDF ready — '+r.filename); }
 
 /* =========================================================
    CREDIT-CARD REPORTS (owner):
@@ -7238,8 +7428,7 @@ async function reportPdfFromHtml(html, areaId, filename){
 async function downloadReportPdf(html, areaId, filename){
   toast('Preparing PDF…',0);
   const r=await reportPdfFromHtml(html, areaId, filename); if(!r)return;
-  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename);
+  await saveExport(r.blob, r.filename); toast('PDF ready — '+r.filename);
 }
 function creditReportStats(rows){
   const tL=rows.reduce((s,r)=>s+(+r.c.creditLimit||0),0), tA=rows.reduce((s,r)=>s+r.avail,0), tO=rows.reduce((s,r)=>s+r.used,0);
@@ -7976,22 +8165,51 @@ function delUser(id){
   if(DB.users.filter(u=>u.role==='owner').length<=1 && DB.users.find(u=>u.id===id).role==='owner')return toast('Cannot delete the only owner',1);
   confirmBox('Delete user?','This login will be removed.',()=>{const u=DB.users.find(x=>x.id===id);logAct('delete','user',u?u.name:'',u?('role '+u.role):'');DB.users=DB.users.filter(u=>u.id!==id);save();renderUsers();toast('User deleted');});
 }
-function exportData(){
+async function exportData(){
   const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='little-angel-backup-'+todayStr()+'.json';a.click();
+  await saveExport(blob, 'little-angel-backup-'+todayStr()+'.json');
   toast('Backup exported');
 }
 /* =========================================================
    EXCEL (.xlsx) EXPORTS  — SheetJS
    ========================================================= */
 function num2(n){ return Math.round((+n||0)*100)/100; }   // plain number cell for Excel
-function exportExcel(filename, sheets){
+/* ---------------------------------------------------------------------------
+   saveExport — one robust "save this file" used by EVERY Excel/PDF export.
+   Desktop browsers get a normal download. Phones — especially in-app browsers
+   (WhatsApp / Instagram / Facebook webviews) where a blob <a download> click is
+   silently ignored, which is why "it says exporting but nothing is saved" — get
+   the native share sheet instead (Save to Files / WhatsApp / email), with an
+   open-in-new-tab safety net, so the file actually lands every time.
+--------------------------------------------------------------------------- */
+function isMobileLike(){ const ua=navigator.userAgent||'';
+  return /Android|iPhone|iPad|iPod|Mobile|Silk|Kindle|Opera Mini/i.test(ua) || (/Macintosh/.test(ua)&&navigator.maxTouchPoints>1); }
+async function saveExport(blob, filename){
+  const type=blob.type||'application/octet-stream';
+  // Phones / in-app webviews: the share sheet is the only path that reliably saves
+  if(isMobileLike() && navigator.canShare){
+    try{
+      const file=new File([blob], filename, {type});
+      if(navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:filename}); return true; }
+    }catch(e){ if(e && e.name==='AbortError') return true;   // user closed the sheet
+      /* any other error → fall through to the download path below */ }
+  }
+  // Desktop (and mobile browsers that honour downloads): normal download
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+  // last-resort for webviews that ignore the download attribute: open the blob so it can still be saved
+  if(isMobileLike()){ try{ const w=window.open(url,'_blank'); if(!w) location.href=url; }catch(e){} }
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  return true;
+}
+async function exportExcel(filename, sheets){
   if(!window.XLSX){ toast('Excel engine not loaded — connect to the internet once to cache it',1); return; }
   const wb=XLSX.utils.book_new();
   (sheets||[]).forEach(sh=>{ if(!sh||!sh.rows||!sh.rows.length)return; const ws=XLSX.utils.aoa_to_sheet(sh.rows); XLSX.utils.book_append_sheet(wb, ws, (sh.name||'Sheet').replace(/[\\/?*\[\]:]/g,' ').slice(0,31)); });
   if(!wb.SheetNames.length){ toast('Nothing to export',1); return; }
-  XLSX.writeFile(wb, filename);
-  toast('Excel downloaded · '+filename);
+  const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});   // build bytes, then route through saveExport (not XLSX.writeFile, which can't reach the share sheet)
+  await saveExport(new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), filename);
+  toast('Excel saved · '+filename);
 }
 function exportSalesExcel(){
   const eng=isOwner()?computeEngine():null;
