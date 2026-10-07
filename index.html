@@ -5264,7 +5264,8 @@ function purchaseGiftModal(preId){
   if(!requireOnline())return;
   const prods=activeGiftProducts();
   if(!prods.length){ toast('Add a gift card first',1); return newGiftProductModal(); }
-  giftBuySplits=[{method:'cash',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}];
+  // default payment row = Credit Card (most gift-card buys are charged to a card to earn cashback)
+  giftBuySplits=[{method:'card',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}];
   openModal('Buy / Recharge Gift Card',`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Load balance onto a gift card. The <b>amount</b> is the balance you receive; pay for it below — a cash discount means you pay less than the balance (that's your margin).</p>
     <div class="grid2">
@@ -5291,12 +5292,11 @@ function renderGiftBuySplits(){
     const opts=PAY_METHODS.map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
     let mid, hint='';
     if(s.method==='card'||info.savedCard){
+      // same searchable card picker as a purchase — shows owner · ••last4 · name (card number ref)
       mid = cards.length
-        ? `<select class="srch" onchange="giftBuySplits[${i}].cardId=this.value;giftBuyCalc()"><option value="">— select card${s.method==='card'?' *':''} —</option>${cards.map(c=>`<option value="${c.id}" ${s.cardId===c.id?'selected':''}>${esc(c.name)}${c.owner?' · '+esc(cardOwnerLabel(c)):''} · avail ${money(cardAvailable(c))}</option>`).join('')}</select>`
+        ? `<div class="cardpick-wrap">${cardPickerHtml('gb_'+i, cards, s.cardId, s.method==='card'?(c=>'avail '+money(cardAvailable(c))):null, s.method==='card'?'Owner name or last 4 digits…':info.refLabel, (id)=>{ giftBuySplits[i].cardId=id; giftBuyRefreshHint(i); giftBuyCalc(); })}</div>`
         : `<div style="color:var(--amber);font-size:11.5px;align-self:center">No cards — add one in Credit Cards</div>`;
-      if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId), av=c?cardAvailable(c):0, over=(+s.amount||0)-av;
-        const _gp=c?cardCashbackCfg(c).pct:0;
-        hint=`<div class="li-hint">Available <b style="color:var(--text)">${money(av)}</b>${_gp?` · earns ${_gp}% cashback`:''}${over>1e-6&&!(c&&cardAllowsNeg(c))?` · <span style="color:var(--red)">🚫 exceeds by ${money(over)}</span>`:''}</div>`; }
+      if(s.method==='card')hint=`<div class="li-hint" id="gbh_${i}">${giftBuyCardHint(s)}</div>`;
     } else if(info.savedGift){
       const gifts=activeGiftCards();
       mid = gifts.length
@@ -5321,12 +5321,17 @@ function renderGiftBuySplits(){
     return `<div class="split-row">
       <select onchange="giftBuySplits[${i}].method=this.value;giftBuySplits[${i}].cardId='';giftBuySplits[${i}].giftId='';giftBuySplits[${i}].ref='';giftBuySplits[${i}].deductPct='';giftBuySplits[${i}].lenderId='';giftBuySplits[${i}].lenderCardId='';giftBuySplits[${i}].commission='';renderGiftBuySplits()">${opts}</select>
       ${mid}
-      <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="giftBuySplits[${i}].amount=this.value;giftBuyCalc()">
+      <input type="number" min="0" step="any" value="${s.amount}" placeholder="Amount" oninput="giftBuySplits[${i}].amount=this.value;giftBuyRefreshHint(${i});giftBuyCalc()">
       <button class="li-x" onclick="giftBuySplits.splice(${i},1);renderGiftBuySplits()">✕</button>
     </div>${hint}`;
   }).join('');
   giftBuyCalc();
 }
+/* inline "Available / cashback / over-limit" hint under a Credit Card payment row */
+function giftBuyCardHint(s){ if(!(s&&s.method==='card'&&s.cardId))return '';
+  const c=cardById(s.cardId), av=c?cardAvailable(c):0, over=(+s.amount||0)-av, _gp=c?cardCashbackCfg(c).pct:0;
+  return `Available <b style="color:var(--text)">${money(av)}</b>${_gp?` · earns ${_gp}% cashback`:''}${over>1e-6&&!(c&&cardAllowsNeg(c))?` · <span style="color:var(--red)">🚫 exceeds by ${money(over)}</span>`:''}`; }
+function giftBuyRefreshHint(i){ const el=$('#gbh_'+i); if(el)el.innerHTML=giftBuyCardHint(giftBuySplits[i]); }
 function giftBorrowLender(i,val){ giftBuySplits[i].lenderId=val; giftBuySplits[i].lenderCardId=''; giftBuySplits[i].commission=''; renderGiftBuySplits(); }
 function giftBorrowCard(i,val){ giftBuySplits[i].lenderCardId=val; const l=lenderById(giftBuySplits[i].lenderId), c=lenderCardById(l,val); giftBuySplits[i].commission=c?(c.commission||0):''; renderGiftBuySplits(); }
 function addGiftBuySplit(){ giftBuySplits.push({method:'cash',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}); renderGiftBuySplits(); flashNewRow('#gb_splits .split-row'); }
