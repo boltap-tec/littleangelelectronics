@@ -1008,11 +1008,11 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',rcard:'Recent Credit Card',cusage:'Card Usage & Cashback',cprefrep:'Card Preference',invmove:'Inventory Movement',invtoday:"Today's Inventory",returnsrep:'Returns Report',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Report screens an admin can grant to a worker (otherwise owner-only). Stored in a
    worker's perms just like any other screen; granted workers see the report but any
    owner-only profit columns inside it stay hidden. */
-const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cprefrep','invmove','invtoday'];
+const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cprefrep','invmove','invtoday','returnsrep'];
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -1043,7 +1043,8 @@ const NAV_GROUPS=[
     {v:'cusage',     ic:'📈', lab:'Card Usage & Cashback'},
     {v:'cprefrep',   ic:'⭐', lab:'Card Preference'},
     {v:'invmove',    ic:'📦', lab:'Inventory Movement'},
-    {v:'invtoday',   ic:'📋', lab:"Today's Inventory"} ]},
+    {v:'invtoday',   ic:'📋', lab:"Today's Inventory"},
+    {v:'returnsrep', ic:'↩', lab:'Returns Report'} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'activity',  ic:'🧾', lab:'Activity Log', owner:true},
@@ -2163,7 +2164,7 @@ function renderBuyRows(){
   const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, bp=it.productId?avgBuyPrice(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
     return `<div class="li-row">
-      <select class="rq srch" onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId,eng)}</select>
+      <select class="rq srch" onchange="buySetProduct(${i},this.value)">${buyProdOpts(it.productId,eng)}</select>
       <input class="rq" type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="buyItems[${i}].qty=+this.value;buyCalcTotal()">
       <input class="rq" type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
       <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
@@ -2172,6 +2173,10 @@ function renderBuyRows(){
   buyCalcTotal();
 }
 function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); flashNewRow('#b_rows .li-row'); }
+/* pick a product → prefill its cost with the last purchase cost per qty (editable), but never clobber a cost already typed */
+function buySetProduct(i,pid){ const it=buyItems[i]; if(!it)return; it.productId=pid;
+  if(pid && (it.rate===''||it.rate==null)){ const lr=lastKnownRate(pid); if(lr) it.rate=lr; }
+  renderBuyRows(); }
 /* tick several products at once → one purchase row each (existing rows untouched) */
 function buyPickMulti(){
   if(!DB.products.length)return toast('Add a product first — use “New product”.',1);
@@ -2181,7 +2186,7 @@ function buyPickMulti(){
     disabled:have.has(p.id)}));
   openMultiPick({title:'Pick multiple products',items,onAdd:vals=>{
     if(buyItems.length===1 && !buyItems[0].productId) buyItems.splice(0,1);
-    vals.forEach(pid=>{ if(!buyItems.some(it=>it.productId===pid)) buyItems.push({productId:pid,qty:1,rate:''}); });
+    vals.forEach(pid=>{ if(!buyItems.some(it=>it.productId===pid)){ const lr=lastKnownRate(pid); buyItems.push({productId:pid,qty:1,rate:lr||''}); } });
     if(!buyItems.length) buyItems.push({productId:'',qty:1,rate:''});
     renderBuyRows(); flashNewRow('#b_rows .li-row'); }});
 }
@@ -7901,6 +7906,123 @@ function invTodayReportHtml(){
     note:'Last Bought Cost = unit price on the most recent purchase · Stock Value = stock × last bought cost.'});
 }
 function pdfInvToday(){ downloadReportPdf(invTodayReportHtml(),'invTodayPdfArea','today_inventory_'+todayStr()+'.pdf'); }
+
+/* ============ Report · Returns ============
+   Every purchase return in a date range, newest first — source bill, refund
+   target card(s)/cash and the cashback reversed. Returned stock leaves inventory
+   on the return date (see inventoryMovement()). */
+function returnsRepRows(){
+  const from=$('#rrFrom')?.value||'', to=$('#rrTo')?.value||'';
+  const q=($('#rrSearch')?.value||'').trim().toLowerCase();
+  const inWin=d=>(!from||d>=from)&&(!to||d<=to);
+  const prodText=r=>(r.items||[]).map(it=>{ const p=productById(it.productId); return p?p.name+' '+(p.category||''):''; }).join(' ');
+  let list=(DB.returns||[]).filter(r=>inWin(r.date||'')).map(r=>{
+    const sp=DB.purchases.find(x=>x.id===r.srcPurchaseId);
+    const onl=r.srcOnlineId?(DB.online||[]).find(x=>x.id===r.srcOnlineId):null;
+    const factor=+r.factor||1;
+    const units=(r.items||[]).reduce((a,it)=>a+(+it.qty||0),0);
+    const goods=round2((r.items||[]).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0)*factor);
+    const refundTo=(r.refunds||[]).map(f=>f.method==='card'?(cardById(f.cardId)?cardLabel(cardById(f.cardId)):'Card'):'Cash').join(', ');
+    const cashback=round2((r.cashbackRev||[]).reduce((a,x)=>a+(+x.amount||0),0));
+    return {r, ref:r.ref||'', date:r.date||'', supplier:r.supplier||'', bill:sp?sp.ref:(onl?onl.ref||'':''), units, goods, refund:+r.refundTotal||0, refundTo, cashback};
+  });
+  if(q) list=list.filter(x=>[x.ref,x.supplier,x.bill,prodText(x.r)].some(v=>(v||'').toLowerCase().includes(q)));
+  list.sort((a,b)=>a.date<b.date?1:(a.date>b.date?-1:0));
+  return {list,from,to};
+}
+/* per-product return lines within the range (+ ref/supplier/product search) */
+function returnsRepItemRows(){
+  const from=$('#rrFrom')?.value||'', to=$('#rrTo')?.value||'';
+  const q=($('#rrSearch')?.value||'').trim().toLowerCase();
+  const inWin=d=>(!from||d>=from)&&(!to||d<=to);
+  const prodMatch=pid=>{ const pr=productById(pid); return pr&&[pr.name,pr.category].some(v=>(v||'').toLowerCase().includes(q)); };
+  const items=[];
+  (DB.returns||[]).forEach(r=>{ if(!inWin(r.date||''))return;
+    const refMatch=!q||[r.ref,r.supplier].some(v=>(v||'').toLowerCase().includes(q));
+    (r.items||[]).forEach(it=>{ if(q&&!refMatch&&!prodMatch(it.productId))return;
+      const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0;
+      items.push({date:r.date||'',ref:r.ref||'',supplier:r.supplier||'',name:pr?pr.name:'—',qty,rate,amt:qty*rate}); }); });
+  items.sort((a,b)=>a.date<b.date?1:(a.date>b.date?-1:0));
+  return items;
+}
+views.returnsrep=function(){
+  if(!canView('returnsrep'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>The Returns report is restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>↩ Returns Report</h2><p>Every purchase return in a date range — source bill, refund target &amp; cashback reversed. Returned stock is sent back to suppliers on the return date.</p></div>
+    <div class="row-actions">
+      <input id="rrFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderReturnsRep()" title="From date">
+      <input id="rrTo" type="date" class="mini-btn" style="padding:9px" oninput="renderReturnsRep()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearReturnsRange()">Clear</button>
+      <button class="btn-sm btn-green" onclick="exportReturnsExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfReturns()">📄 PDF</button>
+    </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="rrSearch" placeholder="Search ref, supplier or product..." oninput="renderReturnsRep()"></div></div>
+  <div id="rrStats" class="cards"></div>
+  <div id="rrBody"></div>`;
+};
+views._after_returnsrep=()=>{ if(!canView('returnsrep'))return; const f=$('#rrFrom'),t=$('#rrTo');
+  if(t&&!t.value)t.value=todayStr();
+  if(f&&!f.value){ const d=new Date(); d.setDate(1); f.value=isoDate(d); }   // default: this month to date
+  renderReturnsRep(); };
+function clearReturnsRange(){ if($('#rrFrom'))$('#rrFrom').value=''; if($('#rrTo'))$('#rrTo').value=''; renderReturnsRep(); }
+function renderReturnsRep(){
+  if(!canView('returnsrep'))return;
+  const {list,from,to}=returnsRepRows();
+  const tU=list.reduce((s,r)=>s+r.units,0), tG=list.reduce((s,r)=>s+r.goods,0), tR=list.reduce((s,r)=>s+r.refund,0), tC=list.reduce((s,r)=>s+r.cashback,0);
+  const cs=$('#rrStats'); if(cs)cs.innerHTML=`
+    <div class="stat blue"><span class="ic">↩</span><div class="label">Returns</div><div class="val">${num(list.length)}</div><div class="foot">${invMoveRangeLabel(from,to)}</div></div>
+    <div class="stat red"><span class="ic">📦</span><div class="label">Units Returned</div><div class="val">${num(tU)}</div><div class="foot">to suppliers</div></div>
+    <div class="stat green"><span class="ic">💵</span><div class="label">Refunded</div><div class="val">${money(tR)}</div></div>
+    <div class="stat gold"><span class="ic">⟳</span><div class="label">Cashback Reversed</div><div class="val">${money(tC)}</div></div>`;
+  const body=$('#rrBody'); if(!body)return;
+  if(!(DB.returns||[]).length){ body.innerHTML=`<div class="panel">${emptyBox('↩','No returns','No purchase returns yet. Record one in Purchases → open a bill → ↩ Return.')}</div>`; return; }
+  if(!list.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No returns','No returns for this range/filter. Widen the dates or clear the search.')}</div>`; return; }
+  const tr=list.map(r=>`<tr>
+      <td><b>${esc(r.ref)}</b></td>
+      <td>${fmtDate(r.date)}</td>
+      <td>${esc(r.supplier||'—')}</td>
+      <td>${esc(r.bill||'—')}</td>
+      <td class="num">${num(r.units)}</td>
+      <td class="num">${money(r.goods)}</td>
+      <td class="num" style="color:var(--green)">${money(r.refund)}</td>
+      <td>${esc(r.refundTo||'—')}</td>
+      <td class="num" style="color:var(--gold2)">${r.cashback>0.005?'− '+money(r.cashback):'—'}</td>
+    </tr>`).join('');
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${list.length} return${list.length===1?'':'s'}</td><td class="num">${num(tU)}</td><td class="num">${money(tG)}</td><td class="num" style="color:var(--green)">${money(tR)}</td><td></td><td class="num" style="color:var(--gold2)">${tC>0.005?'− '+money(tC):'—'}</td></tr>`;
+  const items=returnsRepItemRows();
+  const iQ=items.reduce((s,i)=>s+i.qty,0), iA=items.reduce((s,i)=>s+i.amt,0);
+  const itemsTbl=items.length?`<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">📦 Returned Items — ${num(iQ)} pcs · ${money(iA)}</h4>
+    <div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Date</th><th>Return Ref</th><th>Product</th><th>Supplier</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Amount</th></tr></thead>
+    <tbody>${items.map(i=>`<tr><td>${fmtDate(i.date)}</td><td>${esc(i.ref)}</td><td><b>${esc(i.name)}</b></td><td>${esc(i.supplier||'—')}</td><td class="num">${num(i.qty)}</td><td class="num">${money(i.rate)}</td><td class="num">${money(i.amt)}</td></tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${items.length} line${items.length===1?'':'s'}</td><td class="num">${num(iQ)}</td><td class="num">—</td><td class="num">${money(iA)}</td></tr></tbody></table></div></div>`:'';
+  body.innerHTML=`<div class="panel">
+    <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
+    <div class="table-wrap"><table style="min-width:820px"><thead><tr><th>Ref</th><th>Date</th><th>Supplier</th><th>Bill</th><th class="num">Units</th><th class="num">Goods Value</th><th class="num">Refund</th><th>Refund To</th><th class="num">Cashback</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Goods Value = returned qty × cost (incl. bill cost factor) · Refund = credited back to the card(s)/cash shown · Cashback = cashback reversed on the return. Returned stock leaves inventory on the return date.</div></div>
+    ${itemsTbl}`;
+}
+function exportReturnsExcel(){
+  const {list,from,to}=returnsRepRows(); if(!list.length)return toast('No returns to export',1);
+  const out=[['Returns Report'],['Range',invMoveRangeLabel(from,to)],[],['Ref','Date','Supplier','Bill','Units','Goods Value','Refund','Refund To','Cashback Reversed']];
+  list.forEach(r=>out.push([r.ref,r.date,r.supplier||'',r.bill||'',num2(r.units),num2(r.goods),num2(r.refund),r.refundTo||'',num2(r.cashback)]));
+  out.push(['Total','','','',num2(list.reduce((s,r)=>s+r.units,0)),num2(list.reduce((s,r)=>s+r.goods,0)),num2(list.reduce((s,r)=>s+r.refund,0)),'',num2(list.reduce((s,r)=>s+r.cashback,0))]);
+  const items=returnsRepItemRows();
+  const itemOut=[['Returned Items'],['Range',invMoveRangeLabel(from,to)],[],['Date','Return Ref','Product','Supplier','Qty','Cost/unit','Amount']];
+  items.forEach(i=>itemOut.push([i.date,i.ref,i.name,i.supplier||'',num2(i.qty),num2(i.rate),num2(i.amt)]));
+  itemOut.push(['Total','','','',num2(items.reduce((s,i)=>s+i.qty,0)),'',num2(items.reduce((s,i)=>s+i.amt,0))]);
+  exportExcel('returns_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Returns',rows:out},{name:'Returned Items',rows:itemOut}]);
+}
+function returnsReportHtml(){
+  const {list,from,to}=returnsRepRows(); if(!list.length)return '';
+  const head=['Ref','Date','Supplier','Bill','Units','Goods Value','Refund','Refund To','Cashback'];
+  const body=list.map(r=>[r.ref,fmtDate(r.date),r.supplier||'—',r.bill||'—',num(r.units),money(r.goods),money(r.refund),r.refundTo||'—',r.cashback>0.005?'− '+money(r.cashback):'—']);
+  const tU=list.reduce((s,r)=>s+r.units,0), tG=list.reduce((s,r)=>s+r.goods,0), tR=list.reduce((s,r)=>s+r.refund,0), tC=list.reduce((s,r)=>s+r.cashback,0);
+  const foot=['Total · '+list.length+' return'+(list.length===1?'':'s'),'','','',num(tU),money(tG),money(tR),'',tC>0.005?'− '+money(tC):'—'];
+  return reportAreaHtml({areaId:'returnsPdfArea',width:1040,icon:'↩',title:'Returns Report',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+list.length+' return(s)',
+    head, numCols:[4,5,6,8], rows:body, foot,
+    note:'Goods Value = returned qty × cost (incl. bill cost factor) · Refund = credited back to the card(s)/cash shown · Cashback = cashback reversed. Returned stock leaves inventory on the return date.'});
+}
+function pdfReturns(){ const {from,to}=returnsRepRows(); downloadReportPdf(returnsReportHtml(),'returnsPdfArea','returns_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
 
 /* =========================================================
    SETTINGS
