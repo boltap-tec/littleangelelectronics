@@ -4105,11 +4105,13 @@ function cardById(id){ return (DB.cards||[]).find(c=>c.id===id); }
 function maskCard(n){ n=(n||'').replace(/\s+/g,''); if(!n)return '•••• •••• •••• ••••'; return '•••• •••• •••• '+n.slice(-4).padStart(4,'•'); }
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function ym(d){ return (d||'').slice(0,7); }
-/* outstanding = opening + purchases − (payments+recharges+discounts) */
+/* outstanding = opening + purchases − (payments+recharges) */
 function cardOutstanding(c){ let o=+c.openingOutstanding||0;
   /* 'oldpay' is a record-only historical payment — shown in history but never moves the balance/limit.
+     'discount' (cashback) is tracked separately (see cardCashbackUsed/Total) and NEVER moves the
+        balance or limit — it does not free up credit nor reduce the statement.
      'oldbal' is last month's carried-over balance — it adds to what you owe (like a charge) until paid. */
-  (c.txns||[]).forEach(t=>{ if(t.type==='oldpay')return; o += ((t.type==='purchase'||t.type==='oldbal') ? (+t.amount||0) : -(+t.amount||0)); }); return o; }
+  (c.txns||[]).forEach(t=>{ if(t.type==='oldpay'||t.type==='discount')return; o += ((t.type==='purchase'||t.type==='oldbal') ? (+t.amount||0) : -(+t.amount||0)); }); return o; }
 function cardAvailable(c){ return (+c.creditLimit||0) - cardOutstanding(c); }
 function cardDiscountInMonth(c,m){ return (c.txns||[]).filter(t=>t.type==='discount' && ym(t.date)===m).reduce((s,t)=>s+(+t.amount||0),0); }
 /* ---- Cashback rules (central, owner-editable in Settings → Credit & Cashback) ----
@@ -4271,9 +4273,10 @@ function urgentCardBanner(){
   if(!canView('cards')) return '';
   const u=urgentCards(); if(!u.length) return '';
   const rows=u.map(x=>{
+    const di=cardDueInfo(x.c), unb = !x.neg && !di.hasBilled && di.unbilled>0.005;
     const why = x.neg
       ? `<span class="badge-neg">OVER LIMIT · ${money(Math.abs(x.av))}</span>`
-      : `<span class="badge-due">DUE ${x.dleft<=0?'TODAY':'TOMORROW'} · ${money(x.out)}</span>`;
+      : `<span class="badge-due">DUE ${x.dleft<=0?'TODAY':'TOMORROW'} · ${unb?'unbilled statement ':''}${money(x.out)}</span>`;
     return `<div class="ucard-row">
       <div class="ur-main"><b>${esc(cardLabel(x.c))}</b> &nbsp;${why}</div>
       ${x.neg?`<button class="btn-sm btn-gold" onclick="quickCardTxn('payment','${x.c.id}')">Pay now</button>`
@@ -4527,8 +4530,15 @@ function exportActivityExcel(){
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
 const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND',oldpay:'OLD PAYMENT',oldbal:'OLD BALANCE'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
-function txnAmtCell(t){ const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend'&&t.type!=='oldbal');
+function txnAmtCell(t){
+  /* cashback never moves the balance — it has its own Cashback column, so the Amount
+     column shows a dash for cashback rows (see txnCbCell). */
+  if(t.type==='discount') return `<td class="num" style="color:var(--muted2)">—</td>`;
+  const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend'&&t.type!=='oldbal');
   return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
+/* dedicated Cashback column cell — shows the cashback amount only on CASHBACK rows, blank otherwise.
+   Cashback is tracked separately and never changes the balance or limit. */
+function txnCbCell(t){ return `<td class="num" style="color:var(--gold2);font-weight:700;white-space:nowrap">${t.type==='discount'?('⟳ '+money(Math.abs(+t.amount||0))):''}</td>`; }
 function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && ![1,2,3,4,5].includes(pct);
   return `<select id="${idSel}" onchange="redeemToggle('${idSel}','${idOther}')">
       <option value="0" ${pct===0?'selected':''}>None</option>
@@ -4759,8 +4769,8 @@ function ownerStatement(owner){
       <td>${fmtDate(t.date)}</td><td>${esc(t.card)}</td>
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       <td>${esc(t.note||'')}</td>
-      ${txnAmtCell(t)}</tr>`).join('')
-    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:18px">No transactions yet</td></tr>`;
+      ${txnAmtCell(t)}${txnCbCell(t)}</tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:18px">No transactions yet</td></tr>`;
   openModal('Statement · 👤 '+esc(owner),`
     <div class="grid3" style="margin-bottom:14px">
       <div class="stat red"><div class="label">You Owe (${cards.length} card${cards.length===1?'':'s'})</div><div class="val">${money(tO)}</div></div>
@@ -4769,7 +4779,7 @@ function ownerStatement(owner){
     </div>
     <div class="row-actions" style="margin-bottom:14px">${cards.map(c=>`<button class="mini-btn" onclick="cardDetail('${c.id}')">${esc(cardShort(c))} · owe ${money(cardOutstanding(c))}</button>`).join('')}</div>
     <div style="font-weight:700;font-size:13px;margin-bottom:8px">Combined ledger</div>
-    <div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Date</th><th>Card</th><th>Type</th><th>Note</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    <div class="table-wrap"><table style="min-width:620px"><thead><tr><th>Date</th><th>Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Cashback</th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm" onclick="closeModal()">Close</button>`);
 }
 
@@ -4784,8 +4794,9 @@ function cardDetail(id){
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       <td>${esc(t.note||'')}</td>
       ${txnAmtCell(t)}
+      ${txnCbCell(t)}
       <td class="num" style="white-space:nowrap">${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button></td></tr>`).join('')
-    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
+    : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(c.name),`
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
     <div class="grid3" style="margin-bottom:16px">
@@ -4810,7 +4821,7 @@ function cardDetail(id){
         <button class="btn-sm btn-gold" onclick="cardDetailPdf('${c.id}')">📄 PDF</button>
       </div>
     </div>
-    <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    <div class="table-wrap"><table style="min-width:520px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Cashback</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm btn-red" onclick="delCard('${c.id}')">Delete Card</button>
      <button class="btn-sm btn-ghost" onclick="editCard('${c.id}')">Edit</button>
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
@@ -4829,13 +4840,13 @@ function cardTxnModal(id,type,txnId){
   const c=cardById(id); if(!c)return;
   const edit = txnId ? (c.txns||[]).find(t=>t.id===txnId) : null;
   const out=cardOutstanding(c), avail=cardAvailable(c);
-  const sign = (type==='purchase'||type==='oldbal') ? -1 : (type==='oldpay') ? 0 : 1;   // how the amount moves AVAILABLE (oldpay = record only, no movement; oldbal = carried-over balance owed)
+  const sign = (type==='purchase'||type==='oldbal') ? -1 : (type==='oldpay'||type==='discount') ? 0 : 1;   // how the amount moves AVAILABLE (oldpay & discount/cashback = record only, no movement; oldbal = carried-over balance owed)
   const base = edit ? (avail - sign*(+edit.amount||0)) : avail;   // available without this entry
   const preAmt = edit ? (+edit.amount||0) : 0;
   _ctBase=base; _ctSign=sign; _ctNeg=!!c.allowNegative;
   const word={recharge:'recharge',payment:'payment',deposit:'deposit',discount:'cashback',purchase:'charge',oldpay:'record',oldbal:'old balance'}[type]||'entry';
   const titles={payment:'Record Card Payment',deposit:'Card Deposit',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge',oldpay:'Record Old Payment',oldbal:'Add Old Credit Balance'};
-  const hints={payment:'Amount you paid the bank — frees up your available limit.',deposit:'Cash deposited into the card to pay down what you owe — frees up the available limit. Taken from your cash box.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap).',purchase:'A spend not linked to a purchase entry.',oldpay:'A past payment you already made — logged in this card\'s history for your records only. It does NOT change the outstanding balance or available limit, and is not deducted from your cash box.',oldbal:'Last month\'s carried-over balance that is still owed on this card. It adds to the outstanding so you can pay it now with ＋ Payment — the two entries balance each other out.'};
+  const hints={payment:'Amount you paid the bank — frees up your available limit.',deposit:'Cash deposited into the card to pay down what you owe — frees up the available limit. Taken from your cash box.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap). Tracked separately — it does NOT change the outstanding balance or available limit.',purchase:'A spend not linked to a purchase entry.',oldpay:'A past payment you already made — logged in this card\'s history for your records only. It does NOT change the outstanding balance or available limit, and is not deducted from your cash box.',oldbal:'Last month\'s carried-over balance that is still owed on this card. It adds to the outstanding so you can pay it now with ＋ Payment — the two entries balance each other out.'};
   const dueDate=cardDueDate(c);
   openModal((edit?'Edit ':'')+(titles[type]||'Card entry'),`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
@@ -6374,8 +6385,8 @@ function dayCard(g,idx,eng,owner){
     <tbody>${g.cash.map(e=>`<tr><td><span class="tag ${CASH_TAG[e.cat]||'bank'}">${(e.cat||'').toUpperCase()}</span></td><td>${esc(e.desc||'')}</td><td>${esc(userName(e.who))}</td>
       <td class="num" style="color:var(--green)">${e.dir==='in'?money(e.amount):''}</td><td class="num" style="color:var(--red)">${e.dir==='out'?money(e.amount):''}</td></tr>`).join('')}</tbody></table></div></div>`;
   if(g.cards.length) sec+=`<div class="rep-sec"><div class="rsh">💳 Card usage <span class="cc">${g.cards.length}</span></div>
-    <div class="table-wrap"><table style="min-width:480px"><thead><tr><th>Card</th><th>Type</th><th>Note</th><th class="num">Amount</th></tr></thead>
-    <tbody>${g.cards.map(t=>`<tr><td>${esc(t.card)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}</tr>`).join('')}</tbody></table></div></div>`;
+    <div class="table-wrap"><table style="min-width:540px"><thead><tr><th>Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Cashback</th></tr></thead>
+    <tbody>${g.cards.map(t=>`<tr><td>${esc(t.card)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}${txnCbCell(t)}</tr>`).join('')}</tbody></table></div></div>`;
   return `<div class="rep-day ${idx===0?'open':''}">
     <div class="rep-dayhead" onclick="this.closest('.rep-day').classList.toggle('open')">
       ${dayCalChip(g.date)}
@@ -6796,7 +6807,7 @@ function cardStatementPanel(c,inR,q){
   const due=cardDueDate(c), dl=daysUntil(due);
   const asc=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   let bal=+c.openingOutstanding||0; const rr=[];
-  asc.forEach(t=>{ if(t.type!=='oldpay') bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
+  asc.forEach(t=>{ if(t.type!=='oldpay'&&t.type!=='discount') bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)) rr.push({...t,bal}); });
   let spend=0,pay=0,redeem=0,pcount=0,maxp=0; rr.forEach(t=>{ if(t.type==='purchase'){spend+=+t.amount||0;pcount++;maxp=Math.max(maxp,+t.amount||0);} else if(t.type==='payment'||t.type==='recharge')pay+=+t.amount||0; else if(t.type==='discount')redeem+=+t.amount||0; });
   const avg=pcount?spend/pcount:0;
   /* text search over the running ledger — matches note, type label, amount or date */
@@ -6804,8 +6815,8 @@ function cardStatementPanel(c,inR,q){
   const filtered=rr.filter(match);
   if(q&&!filtered.length)return '';   // hide cards with no matching rows while searching
   const disp=[...filtered].reverse();
-  const ledger= disp.length? disp.map(t=>`<tr><td>${fmtDate(t.date)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}<td class="num" style="font-weight:700">${money(t.bal)}</td></tr>`).join('')
-    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:18px">No transactions in this period</td></tr>`;
+  const ledger= disp.length? disp.map(t=>`<tr><td>${fmtDate(t.date)}</td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td>${esc(t.note||'')}</td>${txnAmtCell(t)}${txnCbCell(t)}<td class="num" style="font-weight:700">${money(t.bal)}</td></tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:18px">No transactions in this period</td></tr>`;
   const k=(kk,vv,cls)=>`<div class="kk"><div class="k">${kk}</div><div class="v"${cls?` style="color:${cls}"`:''}>${vv}</div></div>`;
   return `<div class="panel">
     <div class="rep-cardhead">
@@ -6823,7 +6834,7 @@ function cardStatementPanel(c,inR,q){
     </div>
     <div class="bar" style="margin:2px 2px 12px"><i style="width:${usedPct}%"></i></div>
     <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 2px 8px">📄 Statement <span class="cc" style="background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--text)">${disp.length} txn${disp.length===1?'':'s'}${q&&disp.length!==rr.length?` of ${rr.length}`:''}</span><span style="margin-left:auto;color:var(--muted2);font-weight:700;text-transform:none;letter-spacing:0">${pcount} buy · avg ${money(avg)} · max ${money(maxp)}</span></div>
-    <div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Outstanding</th></tr></thead><tbody>${ledger}</tbody></table></div>
+    <div class="table-wrap"><table style="min-width:620px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Cashback</th><th class="num">Outstanding</th></tr></thead><tbody>${ledger}</tbody></table></div>
   </div>`;
 }
 views.cardreport=function(){
@@ -6866,20 +6877,21 @@ function renderCardReport(){
 function exportCardReportExcel(){
   const from=$('#crFrom')?.value, to=$('#crTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
   const sel=$('#crCard')?.value||''; const all=DB.cards||[]; const cards= sel? all.filter(c=>c.id===sel): all;
-  const rows=[['Card','Date','Type','Note','Amount','Outstanding After']];
+  const rows=[['Card','Date','Type','Note','Amount','Cashback','Outstanding After']];
   cards.forEach(c=>{ const asc=[...(c.txns||[])].sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0)); let bal=+c.openingOutstanding||0;
-    asc.forEach(t=>{ if(t.type!=='oldpay') bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'',num2(signed),num2(bal)]); } }); });
+    asc.forEach(t=>{ const isCb=t.type==='discount'; if(t.type!=='oldpay'&&!isCb) bal += (t.type==='purchase'||t.type==='oldbal')?(+t.amount||0):-(+t.amount||0); if(inR(t.date)){ const signed=((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); rows.push([c.name,t.date,txnLabel(t.type),t.note||'', isCb?'':num2(signed), isCb?num2(+t.amount||0):'', num2(bal)]); } }); });
   if(rows.length===1){ toast('No card transactions in this period',1); return; }
   exportExcel('card_statement_'+todayStr()+'.xlsx',[{name:'Card Statement',rows}]);
 }
 
 /* ---- single-card statement (payment history) → data, Excel & PDF ----
    Used by the card detail popup and by the Card Statement report's PDF button.
-   Running balance mirrors cardOutstanding: purchase/oldbal add, oldpay is
-   record-only (ignored), everything else is a credit that reduces what's owed. */
+   Running balance mirrors cardOutstanding: purchase/oldbal add, oldpay and
+   discount/cashback are record-only (ignored — cashback shows in its own column
+   and never moves the balance), everything else is a credit that reduces what's owed. */
 function cardStatementData(c,from,to){
   const all=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
-  const signOf=t=> t.type==='oldpay'?0:((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0);
+  const signOf=t=> (t.type==='oldpay'||t.type==='discount')?0:((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); // cashback is record-only, never moves the balance
   let opening=+c.openingOutstanding||0; const rows=[];
   all.forEach(t=>{ const d=signOf(t);
     if(from && (t.date||'')<from){ opening+=d; return; }
@@ -6893,15 +6905,15 @@ function exportCardExcel(id,from,to){
   const c=cardById(id); if(!c)return; const d=cardStatementData(c,from,to);
   const period=(from||to)?`${from?fmtDate(from):'start'} to ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
   const rows=[[(cardLabel(c)||c.name||'')+' — Card Statement'],['Period',period],[],
-    ['Date','Type','Note','Charge +','Payment −','Outstanding']];
-  rows.push(['','Opening balance','','','',num2(d.opening)]);
-  d.rows.forEach(r=>{ rows.push([r.date,txnLabel(r.type),r.note||'', r.signed>0?num2(r.signed):'', r.signed<0?num2(-r.signed):'', num2(r.run)]); });
+    ['Date','Type','Note','Charge +','Payment −','Cashback','Outstanding']];
+  rows.push(['','Opening balance','','','','',num2(d.opening)]);
+  d.rows.forEach(r=>{ rows.push([r.date,txnLabel(r.type),r.note||'', r.signed>0?num2(r.signed):'', r.signed<0?num2(-r.signed):'', r.type==='discount'?num2(+r.amount||0):'', num2(r.run)]); });
   rows.push([]);
-  rows.push(['','','','Spend (period)','',num2(d.spend)]);
-  rows.push(['','','','Payments (period)','',num2(d.pay)]);
-  rows.push(['','','','Cashback (period)','',num2(d.redeem)]);
-  rows.push(['','','','CLOSING OUTSTANDING','',num2(d.closing)]);
-  if(d.limit>0) rows.push(['','','','Available','',num2(d.limit-d.closing)]);
+  rows.push(['','','','Spend (period)','','',num2(d.spend)]);
+  rows.push(['','','','Payments (period)','','',num2(d.pay)]);
+  rows.push(['','','','Cashback (period, separate)','','',num2(d.redeem)]);
+  rows.push(['','','','CLOSING OUTSTANDING','','',num2(d.closing)]);
+  if(d.limit>0) rows.push(['','','','Available','','',num2(d.limit-d.closing)]);
   exportExcel('card_statement_'+((c.name||'card').replace(/[^\w.-]+/g,'_'))+'_'+(from||'all')+'_'+(to||todayStr())+'.xlsx',[{name:(c.name||'Card').replace(/[\\/?*\[\]:]/g,' ').slice(0,28),rows}]);
 }
 function cardStatementHtml(c,from,to){
@@ -6913,6 +6925,7 @@ function cardStatementHtml(c,from,to){
       <td style="${cell}">${esc(txnLabel(r.type))}${r.note?' · '+esc(r.note):''}</td>
       <td style="${cell};${rt}">${r.signed>0?money(r.signed):''}</td>
       <td style="${cell};${rt}">${r.signed<0?money(-r.signed):''}</td>
+      <td style="${cell};${rt};color:#a9791b">${r.type==='discount'?money(+r.amount||0):''}</td>
       <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`).join('');
   const l4=(c.number||'').replace(/\D/g,'').slice(-4);
   return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
@@ -6931,17 +6944,17 @@ function cardStatementHtml(c,from,to){
     <table style="width:100%;border-collapse:collapse;font-size:12.5px">
       <thead><tr style="background:#f4eeE0;color:#5a4a1e">
         <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description</th>
-        <th style="${cell};${rt}">Charge +</th><th style="${cell};${rt}">Payment −</th><th style="${cell};${rt}">Outstanding</th></tr></thead>
+        <th style="${cell};${rt}">Charge +</th><th style="${cell};${rt}">Payment −</th><th style="${cell};${rt}">Cashback</th><th style="${cell};${rt}">Outstanding</th></tr></thead>
       <tbody>
-        <tr style="background:#faf7f0"><td style="${cell}" colspan="4"><b>Opening balance</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
-        ${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="5">No entries in this period</td></tr>`}
+        <tr style="background:#faf7f0"><td style="${cell}" colspan="5"><b>Opening balance</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
+        ${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="6">No entries in this period</td></tr>`}
       </tbody>
     </table>
     <div style="display:flex;justify-content:flex-end;margin-top:14px">
       <table style="border-collapse:collapse;font-size:13px;min-width:330px">
         <tr><td style="padding:5px 10px;color:#555">Spend (period)</td><td style="padding:5px 10px;text-align:right">${money(d.spend)}</td></tr>
         <tr><td style="padding:5px 10px;color:#555">Payments (period)</td><td style="padding:5px 10px;text-align:right">${money(d.pay)}</td></tr>
-        <tr><td style="padding:5px 10px;color:#2e7d32">Cashback (period)</td><td style="padding:5px 10px;text-align:right;color:#2e7d32">${money(d.redeem)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#a9791b">Cashback (period · separate, not in balance)</td><td style="padding:5px 10px;text-align:right;color:#a9791b">${money(d.redeem)}</td></tr>
         <tr style="border-top:2px solid #a9791b"><td style="padding:8px 10px;font-weight:800;font-size:15px">Closing outstanding</td><td style="padding:8px 10px;text-align:right;font-weight:800;font-size:15px">${money(d.closing)}</td></tr>
         ${d.limit>0?`<tr><td style="padding:5px 10px;color:#555">Available (of ${money(d.limit)})</td><td style="padding:5px 10px;text-align:right">${money(d.limit-d.closing)}</td></tr>`:''}
       </table>
@@ -7027,7 +7040,7 @@ function cardDueSplit(c){
   };
   bucket((c.openingDate||'0000-01-01').slice(0,10), +c.openingOutstanding||0);
   (c.txns||[]).forEach(t=>{
-    if(t.type==='oldpay'||!t.date) return;
+    if(t.type==='oldpay'||t.type==='discount'||!t.date) return; // cashback never offsets the statement
     if(t.type==='purchase'||t.type==='oldbal') bucket(t.date, +t.amount||0);
     else pay += (+t.amount||0);
   });
