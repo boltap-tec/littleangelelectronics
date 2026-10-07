@@ -8176,29 +8176,35 @@ async function exportData(){
 function num2(n){ return Math.round((+n||0)*100)/100; }   // plain number cell for Excel
 /* ---------------------------------------------------------------------------
    saveExport — one robust "save this file" used by EVERY Excel/PDF export.
-   Desktop browsers get a normal download. Phones — especially in-app browsers
-   (WhatsApp / Instagram / Facebook webviews) where a blob <a download> click is
-   silently ignored, which is why "it says exporting but nothing is saved" — get
-   the native share sheet instead (Save to Files / WhatsApp / email), with an
-   open-in-new-tab safety net, so the file actually lands every time.
+   A plain blob <a download> click is silently dropped (nothing happens at all)
+   in a surprising number of real contexts: Android WebView / APK wrappers,
+   in-app browsers (WhatsApp/Instagram), and ANY page loaded inside an <iframe>
+   or embedded shell without allow-downloads. That's the "it says ready but no
+   file appears" bug. So we don't rely on the download attribute alone:
+     1) native share sheet (Save to Files / WhatsApp / email) when the context
+        can't be trusted to download — phones AND embedded/framed pages;
+     2) a normal download for an ordinary top-level browser tab;
+     3) a top-level new-tab/open fallback so the file is never lost.
 --------------------------------------------------------------------------- */
 function isMobileLike(){ const ua=navigator.userAgent||'';
-  return /Android|iPhone|iPad|iPod|Mobile|Silk|Kindle|Opera Mini/i.test(ua) || (/Macintosh/.test(ua)&&navigator.maxTouchPoints>1); }
+  return /Android|iPhone|iPad|iPod|Mobile|Silk|Kindle|Opera Mini|; wv\)/i.test(ua) || (/Macintosh/.test(ua)&&navigator.maxTouchPoints>1); }
+function isFramed(){ try{ return window.self!==window.top; }catch(e){ return true; } }   // cross-origin frame throws ⇒ treat as framed
 async function saveExport(blob, filename){
   const type=blob.type||'application/octet-stream';
-  // Phones / in-app webviews: the share sheet is the only path that reliably saves
-  if(isMobileLike() && navigator.canShare){
+  const untrusted = isMobileLike() || isFramed();   // contexts where a <a download> click often does nothing
+  // 1) Native share — the one path that reliably escapes phones, webviews & embedded frames
+  if(untrusted && typeof File!=='undefined' && navigator.canShare){
     try{
       const file=new File([blob], filename, {type});
       if(navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:filename}); return true; }
     }catch(e){ if(e && e.name==='AbortError') return true;   // user closed the sheet
-      /* any other error → fall through to the download path below */ }
+      /* any other error → fall through to the download / open paths below */ }
   }
-  // Desktop (and mobile browsers that honour downloads): normal download
   const url=URL.createObjectURL(blob);
+  // 2) Ordinary download (a real top-level browser tab honours this)
   const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
-  // last-resort for webviews that ignore the download attribute: open the blob so it can still be saved
-  if(isMobileLike()){ try{ const w=window.open(url,'_blank'); if(!w) location.href=url; }catch(e){} }
+  // 3) Embedded/webview contexts that ignore the download attribute: open the file so it's never lost
+  if(untrusted){ try{ const w=window.open(url,'_blank','noopener'); if(!w){ try{ (window.top||window).location.href=url; }catch(_){ location.href=url; } } }catch(e){} }
   setTimeout(()=>URL.revokeObjectURL(url), 60000);
   return true;
 }
