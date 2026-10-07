@@ -4,11 +4,29 @@ The app is now an **installable PWA** (Progressive Web App). That means you can 
 `index.html` into a real Android **APK** — with the gold app icon, a splash screen, its
 own name, and full offline use — **without Android Studio, Java, or any coding**.
 
-There are two ways to put it on a phone. Pick one.
+There are a few ways to get it onto a phone. Pick one.
 
 ---
 
-## Option A — Just install it (fastest, no APK file)
+## Option A — Download a ready-made APK (built automatically in the cloud)
+
+No tools, no accounts, no PWABuilder. A GitHub Actions workflow
+([`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml)) wraps the app
+into an installable, offline APK on GitHub's servers and attaches it to the run.
+
+1. On GitHub, open the repo → **Actions** tab → **Build Android APK**.
+2. Click **Run workflow** (choose the branch) → wait a few minutes for the green ✓.
+   (It also runs automatically when you push changes to `index.html`, the icon, or the manifest.)
+3. Open the finished run → scroll to **Artifacts** → download **`little-angel-apk`**
+   (a `.zip` containing **`little-angel-electronics.apk`**).
+4. Copy the `.apk` to the phone, tap it, allow **“Install unknown apps”** → done.
+
+> This APK is **debug-signed** — perfect for installing on staff phones. For the
+> **Google Play Store** you need an upload-signed build; use Option C (PWABuilder) for that.
+
+---
+
+## Option B — Just install it (fastest, no APK file)
 
 Best for day-to-day use. Takes 15 seconds, looks and behaves like an installed app.
 
@@ -25,7 +43,7 @@ Best for day-to-day use. Takes 15 seconds, looks and behaves like an installed a
 
 ---
 
-## Option B — Build a real `.apk` / `.aab` file (for sharing or Play Store)
+## Option C — Build a signed `.apk` / `.aab` with PWABuilder (for the Play Store)
 
 Use this when you want an actual installer file to send to staff, or to publish on Google Play.
 We use **PWABuilder** (free, made by Microsoft) — it reads the manifest and icons that are
