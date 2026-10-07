@@ -39,8 +39,13 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # The ubuntu-24.04 runner ships with the Android SDK preinstalled; just
+      # make sure the licenses are accepted so Gradle can fetch what it needs.
+      - name: Accept Android SDK licenses
+        run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMGR=$(ls "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1)
+          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
 
       - name: Scaffold Capacitor project & copy the web app
         run: |
