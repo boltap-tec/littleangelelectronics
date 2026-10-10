@@ -2071,7 +2071,8 @@ function mergeProductConfirm(id){
 views.purchases=function(){
   return `
   <div class="page-head"><div><h2>Purchases</h2><p>Stock bought from Carrefour & other suppliers — rate can differ each date. Track cash/card & credit.</p></div>
-    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
+    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="openBillSummary('purchase')" title="Date-wise summary with per-product consolidation — download as PDF">📊 Date Summary</button>
+    <button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
     <button class="btn-sm btn-ghost" onclick="purchaseGiftModal()">🎁 New Gift Card Purchase</button>
     <button class="btn-sm" onclick="newPurchase()">📦 New Product Purchase</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search supplier / product..." oninput="renderPurchases()"></div></div>
@@ -3742,7 +3743,8 @@ let saleDraft=[];
 views.sales=function(){
   return `
   <div class="page-head"><div><h2>Sales &amp; Billing</h2><p>Create a sales bill. VAT, layout & logo are controlled in Settings.</p></div>
-    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="exportSalesExcel()">⬇ Excel</button>
+    <div class="row-actions"><button class="btn-sm btn-ghost" onclick="openBillSummary('sale')" title="Date-wise summary with per-product sales consolidation — download as PDF">📊 Date Summary</button>
+    <button class="btn-sm btn-ghost" onclick="exportSalesExcel()">⬇ Excel</button>
     <button class="btn-sm btn-gold" onclick="newSale()">＋ New Sale Bill</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="saleSearch" placeholder="Search invoice / customer..." oninput="renderSales()"></div></div>
   <div id="saleList"></div>`;
@@ -7141,6 +7143,180 @@ async function bsReportPdf(){
     toast('PDF ready — '+filename);
   }catch(e){ toast('Could not build the PDF',1); }
   finally{ document.body.removeChild(holder); }
+}
+/* =========================================================
+   DATE-WISE BILL SUMMARY  (Purchases & Sales & Billing)
+   Consolidates qty + value per product, grouped by date,
+   shown as a document preview and saved as a one-tap PDF.
+   ========================================================= */
+let _summKind='purchase', _summFrom='', _summTo='';
+function summMeta(kind){ return kind==='purchase'
+  ? {noun:'Purchase', title:'PURCHASE SUMMARY', icon:'📦', billWord:'purchase', qtyLabel:'Qty bought', valLabel:'Cost value', totalLabel:'Total purchases', dayVerb:'bought', fileTag:'purchase'}
+  : {noun:'Sales', title:'SALES SUMMARY', icon:'🧾', billWord:'bill', qtyLabel:'Qty sold', valLabel:'Sales value', totalLabel:'Total sales', dayVerb:'sold', fileTag:'sales'}; }
+/* build the consolidated data: per-product totals + per-date → per-product rollup */
+function billSummaryData(kind, from, to){
+  const inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const recs=(kind==='purchase'?(DB.purchases||[]):(DB.sales||[])).filter(r=>inR(r.date));
+  const itemsOf=kind==='purchase'?(r=>purchaseItems(r)):(r=>r.items||[]);
+  const byDate={}, byProd={}; let totQty=0, totAmount=0;
+  recs.forEach(r=>{ const d=r.date||'';
+    if(!byDate[d])byDate[d]={date:d,prods:{},qty:0,amount:0,count:0};
+    byDate[d].count++;
+    itemsOf(r).forEach(it=>{ const q=+it.qty||0, amt=q*(+it.rate||0), pid=it.productId||'__x';
+      const pr=productById(it.productId), name=pr?pr.name:'(removed product)';
+      const dp=byDate[d].prods; if(!dp[pid])dp[pid]={pid,name,qty:0,amount:0}; dp[pid].qty+=q; dp[pid].amount+=amt;
+      byDate[d].qty+=q; byDate[d].amount+=amt;
+      if(!byProd[pid])byProd[pid]={pid,name,qty:0,amount:0,bills:new Set()};
+      byProd[pid].qty+=q; byProd[pid].amount+=amt; byProd[pid].bills.add(r.id);
+      totQty+=q; totAmount+=amt; });
+  });
+  const dates=Object.values(byDate).sort((a,b)=>a.date<b.date?1:-1)
+    .map(g=>({...g,prods:Object.values(g.prods).sort((a,b)=>b.amount-a.amount)}));
+  const prods=Object.values(byProd).map(p=>({pid:p.pid,name:p.name,qty:p.qty,amount:p.amount,bills:p.bills.size}))
+    .sort((a,b)=>b.amount-a.amount);
+  return {kind,recs,dates,prods,totQty,totAmount,totBills:recs.length,prodCount:prods.length,from,to};
+}
+/* the attractive light-themed document — reused for the on-screen preview AND the PDF */
+function billSummaryHtml(kind, from, to){
+  const d=billSummaryData(kind,from,to); if(!d.recs.length)return null;
+  const m=summMeta(kind), st=S();
+  const M=n=>st.currency+' '+(Number(n)||0).toLocaleString('en-AE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const N=n=>(Number(n)||0).toLocaleString('en-AE',{maximumFractionDigits:2});
+  const logo=st.showLogo?(st.logoUrl?`<img src="${esc(st.logoUrl)}" style="height:50px;object-fit:contain">`:logoMark(50)):'';
+  const grand=d.totAmount||1;
+  const prodRows=d.prods.map((p,i)=>`<tr>
+      <td class="idx">${i+1}</td>
+      <td><b>${esc(p.name)}</b></td>
+      <td class="r qc">${N(p.qty)}</td>
+      <td class="r">${p.bills}</td>
+      <td class="r"><b>${M(p.amount)}</b></td>
+      <td class="shr"><div class="shrw"><span style="width:${(p.amount/grand*100).toFixed(1)}%"></span></div><em>${(p.amount/grand*100).toFixed(1)}%</em></td></tr>`).join('');
+  const prodTotal=`<tr class="tot"><td></td><td>TOTAL · ${d.prodCount} product${d.prodCount===1?'':'s'}</td><td class="r">${N(d.totQty)}</td><td class="r">${d.totBills}</td><td class="r">${M(d.totAmount)}</td><td></td></tr>`;
+  const dateBlocks=d.dates.map(g=>`
+    <div class="dayhd"><span class="dd">📅 ${esc(fmtDayLong(g.date))}</span>
+      <span class="dm">${g.count} ${g.count===1?m.billWord:m.billWord+'s'} · ${N(g.qty)} ${m.dayVerb} · <b>${M(g.amount)}</b></span></div>
+    <table class="ds-t day"><thead><tr><th>Product</th><th class="r">Qty</th><th class="r">${m.valLabel}</th></tr></thead>
+    <tbody>${g.prods.map(p=>`<tr><td>${esc(p.name)}</td><td class="r">${N(p.qty)}</td><td class="r">${M(p.amount)}</td></tr>`).join('')}</tbody></table>`).join('');
+  const noteHtml = kind==='sale'
+    ? `<div class="note">Values are line amounts (qty × rate), before bill-level discount &amp; VAT.</div>` : '';
+  return `<div id="summArea" style="max-width:820px;width:100%;margin:0 auto;padding:28px;font-family:Segoe UI,Arial,sans-serif;color:#111;background:#fff;box-sizing:border-box">
+    <style>
+      #summArea *{box-sizing:border-box}
+      #summArea .top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;border-bottom:3px solid #c9962f;padding-bottom:14px}
+      #summArea .co{font-size:16px;font-weight:800;line-height:1.25;max-width:380px}
+      #summArea .ad{color:#777;font-size:11px;margin-top:3px;max-width:380px}
+      #summArea .trn{color:#111;font-size:11.5px;margin-top:2px}
+      #summArea .rt{text-align:right;flex:0 0 auto}
+      #summArea .rt .t{font-size:18px;font-weight:800;color:#c9962f;letter-spacing:.5px}
+      #summArea .rt .p{font-size:12.5px;color:#333;margin-top:3px}
+      #summArea .kpi{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 6px}
+      #summArea .kpi>div{flex:1 1 120px;border:1px solid #e9e4d6;border-radius:10px;padding:9px 12px;background:linear-gradient(180deg,#fbf7ee,#fff)}
+      #summArea .kpi .k{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#9a8450;font-weight:800}
+      #summArea .kpi .v{font-size:15px;font-weight:800;color:#111;margin-top:3px}
+      #summArea .kpi.big>div{background:linear-gradient(180deg,#c9962f,#a87d22);border-color:#a87d22}
+      #summArea .kpi.big .k{color:#fff3d6}#summArea .kpi.big .v{color:#fff;font-size:17px}
+      #summArea .ds-h{font-size:13px;font-weight:800;color:#222;margin:20px 0 6px;border-left:4px solid #c9962f;padding-left:9px}
+      #summArea .ds-t{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0 8px}
+      #summArea .ds-t th{background:#f3f4f8;text-align:left;padding:7px 9px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#555;border-bottom:2px solid #e5e7eb}
+      #summArea .ds-t td{padding:7px 9px;border-bottom:1px solid #eee;vertical-align:middle}
+      #summArea .ds-t td.r,#summArea .ds-t th.r{text-align:right}
+      #summArea .ds-t td.idx{color:#aaa;width:22px}
+      #summArea .ds-t td.qc{font-weight:700}
+      #summArea .ds-t tr.tot td{background:#faf6ec;border-top:2px solid #c9962f;border-bottom:none;font-weight:800;color:#111}
+      #summArea .shr{width:150px}
+      #summArea .shr .shrw{display:inline-block;width:92px;height:7px;background:#eee;border-radius:4px;overflow:hidden;vertical-align:middle}
+      #summArea .shr .shrw span{display:block;height:100%;background:#c9962f}
+      #summArea .shr em{font-style:normal;color:#777;font-size:10.5px;margin-left:6px}
+      #summArea .dayhd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin:14px 0 2px;padding:7px 10px;background:#faf7f0;border:1px solid #efe7d6;border-radius:8px}
+      #summArea .dayhd .dd{font-weight:800;font-size:12.5px;color:#111}
+      #summArea .dayhd .dm{color:#555;font-size:11.5px}
+      #summArea .ds-t.day th{background:#fafafa}
+      #summArea .note{color:#999;font-size:10px;margin:2px 2px 0;font-style:italic}
+      #summArea .ft{margin-top:22px;color:#999;font-size:10px;text-align:center;border-top:1px solid #eee;padding-top:10px}
+    </style>
+    <div class="top">
+      <div style="display:flex;gap:12px;align-items:flex-start">${logo}<div>
+        <div class="co">${esc(st.company)}</div>
+        <div class="ad">${esc(st.address)}</div>
+        ${st.showTrn&&st.trn?`<div class="trn"><b>TRN:</b> ${esc(st.trn)}</div>`:''}</div></div>
+      <div class="rt"><div class="t">${m.title}</div><div class="p">📅 ${esc(bsPeriodLabel(from,to))}</div></div>
+    </div>
+    <div class="kpi">
+      <div><div class="k">${m.billWord==='bill'?'Bills':'Purchases'}</div><div class="v">${d.totBills}</div></div>
+      <div><div class="k">Products</div><div class="v">${d.prodCount}</div></div>
+      <div><div class="k">${m.qtyLabel}</div><div class="v">${N(d.totQty)}</div></div>
+    </div>
+    <div class="kpi big"><div><div class="k">${m.totalLabel}</div><div class="v">${M(d.totAmount)}</div></div></div>
+    <div class="ds-h">${m.icon} Product consolidation — quantity &amp; value</div>
+    <table class="ds-t"><thead><tr><th class="idx">#</th><th>Product</th><th class="r">${m.qtyLabel}</th><th class="r">${m.billWord==='bill'?'Bills':'Buys'}</th><th class="r">${m.valLabel}</th><th>Share</th></tr></thead>
+      <tbody>${prodRows}${prodTotal}</tbody></table>
+    ${noteHtml}
+    <div class="ds-h">🗓️ Date-wise breakdown</div>
+    ${dateBlocks}
+    <div class="ft">Generated ${fmtDate(todayStr())} · ${esc(st.company)}</div>
+  </div>`;
+}
+function openBillSummary(kind){
+  _summKind=kind;
+  if(!_summFrom&&!_summTo){ const t=todayStr(); _summFrom=t.slice(0,8)+'01'; _summTo=t; }  // default: this month
+  const m=summMeta(kind);
+  openModal(`${m.icon} ${m.noun} Summary — date-wise`,`
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn-sm btn-ghost" onclick="summPreset('today')">Today</button>
+        <button class="btn-sm btn-ghost" onclick="summPreset('7d')">Last 7 days</button>
+        <button class="btn-sm btn-ghost" onclick="summPreset('month')">This month</button>
+        <button class="btn-sm btn-ghost" onclick="summPreset('all')">All time</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap;color:var(--muted);font-size:12.5px">
+        <label style="display:flex;align-items:center;gap:5px">From <input id="summFrom" type="date" class="mini-btn" style="padding:7px" value="${_summFrom}" oninput="summSetRange()"></label>
+        <label style="display:flex;align-items:center;gap:5px">To <input id="summTo" type="date" class="mini-btn" style="padding:7px" value="${_summTo}" oninput="summSetRange()"></label>
+      </div>
+    </div>
+    <div id="summPreviewWrap" style="background:#e9edf3;border:1px solid var(--line2);border-radius:14px;padding:14px;overflow:auto;max-height:62vh"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     <button class="btn-sm btn-green" onclick="billSummaryExcel()">⬇ Excel</button>
+     <button class="btn-sm btn-gold" onclick="billSummaryPdf()">📄 Download PDF</button>`);
+  renderBillSummary();
+}
+function summPreset(w){ const t=todayStr(), base=new Date();
+  if(w==='today'){ _summFrom=t; _summTo=t; }
+  else if(w==='7d'){ const s=new Date(base); s.setDate(base.getDate()-6); _summFrom=isoDate(s); _summTo=t; }
+  else if(w==='month'){ _summFrom=t.slice(0,8)+'01'; _summTo=t; }
+  else if(w==='all'){ _summFrom=''; _summTo=''; }
+  const f=$('#summFrom'), tt=$('#summTo'); if(f)f.value=_summFrom; if(tt)tt.value=_summTo; renderBillSummary();
+}
+function summSetRange(){ _summFrom=$('#summFrom')?.value||''; _summTo=$('#summTo')?.value||''; renderBillSummary(); }
+function renderBillSummary(){ const host=$('#summPreviewWrap'); if(!host)return;
+  const html=billSummaryHtml(_summKind,_summFrom,_summTo);
+  host.innerHTML = html || `<div style="background:#fff;border-radius:10px">${emptyBox(summMeta(_summKind).icon,'Nothing in this period','Pick a wider date range — or a different day — to see a summary.')}</div>`;
+}
+async function billSummaryPdf(){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  const html=billSummaryHtml(_summKind,_summFrom,_summTo); if(!html){ toast('Nothing to export in this period',1); return; }
+  const m=summMeta(_summKind); toast('Preparing PDF…',0);
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:820px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#summArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    const filename=m.fileTag+'_summary_'+(_summFrom||'all')+(_summTo&&_summTo!==_summFrom?'_'+_summTo:'')+'.pdf';
+    await saveExport(pdf.output('blob'), filename);
+    toast('PDF ready — '+filename);
+  }catch(e){ toast('Could not build the PDF',1); }
+  finally{ document.body.removeChild(holder); }
+}
+function billSummaryExcel(){
+  const d=billSummaryData(_summKind,_summFrom,_summTo); if(!d.recs.length){ toast('Nothing to export in this period',1); return; }
+  const m=summMeta(_summKind);
+  const prodRows=[[m.noun+' summary — '+bsPeriodLabel(_summFrom,_summTo)],[],['Product',m.qtyLabel,'Bills',m.valLabel]];
+  d.prods.forEach(p=>prodRows.push([p.name,num2(p.qty),p.bills,num2(p.amount)]));
+  prodRows.push(['TOTAL ('+d.prodCount+' products)',num2(d.totQty),d.totBills,num2(d.totAmount)]);
+  const dateRows=[['Date',m.billWord+'s','Product',m.qtyLabel,m.valLabel]];
+  d.dates.forEach(g=>g.prods.forEach((p,i)=>dateRows.push([i===0?fmtDate(g.date):'',i===0?g.count:'',p.name,num2(p.qty),num2(p.amount)])));
+  exportExcel(m.fileTag+'_summary_'+(_summFrom||'all')+'.xlsx',[{name:'By product',rows:prodRows},{name:'By date',rows:dateRows}]);
 }
 /* ---- Card Statement report ---- */
 function cardStatementPanel(c,inR,q){
