@@ -5378,7 +5378,7 @@ views.giftcards=function(){
   <div id="giftWrap"></div>`;
 };
 views._after_giftcards=renderGiftCards;
-let _giftShowHist=false;
+let _giftShowHist=true;   // overall gift-card history shown by default
 function toggleGiftHist(){ _giftShowHist=!_giftShowHist; renderGiftCards(); }
 /* every gift-card transaction across all cards, newest first */
 function giftAllTxns(){ const out=[]; (DB.giftcards||[]).forEach(g=>{ (g.txns||[]).forEach(t=>out.push({...t,giftId:g.id,giftName:g.name})); });
