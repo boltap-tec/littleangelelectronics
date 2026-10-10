@@ -1385,6 +1385,8 @@ function migrate(){
     if(l.feePct===undefined){ const fc=(l.cards||[]).find(c=>c.feePct!=null&&c.feePct!==''); l.feePct=fc?(+fc.feePct||0):((DB.settings&&+DB.settings.lenderCardFeePct)||2.3); }   // fee moved from per-card to lender level
     l.cards.forEach(c=>{ if(c.name===undefined)c.name=c.label||''; if(c.last4===undefined)c.last4=''; }); });
   (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
+  // every card may go over-limit (negative) — one-time flip; still warns on each over-limit swipe
+  if(!DB.settings._allowNegAll){ (DB.cards||[]).forEach(c=>{ c.allowNegative=true; }); DB.settings._allowNegAll=true; }
   (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
   // let existing workers who already have Purchases also see & use Gift Cards
   if(!DB.settings._gcGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&u.perms.includes('purchases')&&!u.perms.includes('giftcards'))u.perms.push('giftcards'); }); DB.settings._gcGrant=true; }
@@ -2277,7 +2279,7 @@ function quickAddCardFromPurchase(i){
       <div class="field"><label>Payment Day (1–31)</label><input id="qc_day" type="number" min="1" max="31" value="1"></div>
     </div>
     <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="qc_maxdisc" type="number" min="0" step="any" placeholder="0 = no cap"></div>
-    <label class="chk" style="margin-top:2px"><input type="checkbox" id="qc_allowneg" style="width:16px;height:16px;accent-color:var(--brand)"> Allow this card to go over-limit (negative) — you'll be alerted to pay it immediately</label>`,
+    <label class="chk" style="margin-top:2px"><input type="checkbox" id="qc_allowneg" checked style="width:16px;height:16px;accent-color:var(--brand)"> Allow this card to go over-limit (negative) — you'll be alerted to pay it immediately</label>`,
     `<button class="btn-sm btn-ghost" onclick="renderPurchaseModal()">Back</button>
      <button class="btn-sm" onclick="quickSaveCard(${i})">Save Card</button>`);
   setTimeout(()=>$('#qc_name')?.focus(),30);
@@ -5098,7 +5100,7 @@ function cardDueModeToggle(){
   pv.innerHTML = `Statement <b style="color:var(--text)">${fmtDate(isoDate(stmt))}</b> → due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${gap} day${gap===1?'':'s'} to pay · due ${dl<=0?'today':'in '+dl+' day'+(dl===1?'':'s')}`;
 }
 function editCard(id){
-  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active'};
+  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active',allowNegative:true};
   _cardTheme=c.theme||'indigo';
   openModal(`${id?'Edit':'Add'} Card`,`
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
@@ -5391,11 +5393,63 @@ function giftHistoryHtml(q){
     const signed=t.type==='spend'?`<span style="color:var(--red)">− ${money(amt)}</span>`:(t.type==='adjust'?`${amt<0?'− ':'+ '}${money(Math.abs(amt))}`:`<span style="color:var(--green)">+ ${money(amt)}</span>`);
     return `<tr><td>${fmtDate(t.date)}</td><td><b class="rowlink" onclick="giftDetail('${t.giftId}')">${esc(t.giftName||'—')}</b></td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td style="white-space:normal">${esc(t.note||'')}</td><td class="num">${signed}</td><td>${esc(userName(t.byId||''))}</td></tr>`; }).join('');
   return `<div class="panel" style="margin-bottom:14px;padding:12px 14px">
-    <div class="cat-head" style="margin:0 0 8px">📜 Overall gift-card history <span class="cc">${all.length} entr${all.length===1?'y':'ies'}</span></div>
+    <div class="cat-head" style="margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span>📜 Overall gift-card history <span class="cc">${all.length} entr${all.length===1?'y':'ies'}</span></span><button class="btn-sm btn-ghost" onclick="buildGiftHistoryPdf()">📄 PDF</button></div>
     <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>Gift Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>By</th></tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td class="num">${money(load-spend+adj)}</td><td></td></tr></tfoot>
     </table></div></div>`;
+}
+/* ---- Overall gift-card history → printable HTML → PDF (newest first) ---- */
+function giftHistoryPdfHtml(q){
+  const all=giftAllTxns().filter(t=>!q||[(t.giftName||''),(t.note||'')].some(v=>v.toLowerCase().includes(q)));
+  let load=0,spend=0,adj=0;
+  const cell='padding:7px 9px;border:1px solid #e6e6e6', rt='text-align:right';
+  const body=all.map(t=>{ const a=+t.amount||0; if(t.type==='load')load+=a; else if(t.type==='spend')spend+=a; else if(t.type==='adjust')adj+=a;
+    const signed=t.type==='spend'?`<span style="color:#c0392b">− ${money(a)}</span>`:(t.type==='adjust'?`${a<0?'− ':'+ '}${money(Math.abs(a))}`:`<span style="color:#1e7a46">+ ${money(a)}</span>`);
+    return `<tr>
+      <td style="${cell}">${fmtDate(t.date)}</td>
+      <td style="${cell}">${esc(t.giftName||'—')}</td>
+      <td style="${cell}">${esc(txnLabel(t.type))}</td>
+      <td style="${cell}">${esc(t.note||'')}</td>
+      <td style="${cell};${rt}">${signed}</td>
+      <td style="${cell}">${esc(userName(t.byId||''))}</td></tr>`; }).join('');
+  return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #be185d;padding-bottom:12px;margin-bottom:14px">
+      <div><div style="font-size:19px;font-weight:800">${esc(S().company||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().address||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().phone||'')}${S().trn?(' · TRN '+esc(S().trn)):''}</div></div>
+      <div style="text-align:right"><div style="font-size:22px;font-weight:800;color:#be185d">GIFT-CARD HISTORY</div>
+        <div style="font-size:12px;color:#555">Generated ${fmtDate(todayStr())}</div>
+        <div style="font-size:12px;color:#555">${all.length} entr${all.length===1?'y':'ies'}${q?' · filter "'+esc(q)+'"':''}</div></div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#fce7f0;color:#7a1e4b">
+        <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Gift Card</th><th style="${cell};text-align:left">Type</th>
+        <th style="${cell};text-align:left">Note</th><th style="${cell};${rt}">Amount</th><th style="${cell};text-align:left">By</th></tr></thead>
+      <tbody>${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="6">No transactions</td></tr>`}</tbody>
+      <tfoot><tr style="font-weight:800;background:#faf7f0"><td style="${cell}" colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td style="${cell};${rt}">${money(load-spend+adj)}</td><td style="${cell}"></td></tr></tfoot>
+    </table>
+    <div style="margin-top:22px;font-size:11px;color:#999;text-align:center">${esc(S().company||'')} · Gift-Card History · Computer-generated.</div>
+  </div>`;
+}
+async function buildGiftHistoryPdf(){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  const q=($('#giftSearch')?.value||'').toLowerCase().trim();
+  toast('Preparing history…',0);
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=`<div id="giftHistArea">${giftHistoryPdfHtml(q)}</div>`;
+  document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#giftHistArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
+    const fn='giftcard_history_'+todayStr()+'.pdf';
+    await saveExport(pdf.output('blob'), fn);
+    toast('History ready — '+fn);
+  }catch(e){ toast('Could not build the history PDF',1); }
+  finally{ document.body.removeChild(holder); }
 }
 function renderGiftCards(){
   const host=$('#giftWrap'); if(!host)return;
@@ -5619,11 +5673,98 @@ function giftDetail(id){
       ${giftIsProduct(g)?`<button class="btn-sm btn-green" onclick="purchaseGiftModal('${g.id}')">＋ Buy / Recharge</button>`:''}
       <button class="btn-sm btn-gold" onclick="giftTxnModal('${g.id}','spend')">− Use / Spend</button>
       ${isOwner()?`<button class="btn-sm btn-ghost" onclick="giftAdjustModal('${g.id}')">✎ Edit balance</button>`:''}
+      <button class="btn-sm btn-ghost" onclick="giftStatementModal('${g.id}')">📄 Statement (PDF)</button>
     </div>
     <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm btn-red" onclick="delGift('${g.id}')">Delete</button>
      <button class="btn-sm btn-ghost" onclick="editGift('${g.id}')">Edit</button>
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
+}
+/* ---- single gift-card statement (date-ranged) → printable HTML → PDF ---- */
+function giftStatementModal(id){
+  const g=giftById(id); if(!g)return;
+  openModal('Statement · '+esc(g.name),`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Pick a date range (leave blank for all time). The statement lists every <b>recharge</b> and <b>spend</b> on this card with a running balance, newest first.</p>
+    <div class="grid2">
+      <div class="field"><label>From</label><input id="gs_from" type="date"></div>
+      <div class="field"><label>To</label><input id="gs_to" type="date" value="${todayStr()}"></div>
+    </div>`,
+    `<button class="btn-sm btn-ghost" onclick="giftDetail('${id}')">Back</button>
+     <button class="btn-sm" onclick="buildGiftStatementPdf('${id}', $('#gs_from')?.value||'', $('#gs_to')?.value||'')">📄 Download PDF</button>`);
+}
+function giftStatementData(g,from,to){
+  const rows=[...(g.txns||[])].sort((x,y)=> x.date<y.date?-1:(x.date>y.date?1:0)); // oldest first (stable)
+  let run=+g.openingBalance||0, opening=run, loaded=0, spent=0, adj=0;
+  const out=[];
+  rows.forEach(t=>{ const a=+t.amount||0, delta=(t.type==='spend')?-a:a;
+    if(from && t.date<from){ run+=delta; opening=run; return; }   // fold pre-period into opening balance
+    if(to && t.date>to) return;                                   // ignore anything after the period
+    run+=delta;
+    if(t.type==='load')loaded+=a; else if(t.type==='spend')spent+=a; else adj+=a;
+    out.push({date:t.date,type:t.type,note:t.note,delta,run});
+  });
+  out.reverse();  // newest first for display
+  return {opening,closing:opening+out.reduce((s,r)=>s+r.delta,0),loaded,spent,adj,rows:out};
+}
+function giftStatementHtml(g,from,to){
+  const d=giftStatementData(g,from,to);
+  const period=(from||to)?`${from?fmtDate(from):'Start'} — ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
+  const cell='padding:7px 9px;border:1px solid #e6e6e6', rt='text-align:right';
+  const body=d.rows.map(r=>`<tr>
+      <td style="${cell}">${fmtDate(r.date)}</td>
+      <td style="${cell}">${esc(txnLabel(r.type))}${r.note?' · '+esc(r.note):''}</td>
+      <td style="${cell};${rt};color:#1e7a46">${r.delta>0?money(r.delta):''}</td>
+      <td style="${cell};${rt};color:#c0392b">${r.delta<0?money(-r.delta):''}</td>
+      <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`).join('');
+  return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #be185d;padding-bottom:12px;margin-bottom:14px">
+      <div><div style="font-size:19px;font-weight:800">${esc(S().company||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().address||'')}</div>
+        <div style="font-size:12px;color:#555">${esc(S().phone||'')}${S().trn?(' · TRN '+esc(S().trn)):''}</div></div>
+      <div style="text-align:right"><div style="font-size:22px;font-weight:800;color:#be185d">GIFT-CARD STATEMENT</div>
+        <div style="font-size:12px;color:#555">Generated ${fmtDate(todayStr())}</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <div><div style="font-size:11px;color:#888">GIFT CARD</div><div style="font-size:17px;font-weight:800">${esc(g.name||'')}</div></div>
+      <div style="text-align:right"><div style="font-size:11px;color:#888">PERIOD</div><div style="font-size:14px;font-weight:700">${period}</div></div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#fce7f0;color:#7a1e4b">
+        <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description</th>
+        <th style="${cell};${rt}">Recharge +</th><th style="${cell};${rt}">Spend −</th><th style="${cell};${rt}">Balance</th></tr></thead>
+      <tbody>${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="5">No entries in this period</td></tr>`}
+        <tr style="background:#faf7f0"><td style="${cell}" colspan="4"><b>Opening balance ${from?'(before '+fmtDate(from)+')':''}</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <table style="border-collapse:collapse;font-size:13px;min-width:330px">
+        <tr><td style="padding:5px 10px;color:#555">Recharged (period)</td><td style="padding:5px 10px;text-align:right;color:#1e7a46">${money(d.loaded)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#555">Spent (period)</td><td style="padding:5px 10px;text-align:right;color:#c0392b">${money(d.spent)}</td></tr>
+        ${d.adj?`<tr><td style="padding:5px 10px;color:#555">Adjustments (period)</td><td style="padding:5px 10px;text-align:right">${money(d.adj)}</td></tr>`:''}
+        <tr style="border-top:2px solid #be185d"><td style="padding:8px 10px;font-weight:800;font-size:15px">Closing balance</td><td style="padding:8px 10px;text-align:right;font-weight:800;font-size:15px">${money(d.closing)}</td></tr>
+      </table>
+    </div>
+    <div style="margin-top:22px;font-size:11px;color:#999;text-align:center">${esc(S().company||'')} · Gift-Card Statement · Computer-generated.</div>
+  </div>`;
+}
+async function buildGiftStatementPdf(id,from,to){
+  const g=giftById(id); if(!g)return;
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  toast('Preparing statement…',0);
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=`<div id="giftStmtArea">${giftStatementHtml(g,from,to)}</div>`;
+  document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#giftStmtArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
+    const fn='giftcard_statement_'+((g.name||'card').replace(/[^\w.-]+/g,'_'))+'_'+(from||'all')+'_'+(to||todayStr())+'.pdf';
+    await saveExport(pdf.output('blob'), fn);
+    toast('Statement ready — '+fn);
+  }catch(e){ toast('Could not build the statement PDF',1); }
+  finally{ document.body.removeChild(holder); }
 }
 let _gtBase=0,_gtSign=1;
 function gtCalcAfter(){ const el=$('#gt_after'); if(!el)return; const amt=+($('#gt_amt')?.value)||0; const after=_gtBase+_gtSign*amt;
