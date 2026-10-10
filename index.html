@@ -5594,7 +5594,7 @@ function giftBuyCardHint(s){ if(!(s&&s.method==='card'&&s.cardId))return '';
 function giftBuyRefreshHint(i){ const el=$('#gbh_'+i); if(el)el.innerHTML=giftBuyCardHint(giftBuySplits[i]); }
 function giftBorrowLender(i,val){ giftBuySplits[i].lenderId=val; giftBuySplits[i].lenderCardId=''; giftBuySplits[i].commission=''; renderGiftBuySplits(); }
 function giftBorrowCard(i,val){ giftBuySplits[i].lenderCardId=val; const l=lenderById(giftBuySplits[i].lenderId), c=lenderCardById(l,val); giftBuySplits[i].commission=c?(c.commission||0):''; renderGiftBuySplits(); }
-function addGiftBuySplit(){ giftBuySplits.push({method:'cash',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}); renderGiftBuySplits(); flashNewRow('#gb_splits .split-row'); }
+function addGiftBuySplit(){ giftBuySplits.push({method:'card',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}); renderGiftBuySplits(); flashNewRow('#gb_splits .split-row'); }
 /* remaining balance not yet covered by any payment row */
 function giftBuyRemaining(){ const amt=+($('#g_amt')?.value||0); return Math.round((amt-giftBuySplits.reduce((a,s)=>a+(+s.amount||0),0))*100)/100; }
 /* fill the last payment row with whatever balance is still uncovered */
