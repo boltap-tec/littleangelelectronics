@@ -5556,8 +5556,8 @@ function editGiftRecharge(gid,txnId){
   if(!requireOnline())return;
   const g=giftById(gid); const t=(g&&g.txns||[]).find(x=>x.id===txnId);
   if(!t||t.type!=='load')return toast('Only a recharge can be edited here',1);
-  const hasPays=Array.isArray(t.pays)&&t.pays.length;
-  // legacy recharges (no stored split): record the mode as a LABEL only — the money already moved, don't move it again
+  // full money-moving edit only for recharges that actually posted their legs here; legacy + label-only ones stay label-only
+  const hasPays=Array.isArray(t.pays)&&t.pays.length&&!t.labelOnlyPay;
   _giftBuyEdit={gid,txnId,labelOnly:!hasPays};
   giftBuySplits = hasPays
     ? t.pays.map(p=>({method:p.method||'cash',cardId:p.cardId||'',giftId:p.giftId||'',ref:p.ref||'',deductPct:p.deductPct||'',lenderId:p.lenderId||'',lenderCardId:p.lenderCardId||'',commission:p.commission||'',amount:p.amount}))
@@ -5681,6 +5681,17 @@ function saveGiftPurchase(){
   const amt=+$('#g_amt').value; if(!(amt>0))return toast('Enter the amount / balance received',1);
   const date=$('#g_date').value||todayStr(), note=$('#g_note').value.trim();
   const splits=giftBuySplits.filter(s=>+s.amount>0);
+  // LABEL-ONLY edit of a legacy recharge: just record how it was paid (for the Payment-mode column). No money moves — the original payment already happened.
+  const editLbl=_giftBuyEdit;
+  if(editLbl && editLbl.labelOnly){ _giftBuyEdit=null;
+    if(!splits.length)return toast('Add at least one payment method to record the mode',1);
+    const t=(g.txns||[]).find(x=>x.id===editLbl.txnId); if(!t)return toast('Recharge not found',1);
+    const paysClean=splits.map(s=>({method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',ref:s.ref||'',deductPct:s.deductPct||'',lenderId:s.lenderId||'',lenderCardId:s.lenderCardId||'',commission:s.commission||'',amount:+s.amount||0}));
+    t.amount=amt; t.date=date; t.note='Recharge'+(note?' · '+note:''); t.buyNote=note; t.pays=paysClean; t.labelOnlyPay=true;
+    logAct('edit','gift card',g.name,`recharge payment mode recorded (${money(amt)})`);
+    save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
+    return toast('Payment mode updated');
+  }
   if(splits.some(s=>s.method==='card' && !s.cardId))return toast('Pick a card for each card payment',1);
   if(splits.some(s=>payMethodInfo(s.method).savedGift && !s.giftId))return toast('Pick a gift card for each gift-card payment',1);
   if(splits.some(s=>s.method==='cardborrow' && !s.lenderId))return toast('Pick a lender for each borrowed-card payment',1);
@@ -5733,8 +5744,8 @@ function giftDetail(id){
   const g=giftById(id); if(!g)return; const bal=giftBalance(g);
   let loaded=0,spent=0; (g.txns||[]).forEach(t=>{ if(t.type==='load')loaded+=+t.amount||0; else if(t.type==='spend')spent+=+t.amount||0; });
   const txns=[...(g.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
-  const rows=txns.length? txns.map(t=>{ const linked=t.srcPurchaseId||t.srcSaleId; const isRecharge=t.type==='load'&&Array.isArray(t.pays);
-    const editBtn = isRecharge
+  const rows=txns.length? txns.map(t=>{ const linked=t.srcPurchaseId||t.srcSaleId;
+    const editBtn = t.type==='load'
       ? `<button class="mini-btn" title="Edit recharge &amp; payment mode" onclick="editGiftRecharge('${g.id}','${t.id}')">✎</button>`
       : `<button class="mini-btn" title="Edit entry" onclick="giftTxnModal('${g.id}','${t.type}','${t.id}')">✎</button>`;
     return `<tr>
