@@ -506,6 +506,8 @@ body.light #invList tr.sc-done{background:rgba(31,138,76,.08)}
 .tag.bank{background:#10233a;color:#8fd3ff;border:1px solid #1d4e73}
 .tag.cheque{background:#2a2140;color:#d6c2ff;border:1px solid #6d54b8}
 body.light .tag.cheque{background:#efe8ff;color:#6b46c1;border-color:#d6c8f5}
+.tag.other{background:#33240f;color:#f6c88a;border:1px solid #7a531d}
+body.light .tag.other{background:#fdf0de;color:#9a5a12;border-color:#efcd9f}
 .tag.low{background:var(--redsoft);color:#fca5a5;border:1px solid #7f1d2b}
 .tag.ok{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
 .tag.paid{background:var(--greensoft);color:#7ee2a8;border:1px solid #1f5136}
@@ -1674,6 +1676,7 @@ const PAY_METHODS=[
   {k:'happiness',   label:'Happiness Points',     tag:'points', ref:'optional',  refLabel:'Mobile number (optional)',    refKind:'tel'},
   {k:'aldar',       label:'Aldar Points',         tag:'points', ref:'optional',  refLabel:'Aldar member / mobile no. (optional)', refKind:'tel'},
   {k:'cash',        label:'Cash Payment',         tag:'cash',   ref:null},
+  {k:'other',       label:'Other',                tag:'other',  ref:'mandatory', refLabel:'Notes (what / how it was paid)', refKind:'text'},
 ];
 const PAY_BY_KEY=Object.fromEntries(PAY_METHODS.map(m=>[m.k,m]));
 function payMethodInfo(k){ return PAY_BY_KEY[k] || {k,label:(k==='bank'?'Bank':k==='cheque'?'Cheque':k==='split'?'Split':(k||'').toUpperCase()),tag:(k==='bank'||k==='cheque')?'bank':(k==='split'?'split':(k||''))}; }
@@ -2072,6 +2075,7 @@ views.purchases=function(){
   return `
   <div class="page-head"><div><h2>Purchases</h2><p>Stock bought from Carrefour & other suppliers — rate can differ each date. Track cash/card & credit.</p></div>
     <div class="row-actions"><button class="btn-sm btn-ghost" onclick="openBillSummary('purchase')" title="Date-wise summary with per-product consolidation — download as PDF">📊 Date Summary</button>
+    <button class="btn-sm btn-ghost" onclick="openModeReport('purchase')" title="Purchases by payment mode & date — with notes & edit link">💳 Mode of Payment</button>
     <button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
     <button class="btn-sm btn-ghost" onclick="purchaseGiftModal()">🎁 New Gift Card Purchase</button>
     <button class="btn-sm" onclick="newPurchase()">📦 New Product Purchase</button></div></div>
@@ -3758,6 +3762,7 @@ views.sales=function(){
   return `
   <div class="page-head"><div><h2>Sales &amp; Billing</h2><p>Create a sales bill. VAT, layout & logo are controlled in Settings.</p></div>
     <div class="row-actions"><button class="btn-sm btn-ghost" onclick="openBillSummary('sale')" title="Date-wise summary with per-product sales consolidation — download as PDF">📊 Date Summary</button>
+    <button class="btn-sm btn-ghost" onclick="openModeReport('sale')" title="Sales by payment mode & date — with notes & edit link">💳 Mode of Payment</button>
     <button class="btn-sm btn-ghost" onclick="exportSalesExcel()">⬇ Excel</button>
     <button class="btn-sm btn-gold" onclick="newSale()">＋ New Sale Bill</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="saleSearch" placeholder="Search invoice / customer..." oninput="renderSales()"></div></div>
@@ -3808,7 +3813,7 @@ function newSale(id,prefillPid){
           : lastBillLines('sale')));
   if(!saleDraft.length)saleDraft=[{productId:'',qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
-  const pm0=s&&s.payments&&s.payments[0]?s.payments[0]:null; _saleDeduct0=pm0?(pm0.deductPct||''):'';
+  const pm0=s&&s.payments&&s.payments[0]?s.payments[0]:null; _saleDeduct0=pm0?(pm0.deductPct||''):''; _saleNote0=s?(s.payNote||(pm0&&pm0.note)||''):'';
   const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):'none';
   const collBy=s?(s.collectedBy||s.byId||session.id):session.id;
   openModal(`${id?'Edit':'New'} Sales Bill`,`
@@ -3839,7 +3844,8 @@ function newSale(id,prefillPid){
         <option value="cash" ${pay==='cash'?'selected':''}>Cash</option>
         <option value="card" ${pay==='card'?'selected':''}>Credit / Debit Card</option>
         <option value="bank" ${pay==='bank'?'selected':''}>Bank Transfer</option>
-        <option value="cheque" ${pay==='cheque'?'selected':''}>Cheque</option></select></div>
+        <option value="cheque" ${pay==='cheque'?'selected':''}>Cheque</option>
+        <option value="other" ${pay==='other'?'selected':''}>Other</option></select></div>
     </div>
     <div id="s_paymeta"></div>
     <div class="field"><label>Discount (${S().currency})</label><input id="s_disc" type="number" min="0" step="any" value="${disc||0}" oninput="saleCalc()"></div>
@@ -3852,11 +3858,13 @@ function newSale(id,prefillPid){
      <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Open Bill</button>`);
   renderSaleRows(); saleMeta();
 }
-let _saleDeduct0='';
+let _saleDeduct0='', _saleNote0='';
 function saleMeta(){
   const host=$('#s_paymeta'); if(!host)return; const m=$('#s_pay')?.value;
   if(m==='cash'){
     host.innerHTML=`<div class="field"><label>Cash discount (%) — optional</label><input id="s_deduct" type="number" min="0" max="100" step="any" value="${_saleDeduct0!==''&&_saleDeduct0!=null?_saleDeduct0:''}" placeholder="e.g. 6" oninput="saleCalc()"><div class="li-hint">The invoice is settled in full; only the discounted cash actually enters the wallet.</div></div>`;
+  } else if(m==='other'){
+    host.innerHTML=`<div class="field"><label>Notes (how it was paid) *</label><input id="s_note" type="text" value="${esc(_saleNote0||'')}" placeholder="e.g. part cash + exchange, store credit, settled by vendor…"><div class="li-hint">Required for an <b>Other</b> payment. These bills are listed under <b>💳 Mode of Payment</b> so you can find & edit them later. Does not move the cash wallet.</div></div>`;
   } else host.innerHTML='';
   saleCalc();
 }
@@ -3945,15 +3953,17 @@ function saveSale(id,print){
   for(const pid in req){ const avail=saleAvail(pid,eng); if(req[pid]>avail+1e-9){ const pr=productById(pid); return toast(`Not enough stock for ${pr?pr.name:'item'} — available ${num(avail)}, needed ${num(req[pid])}`,1); } }
   const t=$('#s_tot')._t, method=$('#s_pay').value;
   const deductPct=method==='cash'?(+($('#s_deduct')?.value)||0):0;
+  const payNote=method==='other'?(($('#s_note')?.value||'').trim()):'';
+  if(method==='other' && !payNote)return toast('Add a note for the Other payment — say how the bill was paid',1);
   const paidRaw=$('#s_paid').value;
   if(paidRaw==='')return toast('Enter the amount received now — put 0 if the customer pays later',1);
   let paid=Math.max(0,+paidRaw);
   if(paid>t.total+0.01) return toast(`Amount received ${money(paid)} exceeds the bill total ${money(t.total)} — overpayment isn't allowed. Reduce the amount.`,1);
-  const payMeta={}; if(deductPct>0)payMeta.deductPct=deductPct;
+  const payMeta={}; if(deductPct>0)payMeta.deductPct=deductPct; if(payNote)payMeta.note=payNote;
   const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
     custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),billNo:($('#s_billno')?.value||'').trim(),collectedBy:($('#s_collby')?.value||session.id),
     items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
-    payment:method,discount:+($('#s_disc').value||0),vatMode:t.mode,
+    payment:method,payNote,discount:+($('#s_disc').value||0),vatMode:t.mode,
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
   const bal=Math.round((t.total-paid)*100)/100;
   const creditNote = bal>0.01 ? `<br><br>⚠ Sold for <b>${money(t.total)}</b> but only <b>${money(paid)}</b> received now — balance <b style="color:var(--red)">${money(bal)}</b> will be tracked as credit in Payments.` : '';
@@ -4184,12 +4194,12 @@ views.payments=function(){
 };
 views._after_payments=renderPayments;
 function renderPayments(){
-  let inTot=0,outTot=0,recv=0,payl=0,inCash=0,inCard=0,inBank=0,outCash=0,outCard=0,outBank=0;
-  DB.sales.forEach(s=>{inTot+=s.paid||0;recv+=Math.max(0,s.total-(s.paid||0));(s.payments||[]).forEach(pm=>{if(pm.method==='card')inCard+=pm.amount;else if(pm.method==='bank'||pm.method==='cheque')inBank+=pm.amount;else inCash+=pm.amount;});});
-  DB.purchases.forEach(p=>{const tot=purchaseTotal(p);outTot+=p.paid||0;payl+=Math.max(0,tot-(p.paid||0));(p.payments||[]).forEach(pm=>{if(pm.method==='card')outCard+=pm.amount;else if(pm.method==='bank'||pm.method==='cheque')outBank+=pm.amount;else outCash+=pm.amount;});});
+  let inTot=0,outTot=0,recv=0,payl=0,inCash=0,inCard=0,inBank=0,inOther=0,outCash=0,outCard=0,outBank=0,outOther=0;
+  DB.sales.forEach(s=>{inTot+=s.paid||0;recv+=Math.max(0,s.total-(s.paid||0));(s.payments||[]).forEach(pm=>{if(pm.method==='card')inCard+=pm.amount;else if(pm.method==='bank'||pm.method==='cheque')inBank+=pm.amount;else if(pm.method==='other')inOther+=pm.amount;else inCash+=pm.amount;});});
+  DB.purchases.forEach(p=>{const tot=purchaseTotal(p);outTot+=p.paid||0;payl+=Math.max(0,tot-(p.paid||0));(p.payments||[]).forEach(pm=>{if(pm.method==='card')outCard+=pm.amount;else if(pm.method==='bank'||pm.method==='cheque')outBank+=pm.amount;else if(pm.method==='other')outOther+=pm.amount;else outCash+=pm.amount;});});
   const cc=$('#payCards'); if(cc)cc.innerHTML=`
-    <div class="stat green"><span class="ic">💵</span><div class="label">Money In (received)</div><div class="val">${money(inTot)}</div><div class="foot">Cash ${money(inCash)} · Card ${money(inCard)} · Bank ${money(inBank)}</div></div>
-    <div class="stat blue"><span class="ic">💸</span><div class="label">Money Out (paid)</div><div class="val">${money(outTot)}</div><div class="foot">Cash ${money(outCash)} · Card ${money(outCard)} · Bank ${money(outBank)}</div></div>
+    <div class="stat green"><span class="ic">💵</span><div class="label">Money In (received)</div><div class="val">${money(inTot)}</div><div class="foot">Cash ${money(inCash)} · Card ${money(inCard)} · Bank ${money(inBank)}${inOther>0?` · Other ${money(inOther)}`:''}</div></div>
+    <div class="stat blue"><span class="ic">💸</span><div class="label">Money Out (paid)</div><div class="val">${money(outTot)}</div><div class="foot">Cash ${money(outCash)} · Card ${money(outCard)} · Bank ${money(outBank)}${outOther>0?` · Other ${money(outOther)}`:''}</div></div>
     <div class="stat amber"><span class="ic">📈</span><div class="label">Receivables</div><div class="val">${money(recv)}</div><div class="foot">To collect from customers</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Payables</div><div class="val">${money(payl)}</div><div class="foot">To pay suppliers</div></div>`;
 
@@ -5403,18 +5413,28 @@ function toggleGiftHist(){ _giftShowHist=!_giftShowHist; renderGiftCards(); }
 /* every gift-card transaction across all cards, newest first */
 function giftAllTxns(){ const out=[]; (DB.giftcards||[]).forEach(g=>{ (g.txns||[]).forEach(t=>out.push({...t,giftId:g.id,giftName:g.name})); });
   out.sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0)); return out; }
+/* ---- payment mode of a recharge (how the gift card was paid for) ---- */
+function giftPayList(t){ return (t&&Array.isArray(t.pays))?t.pays:[]; }
+function giftPayModeText(t){ if(!t||t.type!=='load')return '—'; const ps=giftPayList(t); if(!ps.length)return '—';
+  if(ps.length===1)return payMethodInfo(ps[0].method).label;
+  return 'Split · '+ps.map(p=>payMethodInfo(p.method).label).join(' + '); }
+function giftPayModeCell(t){ if(!t||t.type!=='load')return '<td style="color:var(--muted2)">—</td>';
+  const ps=giftPayList(t); if(!ps.length)return '<td style="color:var(--muted2)">—</td>';
+  if(ps.length===1)return `<td>${payMethodTag(ps[0].method)}</td>`;
+  const title=ps.map(p=>payMethodInfo(p.method).label+' '+money(+p.amount||0)).join(' · ');
+  return `<td><span class="tag split" title="${esc(title)}">SPLIT</span><div style="font-size:10.5px;color:var(--muted2)">${esc(ps.map(p=>payMethodInfo(p.method).label).join(' + '))}</div></td>`; }
 function giftHistoryHtml(q){
   const all=giftAllTxns().filter(t=>!q||[(t.giftName||''),(t.note||'')].some(v=>v.toLowerCase().includes(q)));
   if(!all.length)return `<div class="panel" style="margin-bottom:14px;padding:12px 14px"><div class="cat-head" style="margin:0 0 6px">📜 Overall gift-card history</div><div class="li-hint">No transactions yet.</div></div>`;
   let load=0,spend=0,adj=0;
   const rows=all.map(t=>{ const amt=+t.amount||0; if(t.type==='load')load+=amt; else if(t.type==='spend')spend+=amt; else if(t.type==='adjust')adj+=amt;
     const signed=t.type==='spend'?`<span style="color:var(--red)">− ${money(amt)}</span>`:(t.type==='adjust'?`${amt<0?'− ':'+ '}${money(Math.abs(amt))}`:`<span style="color:var(--green)">+ ${money(amt)}</span>`);
-    return `<tr><td>${fmtDate(t.date)}</td><td><b class="rowlink" onclick="giftDetail('${t.giftId}')">${esc(t.giftName||'—')}</b></td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td style="white-space:normal">${esc(t.note||'')}</td><td class="num">${signed}</td><td>${esc(userName(t.byId||''))}</td></tr>`; }).join('');
+    return `<tr><td>${fmtDate(t.date)}</td><td><b class="rowlink" onclick="giftDetail('${t.giftId}')">${esc(t.giftName||'—')}</b></td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td style="white-space:normal">${esc(t.note||'')}</td><td class="num">${signed}</td><td>${esc(userName(t.byId||''))}</td>${giftPayModeCell(t)}</tr>`; }).join('');
   return `<div class="panel" style="margin-bottom:14px;padding:12px 14px">
     <div class="cat-head" style="margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span>📜 Overall gift-card history <span class="cc">${all.length} entr${all.length===1?'y':'ies'}</span></span><button class="btn-sm btn-ghost" onclick="buildGiftHistoryPdf()">📄 PDF</button></div>
-    <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Date</th><th>Gift Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>By</th></tr></thead>
+    <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Gift Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>By</th><th>Payment mode</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td class="num">${money(load-spend+adj)}</td><td></td></tr></tfoot>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td class="num">${money(load-spend+adj)}</td><td></td><td></td></tr></tfoot>
     </table></div></div>`;
 }
 /* ---- Overall gift-card history → printable HTML → PDF (newest first) ---- */
@@ -5430,7 +5450,8 @@ function giftHistoryPdfHtml(q){
       <td style="${cell}">${esc(txnLabel(t.type))}</td>
       <td style="${cell}">${esc(t.note||'')}</td>
       <td style="${cell};${rt}">${signed}</td>
-      <td style="${cell}">${esc(userName(t.byId||''))}</td></tr>`; }).join('');
+      <td style="${cell}">${esc(userName(t.byId||''))}</td>
+      <td style="${cell}">${esc(giftPayModeText(t))}</td></tr>`; }).join('');
   return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #be185d;padding-bottom:12px;margin-bottom:14px">
       <div><div style="font-size:19px;font-weight:800">${esc(S().company||'')}</div>
@@ -5443,9 +5464,9 @@ function giftHistoryPdfHtml(q){
     <table style="width:100%;border-collapse:collapse;font-size:12.5px">
       <thead><tr style="background:#fce7f0;color:#7a1e4b">
         <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Gift Card</th><th style="${cell};text-align:left">Type</th>
-        <th style="${cell};text-align:left">Note</th><th style="${cell};${rt}">Amount</th><th style="${cell};text-align:left">By</th></tr></thead>
-      <tbody>${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="6">No transactions</td></tr>`}</tbody>
-      <tfoot><tr style="font-weight:800;background:#faf7f0"><td style="${cell}" colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td style="${cell};${rt}">${money(load-spend+adj)}</td><td style="${cell}"></td></tr></tfoot>
+        <th style="${cell};text-align:left">Note</th><th style="${cell};${rt}">Amount</th><th style="${cell};text-align:left">By</th><th style="${cell};text-align:left">Payment mode</th></tr></thead>
+      <tbody>${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="7">No transactions</td></tr>`}</tbody>
+      <tfoot><tr style="font-weight:800;background:#faf7f0"><td style="${cell}" colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td style="${cell};${rt}">${money(load-spend+adj)}</td><td style="${cell}"></td><td style="${cell}"></td></tr></tfoot>
     </table>
     <div style="margin-top:22px;font-size:11px;color:#999;text-align:center">${esc(S().company||'')} · Gift-Card History · Computer-generated.</div>
   </div>`;
@@ -5520,28 +5541,50 @@ function newGiftFromBuy(){
      <button class="btn-sm" onclick="saveGiftProduct(true)">Add &amp; continue</button>`);
   setTimeout(()=>$('#gp_name')?.focus(),30);
 }
+let _giftBuyEdit=null;   // {gid,txnId} when editing an existing recharge (same split editor as a purchase)
 function purchaseGiftModal(preId){
   if(!requireOnline())return;
   const prods=activeGiftProducts();
   if(!prods.length){ toast('Add a gift card first',1); return newGiftProductModal(); }
+  _giftBuyEdit=null;
   // default payment row = Credit Card (most gift-card buys are charged to a card to earn cashback)
   giftBuySplits=[{method:'card',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}];
-  openModal('Buy / Recharge Gift Card',`
-    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Load balance onto a gift card. The <b>amount</b> is the balance you receive; pay for it below — a cash discount means you pay less than the balance (that's your margin).</p>
+  _openGiftBuyModal({preId});
+}
+/* re-open the split editor for an existing recharge so the payment mode can be changed (like editing a purchase) */
+function editGiftRecharge(gid,txnId){
+  if(!requireOnline())return;
+  const g=giftById(gid); const t=(g&&g.txns||[]).find(x=>x.id===txnId);
+  if(!t||t.type!=='load')return toast('Only a recharge can be edited here',1);
+  const hasPays=Array.isArray(t.pays)&&t.pays.length;
+  // legacy recharges (no stored split): record the mode as a LABEL only — the money already moved, don't move it again
+  _giftBuyEdit={gid,txnId,labelOnly:!hasPays};
+  giftBuySplits = hasPays
+    ? t.pays.map(p=>({method:p.method||'cash',cardId:p.cardId||'',giftId:p.giftId||'',ref:p.ref||'',deductPct:p.deductPct||'',lenderId:p.lenderId||'',lenderCardId:p.lenderCardId||'',commission:p.commission||'',amount:p.amount}))
+    : [{method:'card',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:+t.amount||0}];
+  _openGiftBuyModal({preId:gid, edit:t, labelOnly:!hasPays});
+}
+function _openGiftBuyModal({preId, edit, labelOnly}){
+  const prods=activeGiftProducts();
+  const editHelp = labelOnly
+    ? 'This recharge was entered before payment tracking — just record <b>how it was paid</b> below. This updates the payment-mode label only; it does <b>not</b> change any card balance or cash (that money already moved).'
+    : 'Change the amount loaded or how it was paid for. Saving re-applies the payment to the chosen cards / cash / gift cards.';
+  openModal(edit?'Edit Gift-Card Recharge':'Buy / Recharge Gift Card',`
+    <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${edit?editHelp:'Load balance onto a gift card. The <b>amount</b> is the balance you receive; pay for it below — a cash discount means you pay less than the balance (that\'s your margin).'}</p>
     <div class="grid2">
       <div class="field"><label>Gift Card *</label><select id="g_product" class="srch">${prods.map(g=>`<option value="${g.id}" ${g.id===preId?'selected':''}>${esc(g.name)} · bal ${money(giftBalance(g))}</option>`).join('')}</select>
         <button type="button" class="mini-btn" style="margin-top:6px" onclick="newGiftFromBuy()">＋ New gift card</button></div>
-      <div class="field"><label>Date</label><input id="g_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Date</label><input id="g_date" type="date" value="${edit?esc(edit.date||todayStr()):todayStr()}"></div>
     </div>
-    <div class="field"><label>Amount / balance received (${S().currency}) *</label><input id="g_amt" type="number" min="0" step="any" placeholder="face value loaded onto the card" oninput="giftBuyCalc()"></div>
+    <div class="field"><label>Amount / balance received (${S().currency}) *</label><input id="g_amt" type="number" min="0" step="any" placeholder="face value loaded onto the card" value="${edit?(+edit.amount||''):''}" oninput="giftBuyCalc()"></div>
     <div class="li-hint" id="g_availhint" style="margin-top:5px"></div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination (same as a purchase)</label>
     <div class="line-items" style="padding:8px"><div id="gb_splits"></div></div>
     <div class="row-actions" style="margin-bottom:4px"><button class="mini-btn" onclick="addGiftBuySplit()">＋ Add payment</button><button class="mini-btn gold" onclick="giftBuyFillRemaining()">Fill balance</button></div>
     <div class="totbox" id="gb_tot" style="margin-top:12px"></div>
-    <div class="field" style="margin-top:12px"><label>Note (optional)</label><input id="g_note" placeholder="e.g. bought from / receipt no."></div>`,
+    <div class="field" style="margin-top:12px"><label>Note (optional)</label><input id="g_note" placeholder="e.g. bought from / receipt no." value="${edit?esc(edit.buyNote||''):''}"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
-     <button class="btn-sm" onclick="saveGiftPurchase()">Save</button>`);
+     <button class="btn-sm" onclick="saveGiftPurchase()">${edit?'Update':'Save'}</button>`);
   renderGiftBuySplits(); setTimeout(()=>$('#g_amt')?.focus(),30);
 }
 /* gift-card purchase uses the SAME payment methods as normal & online purchases */
@@ -5646,26 +5689,43 @@ function saveGiftPurchase(){
   if(missRef){ const info=payMethodInfo(missRef.method); return toast(`${info.label}: ${info.refLabel.replace(/ \((required|optional)\)/,'')} is required`,1); }
   const paid=splits.reduce((a,s)=>a+(+s.amount||0),0);
   if(paid>amt+0.01)return toast(`Payment ${money(paid)} exceeds the balance loaded ${money(amt)} — overpayment isn't allowed.`,1);
+  // editing an existing recharge: validate against availability that ADDS BACK this recharge's own legs
+  // (so re-using the same cards/gift cards isn't blocked), then revert + re-apply only once every check passes.
+  const editing=_giftBuyEdit; _giftBuyEdit=null;
+  const editLink=editing?('giftload:'+editing.txnId):'';
+  const cardAddBack=cid=>{ if(!editLink)return 0; const c=cardById(cid); if(!c)return 0; let adj=0; (c.txns||[]).forEach(t=>{ if(t.srcPurchaseId===editLink) adj+=(t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return adj; };
+  const giftAddBack=g2=>{ if(!editLink)return 0; const gg=giftById(g2); if(!gg)return 0; let adj=0; (gg.txns||[]).forEach(t=>{ if(t.srcPurchaseId===editLink && t.type==='spend') adj+=(+t.amount||0); }); return adj; };
   const cardReq={}; splits.forEach(s=>{ if(s.method==='card'&&s.cardId)cardReq[s.cardId]=(cardReq[s.cardId]||0)+(+s.amount||0); });
-  for(const cid in cardReq){ const c=cardById(cid); if(c){ const over=cardReq[cid]-cardAvailable(c);
-    if(over>1e-6 && !cardAllowsNeg(c))return toast(`${c.name}: only ${money(Math.max(0,cardAvailable(c)))} available — reduce the amount or enable over-limit for it.`,1); } }
+  for(const cid in cardReq){ const c=cardById(cid); if(c){ const avail=cardAvailable(c)+cardAddBack(cid); const over=cardReq[cid]-avail;
+    if(over>1e-6 && !cardAllowsNeg(c))return toast(`${c.name}: only ${money(Math.max(0,avail))} available — reduce the amount or enable over-limit for it.`,1); } }
   const giftReq={}; splits.forEach(s=>{ if(payMethodInfo(s.method).savedGift&&s.giftId)giftReq[s.giftId]=(giftReq[s.giftId]||0)+(+s.amount||0); });
-  for(const g2 in giftReq){ const gg=giftById(g2); if(gg){ const av=giftBalance(gg); if(giftReq[g2]-av>1e-6)return toast(`${gg.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
-  // load the balance onto the chosen gift-card product
+  for(const g2 in giftReq){ const gg=giftById(g2); if(gg){ const av=giftBalance(gg)+giftAddBack(g2); if(giftReq[g2]-av>1e-6)return toast(`${gg.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
+  // all checks passed → drop the old recharge + its payment legs, then load the balance onto the chosen gift-card product
+  if(editing){ revertGiftRecharge(editing.gid,editing.txnId); }
   if(!Array.isArray(g.txns))g.txns=[];
-  g.txns.push({id:uid(),date,type:'load',amount:amt,note:'Recharge'+(note?' · '+note:''),byId:session.id});
-  const payLink='gift:'+g.id, cashLink=g.id, lbl=g.name;
+  const loadId=uid();
+  // remember HOW it was paid (for the payment-mode column + future edits)
+  const paysClean=splits.map(s=>({method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',ref:s.ref||'',deductPct:s.deductPct||'',lenderId:s.lenderId||'',lenderCardId:s.lenderCardId||'',commission:s.commission||'',amount:+s.amount||0}));
+  g.txns.push({id:loadId,date,type:'load',amount:amt,note:'Recharge'+(note?' · '+note:''),byId:session.id,buyNote:note,pays:paysClean});
+  const payLink='giftload:'+loadId, cashLink=payLink, lbl=g.name;   // unique per recharge → legs can be re-synced on edit/delete
   const charged=[];
   splits.forEach(s=>{ const a=+s.amount||0; if(a<=0)return; const info=payMethodInfo(s.method);
     if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,a,date,'Gift card · '+lbl,payLink); charged.push(c.name); } }
     else if(info.savedGift&&s.giftId){ const gp=giftById(s.giftId); if(gp){ spendGift(gp,a,date,'Gift card · '+lbl,payLink); charged.push(gp.name); } }
-    else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,a,s.commission,date,'Gift card · '+lbl,''); const l=lenderById(s.lenderId); charged.push('borrowed'+(l?' · '+l.name:'')); }
+    else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,a,s.commission,date,'Gift card · '+lbl,payLink); const l=lenderById(s.lenderId); charged.push('borrowed'+(l?' · '+l.name:'')); }
     else if(s.method==='cash'){ const ded=+s.deductPct||0, net=a*(1-ded/100); if(!Array.isArray(DB.cash))DB.cash=[];
       DB.cash.push({id:uid(),date,dir:'out',amount:net,cat:'giftbuy',desc:'Gift card · '+lbl+(ded>0?` · ${ded}% cash disc.`:''),who:session.id,byId:session.id,linkId:cashLink}); charged.push('cash'); }
     /* points / other methods settle the amount but don't move the wallet */ });
-  logAct('edit','gift card',lbl,`recharged ${money(amt)}`);
+  logAct('edit','gift card',lbl,`${editing?'recharge edited':'recharged'} ${money(amt)}`);
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
-  toast('Gift card recharged · '+money(amt)+' loaded');
+  toast(editing?('Recharge updated · '+money(amt)+' loaded'):('Gift card recharged · '+money(amt)+' loaded'));
+}
+/* undo a recharge's load entry + all its payment legs (cards / gift cards / borrowed cards / cash) by its unique link */
+function revertGiftRecharge(gid,txnId){
+  const g=giftById(gid); if(!g)return; const link='giftload:'+txnId;
+  unlinkPurchaseFromCards(link); unlinkPurchaseFromGifts(link); unlinkPurchaseFromLenders(link);
+  if(Array.isArray(DB.cash))DB.cash=DB.cash.filter(c=>c.linkId!==link);
+  g.txns=(g.txns||[]).filter(t=>t.id!==txnId);
 }
 
 /* ---- gift card detail + payment/usage history ---- */
@@ -5673,13 +5733,18 @@ function giftDetail(id){
   const g=giftById(id); if(!g)return; const bal=giftBalance(g);
   let loaded=0,spent=0; (g.txns||[]).forEach(t=>{ if(t.type==='load')loaded+=+t.amount||0; else if(t.type==='spend')spent+=+t.amount||0; });
   const txns=[...(g.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
-  const rows=txns.length? txns.map(t=>{ const linked=t.srcPurchaseId||t.srcSaleId; return `<tr>
+  const rows=txns.length? txns.map(t=>{ const linked=t.srcPurchaseId||t.srcSaleId; const isRecharge=t.type==='load'&&Array.isArray(t.pays);
+    const editBtn = isRecharge
+      ? `<button class="mini-btn" title="Edit recharge &amp; payment mode" onclick="editGiftRecharge('${g.id}','${t.id}')">✎</button>`
+      : `<button class="mini-btn" title="Edit entry" onclick="giftTxnModal('${g.id}','${t.type}','${t.id}')">✎</button>`;
+    return `<tr>
       <td>${fmtDate(t.date)}</td>
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       <td>${esc(t.note||'')}</td>
       ${txnAmtCell(t)}
-      <td class="num" style="white-space:nowrap">${!linked?`<button class="mini-btn" title="Edit entry" onclick="giftTxnModal('${g.id}','${t.type}','${t.id}')">✎</button> <button class="mini-btn red" title="Delete entry" onclick="delGiftTxn('${g.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`; }).join('')
-    : `<tr><td colspan="5" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
+      ${giftPayModeCell(t)}
+      <td class="num" style="white-space:nowrap">${!linked?`${editBtn} <button class="mini-btn red" title="Delete entry" onclick="delGiftTxn('${g.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`; }).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(g.name),`
     <div style="max-width:360px;margin:0 auto 18px">${giftVisual(g)}</div>
     <div class="grid3" style="margin-bottom:16px">
@@ -5693,7 +5758,7 @@ function giftDetail(id){
       ${isOwner()?`<button class="btn-sm btn-ghost" onclick="giftAdjustModal('${g.id}')">✎ Edit balance</button>`:''}
       <button class="btn-sm btn-ghost" onclick="giftStatementModal('${g.id}')">📄 Statement (PDF)</button>
     </div>
-    <div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    <div class="table-wrap"><table style="min-width:540px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>Payment mode</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm btn-red" onclick="delGift('${g.id}')">Delete</button>
      <button class="btn-sm btn-ghost" onclick="editGift('${g.id}')">Edit</button>
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
@@ -5826,9 +5891,11 @@ function saveGiftTxn(id,type,txnId){
   giftDetail(id); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
 }
 function delGiftTxn(gid,tid){ if(!requireOnline())return; const g=giftById(gid); if(!g)return;
-  confirmBox('Delete entry?','This removes the ledger entry and recalculates the balance.',()=>{
+  const t0=(g.txns||[]).find(x=>x.id===tid); const isRecharge=t0&&t0.type==='load'&&Array.isArray(t0.pays);
+  confirmBox('Delete entry?', isRecharge?'This removes the recharge and reverses its payment (card / cash / gift-card legs) too.':'This removes the ledger entry and recalculates the balance.',()=>{
     const t=(g.txns||[]).find(x=>x.id===tid); logAct('delete','gift entry',g.name,t?`${txnLabel(t.type)} ${money(t.amount)}`:'');
-    g.txns=(g.txns||[]).filter(t=>t.id!==tid); save(); giftDetail(gid); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
+    if(isRecharge){ revertGiftRecharge(gid,tid); } else { g.txns=(g.txns||[]).filter(t=>t.id!==tid); }
+    save(); giftDetail(gid); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
   },'Delete'); }
 function giftAdjustModal(id){
   const g=giftById(id); if(!g)return; const bal=giftBalance(g);
@@ -7303,6 +7370,101 @@ function summPreset(w){ const t=todayStr(), base=new Date();
   const f=$('#summFrom'), tt=$('#summTo'); if(f)f.value=_summFrom; if(tt)tt.value=_summTo; renderBillSummary();
 }
 function summSetRange(){ _summFrom=$('#summFrom')?.value||''; _summTo=$('#summTo')?.value||''; renderBillSummary(); }
+
+/* =========================================================
+   MODE OF PAYMENT REPORT — purchases / sales filtered by payment
+   mode & date, newest first, with notes shown and an edit link.
+   ========================================================= */
+let _modeKind='sale', _modeMode='all', _modeFrom='', _modeTo='';
+function recNote(rec){
+  const parts=[];
+  if(rec.payNote && rec.payNote.trim()) parts.push(rec.payNote.trim());
+  (rec.payments||[]).forEach(pm=>{ const n=(pm.note||pm.payRef||'').trim(); if(n&&!parts.includes(n))parts.push(n); });
+  return parts.join(' · ');
+}
+/* does a record use the given payment mode? ('all' = any; 'split' = a multi-line bill;
+   otherwise any payment line of that mode, or the bill tag when there are no lines) */
+function recHasMode(rec,mode){
+  if(mode==='all')return true;
+  const lines=rec.payments||[];
+  if(mode==='split')return rec.payment==='split';
+  if(lines.some(pm=>pm.method===mode))return true;
+  if(!lines.length && rec.payment===mode)return true;
+  return false;
+}
+function modeOptions(kind){
+  if(kind==='sale')return [['all','All modes'],['cash','Cash'],['card','Card'],['bank','Bank Transfer'],['cheque','Cheque'],['other','Other']];
+  return [['all','All modes']].concat(PAY_METHODS.map(m=>[m.k,m.label])).concat([['split','Split (multiple)']]);
+}
+function modeRecords(){
+  const src=_modeKind==='sale'?DB.sales:DB.purchases;
+  const from=_modeFrom, to=_modeTo;
+  const inRange=d=> (!from||d>=from) && (!to||d<=to);
+  return src.filter(r=>inRange(r.date)&&recHasMode(r,_modeMode)).slice().sort((a,b)=> a.date<b.date?1:-1); // date descending
+}
+function modeProdSummary(rec){
+  const its = _modeKind==='sale' ? (rec.items||[]) : purchaseItems(rec);
+  const names = its.map(it=>{ const p=productById(it.productId); return p?p.name:'Item'; });
+  if(!names.length)return '—';
+  return esc(names[0])+(names.length>1?` <span style="color:var(--muted2)">+${names.length-1} more</span>`:'');
+}
+function openModeReport(kind){
+  _modeKind=kind; _modeMode='all'; _modeFrom=''; _modeTo='';
+  const noun=kind==='sale'?'Sales':'Purchases';
+  const opts=modeOptions(kind).map(([v,l])=>`<option value="${v}" ${v===_modeMode?'selected':''}>${l}</option>`).join('');
+  openModal(`💳 Mode of Payment Report — ${noun}`,`
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">Payment mode
+        <select id="modeSel" class="mini-btn" style="padding:7px" onchange="modeSetFilter()">${opts}</select></label>
+      <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap;color:var(--muted);font-size:12.5px">
+        <label style="display:flex;align-items:center;gap:5px">From <input id="modeFrom" type="date" class="mini-btn" style="padding:7px" value="${_modeFrom}" oninput="modeSetFilter()"></label>
+        <label style="display:flex;align-items:center;gap:5px">To <input id="modeTo" type="date" class="mini-btn" style="padding:7px" value="${_modeTo}" oninput="modeSetFilter()"></label>
+        <button class="mini-btn" onclick="modeClearDates()">Clear dates</button>
+      </div>
+    </div>
+    <div id="modeRepWrap"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>`);
+  renderModeReport();
+}
+function modeSetFilter(){ _modeMode=$('#modeSel')?.value||'all'; _modeFrom=$('#modeFrom')?.value||''; _modeTo=$('#modeTo')?.value||''; renderModeReport(); }
+function modeClearDates(){ _modeFrom=''; _modeTo=''; const f=$('#modeFrom'),t=$('#modeTo'); if(f)f.value=''; if(t)t.value=''; renderModeReport(); }
+function renderModeReport(){
+  const host=$('#modeRepWrap'); if(!host)return;
+  const isSale=_modeKind==='sale', recs=modeRecords(), noun=isSale?'Sales':'Purchases';
+  const total=recs.reduce((a,r)=> a + (isSale?(r.total||0):purchaseTotal(r)), 0);
+  if(!recs.length){ host.innerHTML=`<div style="background:var(--panel2,rgba(255,255,255,.02));border-radius:12px">${emptyBox('💳','Nothing matches','No '+noun.toLowerCase()+' for this payment mode / date range — widen the filters.')}</div>`; return; }
+  host.innerHTML=`
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:12px;color:var(--muted);font-size:13px">
+      <span><b style="color:var(--text);font-size:16px">${recs.length}</b> ${noun.toLowerCase()}</span>
+      <span style="margin-left:auto">Total value <b style="color:var(--gold2);font-size:16px">${money(total)}</b></span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;max-height:58vh;overflow:auto">
+    ${recs.map(r=>{
+      const ref = esc(isSale?(r.invoiceNo||r.billNo||'—'):(r.ref||'—'));
+      const party = esc((isSale?r.customer:r.supplier)||(isSale?'Walk-in':'—'));
+      const amt = isSale?(r.total||0):purchaseTotal(r);
+      const note = recNote(r);
+      const openFn = isSale?`closeModal();go('sales');newSale('${r.id}')`:`closeModal();go('purchases');newPurchase('${r.id}')`;
+      const viewFn = isSale?`closeModal();go('sales');openSalePdf('${r.id}')`:`closeModal();go('purchases');purchaseDetail('${r.id}')`;
+      return `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px 14px;background:var(--panel2,rgba(255,255,255,.02))">
+        <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <b style="font-size:14.5px">${ref}</b>
+          ${payMethodTag(r.payment||'cash')}
+          <span style="color:var(--muted);font-size:12.5px">${fmtDate(r.date)} · ${party}</span>
+          <b style="margin-left:auto;color:var(--gold2);font-size:15px">${money(amt)}</b>
+        </div>
+        <div style="color:var(--muted);font-size:12.5px;margin-top:6px">${modeProdSummary(r)}</div>
+        <div style="margin-top:9px;background:#33240f;border:1px solid #7a531d;border-radius:9px;padding:9px 11px;color:#f6c88a;font-size:13.5px;line-height:1.5;word-break:break-word">
+          <span style="opacity:.75;font-weight:700;margin-right:6px">📝 Note</span>${note?esc(note):'<span style="opacity:.6;font-style:italic">— no note recorded —</span>'}</div>
+        <div class="row-actions" style="margin-top:10px">
+          <button class="btn-sm btn-gold" onclick="${openFn}">✏️ Open &amp; Edit</button>
+          <button class="btn-sm btn-ghost" onclick="${viewFn}">${isSale?'🧾 View Bill':'👁 Details'}</button>
+        </div>
+      </div>`;
+    }).join('')}
+    </div>`;
+}
+
 function renderBillSummary(){ const host=$('#summPreviewWrap'); if(!host)return;
   const html=billSummaryHtml(_summKind,_summFrom,_summTo);
   host.innerHTML = html || `<div style="background:#fff;border-radius:10px">${emptyBox(summMeta(_summKind).icon,'Nothing in this period','Pick a wider date range — or a different day — to see a summary.')}</div>`;
