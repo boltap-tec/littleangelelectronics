@@ -2100,12 +2100,26 @@ function renderPurchases(){
     </tbody></table></div>`;
 }
 let buyItems=[], buySplits=[], _buyEditId='';
+/* Prefill a NEW blank bill with the product(s) from the most recently entered
+   bill of the same kind, so repeat buying/selling is fast. For purchases the
+   cost is seeded to each product's last purchase cost; for sales the rate is
+   left blank (the selling price is entered fresh). Everything stays editable. */
+function lastBillLines(kind){
+  const arr = kind==='sale' ? DB.sales : DB.purchases;
+  for(let i=arr.length-1;i>=0;i--){
+    const its = kind==='sale' ? (arr[i].items||[]) : purchaseItems(arr[i]);
+    const pids=[]; its.forEach(it=>{ if(productById(it.productId)&&!pids.includes(it.productId)) pids.push(it.productId); });
+    if(pids.length) return pids.map(pid=>({productId:pid,qty:1,rate: kind==='purchase'?(lastKnownRate(pid)||''):''}));
+  }
+  return [{productId:'',qty:1,rate:''}];
+}
 function newPurchase(id,prefillPid){
   const p=id?DB.purchases.find(x=>x.id===id):null;
   _buyEditId=id||'';
   buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}))
-    : (Array.isArray(prefillPid)&&prefillPid.length ? prefillPid.map(i=>({productId:i.productId,qty:+i.qty||1,rate:i.rate||''}))
-       : [{productId:prefillPid||'',qty:1,rate:''}]);
+    : (Array.isArray(prefillPid)&&prefillPid.length ? prefillPid.map(i=>({productId:i.productId,qty:+i.qty||1,rate:(i.rate!==''&&i.rate!=null)?i.rate:(lastKnownRate(i.productId)||'')}))
+       : (prefillPid ? [{productId:prefillPid,qty:1,rate:lastKnownRate(prefillPid)||''}]
+          : lastBillLines('purchase')));
   if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
   buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:normBuyMethod(pm.method),cardId:pm.cardId||'',giftId:pm.giftId||'',ref:pm.payRef||'',deductPct:pm.deductPct||'',amount:pm.amount}))
     : [{method:'card',cardId:'',giftId:'',ref:'',amount:''}];
@@ -3790,7 +3804,9 @@ function newSale(id,prefillPid){
   _salePaidTouched = true;   // never auto-fill — the amount received is entered manually
   saleDraft = s? s.items.map(i=>({...i}))
     : (Array.isArray(prefillPid)&&prefillPid.length ? prefillPid.map(i=>({productId:i.productId,qty:+i.qty||1,rate:i.rate||''}))
-       : [{productId:prefillPid||'',qty:1,rate:''}]);
+       : (prefillPid ? [{productId:prefillPid,qty:1,rate:''}]
+          : lastBillLines('sale')));
+  if(!saleDraft.length)saleDraft=[{productId:'',qty:1,rate:''}];
   const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   const pm0=s&&s.payments&&s.payments[0]?s.payments[0]:null; _saleDeduct0=pm0?(pm0.deductPct||''):'';
   const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):'none';
