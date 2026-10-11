@@ -1235,6 +1235,12 @@ const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const todayStr=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+// Newest-first comparator for date-stamped records. Same date → the record added later wins,
+// detected via its uid (ids from uid() start with a base-36 timestamp, so a larger id = added later).
+const _recUid=r=>(r&&r.id)||'';
+const dDesc=(a,b)=> (a.date<b.date?1:a.date>b.date?-1:0) || (_recUid(a)<_recUid(b)?1:_recUid(a)>_recUid(b)?-1:0);
+// Date of the most recently added record in a list — used to prefill a New form's date; today if none.
+const lastEntryDate=list=>{ const r=(list||[]).slice().sort(dDesc)[0]; return (r&&r.date)||todayStr(); };
 
 let DB, session=null, loginRole='owner';
 
@@ -1452,6 +1458,7 @@ function migrate(){
     DB.settings.creditRules.push({id:uid(),name:'ADCB 365',match:'ADCB 365',pct:null,maxCashback:null,capPeriod:'month',ignoreLimit:false});
   }
   (DB.products||[]).forEach(p=>{ if(p.compPrices===undefined)p.compPrices=[]; });
+  (DB.products||[]).forEach(p=>{ if(!Array.isArray(p.refs))p.refs=parseRefs(p.refs); });
 }
 load();
 
@@ -1668,6 +1675,11 @@ function computeEngine(){
 }
 function lastKnownRate(pid){ const rows=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid)rows.push({date:p.date,rate:+it.rate||0}); })); rows.sort((a,b)=>a.date<b.date?-1:1); return rows.length?rows[rows.length-1].rate:0; }
 function productById(id){ return DB.products.find(p=>p.id===id); }
+/* reference numbers: a product may carry one or more (e.g. "6651, 6695").
+   parseRefs turns any free-text input into a clean, de-duped list; refsStr joins it back. */
+function parseRefs(v){ if(Array.isArray(v))v=v.join(','); const seen=new Set(),out=[];
+  String(v||'').split(/[\s,;]+/).forEach(r=>{ r=r.trim(); if(r&&!seen.has(r.toLowerCase())){seen.add(r.toLowerCase());out.push(r);} }); return out; }
+function refsStr(p){ return (p&&Array.isArray(p.refs)?p.refs:[]).join(', '); }
 function stockOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s?s.qty:0; }
 function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s&&s.qty>0? s.totalCost/s.qty : lastKnownRate(pid); }
 /* average BUYING price for reference display — respects the Settings averaging window (falls back to moving-average) */
@@ -1699,6 +1711,8 @@ function allSuppliers(){ return uniqSorted(DB.purchases.map(p=>p.supplier)); }
 function allCustomers(){ return uniqSorted(DB.sales.map(s=>s.customer)); }
 function allCategories(){ return uniqSorted(DB.products.map(p=>p.category)); }
 function productsByRecent(){ return [...DB.products].sort((a,b)=>lastBuyKey(b.id).localeCompare(lastBuyKey(a.id))||a.name.localeCompare(b.name)); }
+/* newest product in the catalog first (product id is a time-ordered uid), name as tie-break */
+function productsByAdded(){ return [...DB.products].sort((a,b)=>(b.id||'').localeCompare(a.id||'')||a.name.localeCompare(b.name)); }
 function dataList(id,arr){ return `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`; }
 /* a <select> built from a list of values; keeps `cur` even if it isn't in the list (so editing an
    old card whose name/bank was never added to the master list still shows its value) */
@@ -1934,7 +1948,7 @@ views.dashboard=function(){
   let invValue=0,units=0;
   DB.products.forEach(p=>{const q=stockOf(p.id,eng); if(q>0){units+=q;invValue+=q*avgCostOf(p.id,eng);}});
   const owner=isOwner();
-  const recent=[...DB.sales].sort((a,b)=>a.date<b.date?1:-1).slice(0,6);
+  const recent=[...DB.sales].sort(dDesc).slice(0,6);
   return `
   <div class="page-head">
     <div><h2>Welcome back, ${esc(session.name)} 👋</h2><p>Here's what's happening at Little Angel Electronics today.</p></div>
@@ -2016,13 +2030,13 @@ views._after_products=renderProducts;
 function renderProducts(){
   const eng=computeEngine();
   const q=($('#prodSearch')?.value||'').toLowerCase();
-  const list=DB.products.filter(p=>p.name.toLowerCase().includes(q)||(p.category||'').toLowerCase().includes(q));
+  const list=DB.products.filter(p=>p.name.toLowerCase().includes(q)||(p.category||'').toLowerCase().includes(q)||(p.sku||'').toLowerCase().includes(q)||refsStr(p).toLowerCase().includes(q));
   const host=$('#prodList'); if(!host)return;
   if(!DB.products.length){ host.innerHTML=`<div class="panel">${emptyBox('🏷️','No products yet','Add your first electronics product to start.')}</div>`; return; }
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Product</th><th>Category</th><th>Unit</th><th class="num">In Stock</th><th class="num">Avg Cost</th><th></th></tr></thead>
     <tbody>${list.map(p=>{const s=stockOf(p.id,eng);return `<tr>
-      <td><div class="prodcell">${productThumbEdit(p)}<div><b>${esc(p.name)}</b>${colorChip(p)}${p.sku?`<div style="color:var(--muted2);font-size:11.5px">${esc(p.sku)}</div>`:''}</div></div></td>
+      <td><div class="prodcell">${productThumbEdit(p)}<div><b>${esc(p.name)}</b>${colorChip(p)}${p.sku?`<div style="color:var(--muted2);font-size:11.5px">${esc(p.sku)}</div>`:''}${refsStr(p)?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(refsStr(p))}</div>`:''}</div></div></td>
       <td>${esc(p.category||'—')}</td><td>${esc(p.unit||'pcs')}</td>
       <td class="num">${s<=S().lowStockLevel?`<span class="tag low">${num(s)}</span>`:num(s)}</td>
       <td class="num">${money(avgCostOf(p.id,eng))}</td>
@@ -2046,7 +2060,10 @@ function editProduct(id){
       <input id="p_color" value="${esc(p.color||'')}" placeholder="e.g. Blue Titanium / Space Black" oninput="_colorHex=guessHex(this.value);markSwatch();prodPreview()" style="margin-top:9px">
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Tip: for an item like iPhone with many colours, add one product per colour (e.g. "iPhone 15 Pro – Blue Titanium").</div>
     </div>
-    <div class="field"><label>SKU / Barcode (optional)</label><input id="p_sku" value="${esc(p.sku||'')}"></div>
+    <div class="grid2">
+      <div class="field"><label>SKU / Barcode (optional)</label><input id="p_sku" value="${esc(p.sku||'')}"></div>
+      <div class="field"><label>Reference No(s)</label><input id="p_refs" value="${esc(refsStr(p))}" placeholder="e.g. 6651, 6695"><div style="color:var(--muted2);font-size:11px;margin-top:5px">One or more — separate with commas. You can search any of these when adding a purchase.</div></div>
+    </div>
     <div class="field"><label>Product Photo</label>
       <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
         <div id="p_preview">${productThumb(p,'lg')}</div>
@@ -2099,7 +2116,7 @@ function saveProduct(id){
   if(!requireOnline())return;
   const name=$('#p_name').value.trim(); if(!name)return toast('Product name is required',1);
   const color=$('#p_color').value.trim();
-  const data={name,category:$('#p_cat').value.trim(),unit:$('#p_unit').value.trim()||'pcs',sku:$('#p_sku').value.trim(),imageUrl:_imgBuf||'',color,colorHex:color?(_colorHex||guessHex(color)):''};
+  const data={name,category:$('#p_cat').value.trim(),unit:$('#p_unit').value.trim()||'pcs',sku:$('#p_sku').value.trim(),refs:parseRefs($('#p_refs')?.value),imageUrl:_imgBuf||'',color,colorHex:color?(_colorHex||guessHex(color)):''};
   if(id){const p=productById(id);const before=p?p.name:'';Object.assign(p,data);logAct('edit','product',data.name,before&&before!==data.name?`${before} → ${data.name}`:'details updated');} else {DB.products.push({id:uid(),...data});}
   save();closeModal();renderProducts();toast('Product saved');
 }
@@ -2177,7 +2194,7 @@ function renderPurchases(){
   const host=$('#buyList'); if(!host)return;
   const q=($('#buySearch')?.value||'').toLowerCase().trim();
   const match=p=> !q || purchaseSearchBlob(p).includes(q);
-  const rows=[...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).filter(match);
+  const rows=[...DB.purchases].sort(dDesc).filter(match);
   if(!DB.purchases.length){host.innerHTML=`<div class="panel">${emptyBox('📥','No purchases yet','Record your first stock purchase.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Ref</th><th>Order No</th><th>Date</th><th>Products</th><th class="num">Qty</th><th class="num">Total</th><th>Supplier</th><th>Method</th><th>Payment</th><th></th></tr></thead>
@@ -2224,7 +2241,7 @@ function renderPurchaseModal(){
   openModal(`${id?'Edit':'New'} Purchase`,`
     ${flowScaffold('b_flow',['Products','Payment','Settled'])}
     <div class="grid3">
-      <div class="field"><label>Date *</label><input id="b_date" type="date" value="${p?p.date:todayStr()}"></div>
+      <div class="field"><label>Date *</label><input id="b_date" type="date" value="${p?p.date:lastEntryDate(DB.purchases)}"></div>
       <div class="field"><label>Supplier (purchaser name)</label><input id="b_sup" list="dl_sup" value="${esc(p?p.supplier||'':'')}" placeholder="e.g. Carrefour Deira">${dataList('dl_sup',allSuppliers())}</div>
       <div class="field"><label>Order No.</label><input id="b_orderno" value="${esc(p?p.orderNo||'':'')}" placeholder="supplier bill / order no — auto if blank"></div>
     </div>
@@ -2237,6 +2254,7 @@ function renderPurchaseModal(){
         <div class="field"><label>Category</label><input id="np_cat" autocomplete="off" list="dl_cat" placeholder="new or existing">${dataList('dl_cat',allCategories())}</div>
         <div class="field"><label>Colour</label><input id="np_color" autocomplete="off" placeholder="optional"></div>
       </div>
+      <div class="field" style="margin-bottom:10px"><label>Reference No(s)</label><input id="np_refs" autocomplete="off" placeholder="optional — e.g. 6651, 6695"></div>
       <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn gold" onclick="buyAddNewProduct()">Add to list</button><button class="mini-btn" onclick="buyNewProdToggle()">Close</button></div>
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Payment — cash / card / combination *</label>
@@ -2252,7 +2270,7 @@ function renderPurchaseModal(){
   renderBuyRows(); renderBuySplits();
 }
 function buyProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
-  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByRecent().map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}</option>`;}).join(''); }
+  return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByAdded().map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng),rf=refsStr(x);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}${rf?' · ref '+esc(rf):''}</option>`;}).join(''); }
 function renderBuyRows(){
   const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, bp=it.productId?avgBuyPrice(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
@@ -2280,12 +2298,12 @@ function buyPickMulti(){
     renderBuyRows(); flashNewRow('#b_rows .li-row'); }});
 }
 function buyNewProdToggle(){ const w=$('#b_newprod'); if(!w)return; const show=w.style.display==='none'; w.style.display=show?'':'none';
-  if(show){ ['#np_name','#np_cat','#np_color'].forEach(s=>{const el=$(s);if(el)el.value='';}); setTimeout(()=>$('#np_name')?.focus(),30); } }
+  if(show){ ['#np_name','#np_cat','#np_color','#np_refs'].forEach(s=>{const el=$(s);if(el)el.value='';}); setTimeout(()=>$('#np_name')?.focus(),30); } }
 function buyAddNewProduct(){
   if(!requireOnline())return;
   const name=$('#np_name').value.trim(); if(!name)return toast('Enter a product name',1);
   const color=$('#np_color').value.trim();
-  const np={id:uid(),name,category:$('#np_cat').value.trim(),unit:'pcs',sku:'',imageUrl:'',color,colorHex:color?guessHex(color):''};
+  const np={id:uid(),name,category:$('#np_cat').value.trim(),unit:'pcs',sku:'',refs:parseRefs($('#np_refs')?.value),imageUrl:'',color,colorHex:color?guessHex(color):''};
   DB.products.push(np); save();
   buyItems.push({productId:np.id,qty:1,rate:''});
   buyNewProdToggle(); renderBuyRows(); toast('Product "'+name+'" added');
@@ -3287,7 +3305,7 @@ function renderOnline(){
   const hideDone=$('#onlHideDone')?.checked;
   const match=o=> onlItemsArr(o).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);})
     || (o.platform||'').toLowerCase().includes(q) || (o.supplier||'').toLowerCase().includes(q) || (o.ref||'').toLowerCase().includes(q) || (o.orderNo||'').toLowerCase().includes(q) || (o.tracking||'').toLowerCase().includes(q);
-  let rows=[...(DB.online||[])].sort((a,b)=>(a.orderDate<b.orderDate?1:a.orderDate>b.orderDate?-1:0)).filter(match);
+  let rows=[...(DB.online||[])].sort((a,b)=>(a.orderDate<b.orderDate?1:a.orderDate>b.orderDate?-1:0)||(_recUid(a)<_recUid(b)?1:_recUid(a)>_recUid(b)?-1:0)).filter(match);
   if(hideDone) rows=rows.filter(o=>o.status!=='delivered'&&o.status!=='cancelled'&&o.status!=='returned');
   if(!(DB.online||[]).length){ host.innerHTML=`<div class="panel">${emptyBox('🛒','No online orders yet','Record an order you placed online. It waits here until it arrives, then moves into inventory.')}</div>`; return; }
   if(!rows.length){ host.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No online orders match your filter.')}</div>`; return; }
@@ -3866,7 +3884,7 @@ function renderSales(){
   const host=$('#saleList'); if(!host)return;
   const q=($('#saleSearch')?.value||'').toLowerCase();
   const eng=isOwner()?computeEngine():null;
-  const rows=[...DB.sales].sort((a,b)=>a.date<b.date?1:-1).filter(s=>s.invoiceNo.toLowerCase().includes(q)||(s.customer||'').toLowerCase().includes(q)||(s.billNo||'').toLowerCase().includes(q));
+  const rows=[...DB.sales].sort(dDesc).filter(s=>s.invoiceNo.toLowerCase().includes(q)||(s.customer||'').toLowerCase().includes(q)||(s.billNo||'').toLowerCase().includes(q));
   if(!DB.sales.length){host.innerHTML=`<div class="panel">${emptyBox('🧾','No sales yet','Create your first sales bill.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>Invoice</th><th>Bill No</th><th>Date</th><th>Customer</th><th>Product</th><th class="num">Total</th>${isOwner()?'<th class="num">Profit</th>':''}<th>Method</th><th>Payment</th><th></th></tr></thead>
@@ -3889,7 +3907,7 @@ let _saleEditId='', _saleOldQty={};
 function saleAvail(pid,eng){ return stockOf(pid,eng||computeEngine()) + (_saleOldQty[pid]||0); }
 /* when a known customer is picked, auto-fill phone/address/VAT from their most recent bill (only empty fields) */
 function saleCustAutofill(){ const name=($('#s_cust')?.value||'').trim().toLowerCase(); if(!name)return;
-  const past=[...DB.sales].filter(s=>(s.customer||'').trim().toLowerCase()===name).sort((a,b)=>a.date<b.date?1:-1)[0]; if(!past)return;
+  const past=[...DB.sales].filter(s=>(s.customer||'').trim().toLowerCase()===name).sort(dDesc)[0]; if(!past)return;
   const ph=$('#s_phone'), ad=$('#s_addr'), vt=$('#s_vat');
   if(ph&&!ph.value.trim()&&past.custPhone)ph.value=past.custPhone;
   if(ad&&!ad.value.trim()&&past.custAddress)ad.value=past.custAddress;
@@ -3905,7 +3923,7 @@ function newSale(id,prefillPid){
        : (prefillPid ? [{productId:prefillPid,qty:1,rate:''}]
           : lastBillLines('sale')));
   if(!saleDraft.length)saleDraft=[{productId:'',qty:1,rate:''}];
-  const cust=s?s.customer:'', date=s?s.date:todayStr(), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
+  const cust=s?s.customer:'', date=s?s.date:lastEntryDate(DB.sales), pay=s?s.payment:'cash', disc=s?s.discount:0, phone=s?s.custPhone:'', paid=s?s.paid:null;
   const pm0=s&&s.payments&&s.payments[0]?s.payments[0]:null; _saleDeduct0=pm0?(pm0.deductPct||''):''; _saleNote0=s?(s.payNote||(pm0&&pm0.note)||''):'';
   const addr=s?(s.custAddress||''):'', vatNo=s?(s.custVat||''):'', vmode=s?(s.vatMode||(s.vat>0?'exclusive':'none')):'none';
   const collBy=s?(s.collectedBy||s.byId||session.id):session.id;
@@ -4296,14 +4314,14 @@ function renderPayments(){
     <div class="stat amber"><span class="ic">📈</span><div class="label">Receivables</div><div class="val">${money(recv)}</div><div class="foot">To collect from customers</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Payables</div><div class="val">${money(payl)}</div><div class="foot">To pay suppliers</div></div>`;
 
-  const recvRows=DB.sales.filter(s=>s.total-(s.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
+  const recvRows=DB.sales.filter(s=>s.total-(s.paid||0)>0.01).sort(dDesc);
   $('#recvList').innerHTML=recvRows.length?`<div class="scrollx"><div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
     <tbody>${recvRows.map(s=>`<tr><td><b>${esc(s.invoiceNo)}</b></td><td>${esc(s.customer||'Walk-in')}</td><td class="num">${money(s.total)}</td>
       <td class="num" style="color:var(--amber)">${money(s.total-(s.paid||0))}</td>
       <td class="num"><button class="mini-btn gold" onclick="recordPay('sale','${s.id}')">Collect</button></td></tr>`).join('')}</tbody></table></div></div>`
     :emptyBox('✅','All collected','No customer balances outstanding.');
 
-  const payRows=DB.purchases.filter(p=>purchaseTotal(p)-(p.paid||0)>0.01).sort((a,b)=>a.date<b.date?1:-1);
+  const payRows=DB.purchases.filter(p=>purchaseTotal(p)-(p.paid||0)>0.01).sort(dDesc);
   $('#payblList').innerHTML=payRows.length?`<div class="scrollx"><div class="table-wrap"><table><thead><tr><th>Ref</th><th>Supplier</th><th class="num">Total</th><th class="num">Balance</th><th></th></tr></thead>
     <tbody>${payRows.map(p=>`<tr><td><b>${esc(p.ref)}</b></td><td>${esc(p.supplier||'—')}</td><td class="num">${money(purchaseTotal(p))}</td>
       <td class="num" style="color:var(--red)">${money(purchaseTotal(p)-(p.paid||0))}</td>
@@ -4311,9 +4329,9 @@ function renderPayments(){
     :emptyBox('✅','All settled','No supplier balances outstanding.');
 
   const led=[];
-  DB.sales.forEach(s=>(s.payments||[]).forEach(pm=>led.push({date:pm.date,type:'IN',party:s.customer||'Walk-in',doc:s.invoiceNo,method:pm.method,amount:pm.amount})));
-  DB.purchases.forEach(p=>(p.payments||[]).forEach(pm=>led.push({date:pm.date,type:'OUT',party:p.supplier||'—',doc:p.ref,method:pm.method,amount:pm.amount})));
-  led.sort((a,b)=>a.date<b.date?1:-1);
+  DB.sales.forEach(s=>(s.payments||[]).forEach(pm=>led.push({id:pm.id,date:pm.date,type:'IN',party:s.customer||'Walk-in',doc:s.invoiceNo,method:pm.method,amount:pm.amount})));
+  DB.purchases.forEach(p=>(p.payments||[]).forEach(pm=>led.push({id:pm.id,date:pm.date,type:'OUT',party:p.supplier||'—',doc:p.ref,method:pm.method,amount:pm.amount})));
+  led.sort(dDesc);
   const show=led.slice(0,40);
   $('#ledgerList').innerHTML=show.length?`<div class="scrollx"><div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>Party</th><th>Method</th><th class="num">Amount</th></tr></thead>
     <tbody>${show.map(l=>`<tr><td>${fmtDate(l.date)}</td>
@@ -4722,9 +4740,9 @@ document.addEventListener('keydown',e=>{
   if(k==='Enter') playType('enter'); else if(k==='Backspace'||k==='Delete') playType('back'); else if(k&&k.length===1) playType();
 },true);
 function recentActivity(n){ const a=[];
-  DB.sales.forEach(s=>a.push({t:'sale',date:s.date,ref:s.invoiceNo,name:s.customer||'Walk-in',amt:s.total}));
-  DB.purchases.forEach(p=>a.push({t:'purchase',date:p.date,ref:p.ref,name:p.supplier||'—',amt:purchaseTotal(p)}));
-  a.sort((x,y)=>x.date<y.date?1:(x.date>y.date?-1:0)); return a.slice(0,n||5); }
+  DB.sales.forEach(s=>a.push({id:s.id,t:'sale',date:s.date,ref:s.invoiceNo,name:s.customer||'Walk-in',amt:s.total}));
+  DB.purchases.forEach(p=>a.push({id:p.id,t:'purchase',date:p.date,ref:p.ref,name:p.supplier||'—',amt:purchaseTotal(p)}));
+  a.sort(dDesc); return a.slice(0,n||5); }
 /* add a purchase charge to a card + auto redeem points (respecting monthly cap) */
 function chargeCard(c,amount,date,note,srcPurchaseId){
   if(!c.txns)c.txns=[];
@@ -5106,8 +5124,8 @@ function ownerStatement(owner){
   const cards=(DB.cards||[]).filter(c=>cardOwnerLabel(c)===owner);
   if(!cards.length)return;
   let tL=0,tO=0,tD=0; cards.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); tD+=cardCashbackUsed(c,todayStr()); });
-  const led=[]; cards.forEach(c=>(c.txns||[]).forEach(t=>led.push({card:c.name,date:t.date,type:t.type,amount:+t.amount||0,note:t.note})));
-  led.sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
+  const led=[]; cards.forEach(c=>(c.txns||[]).forEach(t=>led.push({id:t.id,card:c.name,date:t.date,type:t.type,amount:+t.amount||0,note:t.note})));
+  led.sort(dDesc);
   const rows=led.length? led.slice(0,120).map(t=>`<tr>
       <td>${fmtDate(t.date)}</td><td>${esc(t.card)}</td>
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
@@ -5131,7 +5149,7 @@ function cardDetail(id){
   const c=cardById(id); if(!c)return;
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, info=cardDueInfo(c);
   const _cbcfg=cardCashbackCfg(c), discUsed=cardCashbackUsed(c,todayStr()), cap=_cbcfg.cap;
-  const txns=[...(c.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
+  const txns=[...(c.txns||[])].sort(dDesc);
   const rows=txns.length? txns.map(t=>`<tr>
       <td>${fmtDate(t.date)}</td>
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
@@ -5613,7 +5631,7 @@ let _giftShowHist=true;   // overall gift-card history shown by default
 function toggleGiftHist(){ _giftShowHist=!_giftShowHist; renderGiftCards(); }
 /* every gift-card transaction across all cards, newest first */
 function giftAllTxns(){ const out=[]; (DB.giftcards||[]).forEach(g=>{ (g.txns||[]).forEach(t=>out.push({...t,giftId:g.id,giftName:g.name})); });
-  out.sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0)); return out; }
+  out.sort(dDesc); return out; }
 /* ---- payment mode of a recharge (how the gift card was paid for) ---- */
 function giftPayList(t){ return (t&&Array.isArray(t.pays))?t.pays:[]; }
 function giftPayModeText(t){ if(!t||t.type!=='load')return '—'; const ps=giftPayList(t); if(!ps.length)return '—';
@@ -5945,7 +5963,7 @@ function revertGiftRecharge(gid,txnId){
 function giftDetail(id){
   const g=giftById(id); if(!g)return; const bal=giftBalance(g);
   let loaded=0,spent=0; (g.txns||[]).forEach(t=>{ if(t.type==='load')loaded+=+t.amount||0; else if(t.type==='spend')spent+=+t.amount||0; });
-  const txns=[...(g.txns||[])].sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
+  const txns=[...(g.txns||[])].sort(dDesc);
   const rows=txns.length? txns.map(t=>{ const linked=t.srcPurchaseId||t.srcSaleId;
     const editBtn = t.type==='load'
       ? `<button class="mini-btn" title="Edit recharge &amp; payment mode" onclick="editGiftRecharge('${g.id}','${t.id}')">✎</button>`
@@ -6254,14 +6272,32 @@ function invCatTotalsHtml(catAgg,totUnits,totVal){
     </table></div></div>`;
 }
 function invRow(x){
-  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}`;
+  const rf=refsStr(x.p);
+  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}<button class="mini-btn" onclick="editRefs('${x.p.id}')" title="Add or edit reference numbers">✎ Ref</button>`;
   return `<tr>
-    <td><div class="prodcell">${productThumbEdit(x.p)}<b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history" style="color:${prodNameColor(x.p)}">${esc(x.p.name)}</b></div></td>
+    <td><div class="prodcell">${productThumbEdit(x.p)}<div><b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history" style="color:${prodNameColor(x.p)}">${esc(x.p.name)}</b>${rf?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(rf)}</div>`:''}</div></div></td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
     <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
     <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td>
     <td class="num" style="white-space:nowrap">${acts}</td></tr>`;
+}
+/* quick reference-number editor, opened from an Inventory row — edits the same p.refs as the product form */
+function editRefs(id){
+  const p=productById(id); if(!p)return;
+  openModal('Reference No(s) — '+esc(p.name),`
+    <div class="field"><label>Reference No(s)</label><input id="er_refs" value="${esc(refsStr(p))}" placeholder="e.g. 6651, 6695">
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">One or more — separate with commas. Any of these can be searched when adding a purchase.</div></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveRefs('${id}')">Save</button>`);
+  setTimeout(()=>$('#er_refs')?.focus(),30);
+}
+function saveRefs(id){
+  if(!requireOnline())return;
+  const p=productById(id); if(!p)return;
+  p.refs=parseRefs($('#er_refs')?.value);
+  logAct('edit','product',p.name,'reference no(s) updated');
+  save(); closeModal(); renderInventory(); toast('Reference no(s) saved');
 }
 const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
 
@@ -6398,7 +6434,7 @@ function productHistoryData(pid){
   const pr=productById(pid); if(!pr)return null; const eng=computeEngine();
   const buys=[]; DB.purchases.forEach(p=>purchaseItems(p).forEach(it=>{ if(it.productId===pid) buys.push({date:p.date,ref:p.ref,orderNo:p.orderNo||p.ref||'',supplier:p.supplier||'',remark:purchasePayFull(p.payments),id:p.id,qty:+it.qty||0,rate:+it.rate||0}); }));
   const sells=[]; DB.sales.forEach(s=>s.items.forEach(it=>{ if(it.productId===pid) sells.push({date:s.date,inv:s.invoiceNo,id:s.id,cust:s.customer||'Walk-in',qty:+it.qty||0,rate:+it.rate||0}); }));
-  buys.sort((a,b)=>a.date<b.date?1:-1); sells.sort((a,b)=>a.date<b.date?1:-1);
+  buys.sort(dDesc); sells.sort(dDesc);
   return {pr,eng,buys,sells,bal:stockOf(pid,eng),avg:avgCostOf(pid,eng),owner:isOwner()};
 }
 /* per-product purchase + sales history */
@@ -6582,7 +6618,7 @@ function renderInventory(){
     if(qty>0){totUnits+=qty;totVal+=val; const cat=(p.category||'').trim()||'Uncategorised'; const a=catAgg[cat]||(catAgg[cat]={items:0,pcs:0,val:0}); a.items++; a.pcs+=qty; a.val+=val;}
     if(qty<=0)out++; else if(qty<=S().lowStockLevel)low++;
     return {p,qty,avg,val,bought:totalBought(p.id),sold:totalSold(p.id),last:lastBuyDate(p.id)};})
-    .filter(x=>x.p.name.toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q));
+    .filter(x=>x.p.name.toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q)||refsStr(x.p).toLowerCase().includes(q));
   const cc=$('#invCards'); if(cc)cc.innerHTML=`
     <div class="stat"><span class="ic">📦</span><div class="label">Inventory Value</div><div class="val">${money(totVal)}</div><div class="foot">${num(totUnits)} units</div></div>
     <div class="stat"><span class="ic">🔢</span><div class="label">Total Pieces</div><div class="val">${num(totUnits)}</div><div class="foot">all in-stock items</div></div>
@@ -7181,8 +7217,8 @@ function bsModeCell(r,fallback){
 }
 function bsReportData(inR){
   const eng=computeEngine();
-  const purch=(DB.purchases||[]).filter(p=>inR(p.date)).sort((a,b)=>a.date<b.date?1:-1);
-  const sales=(DB.sales||[]).filter(s=>inR(s.date)).sort((a,b)=>a.date<b.date?1:-1);
+  const purch=(DB.purchases||[]).filter(p=>inR(p.date)).sort(dDesc);
+  const sales=(DB.sales||[]).filter(s=>inR(s.date)).sort(dDesc);
   const pTotal=purch.reduce((a,p)=>a+purchaseTotal(p),0);
   const pPaid=purch.reduce((a,p)=>a+(+p.paid||0),0);
   const pCredit=purch.reduce((a,p)=>a+Math.max(0,purchaseTotal(p)-(+p.paid||0)),0);
@@ -7624,7 +7660,7 @@ function modeRecords(){
   const from=_modeFrom, to=_modeTo, q=(_modeSearch||'').trim().toLowerCase();
   const inRange=d=> (!from||d>=from) && (!to||d<=to);
   const matchQ=r=> !q || String(modeRef(r)).toLowerCase().includes(q) || String(modeParty(r)).toLowerCase().includes(q) || String(recNote(r)).toLowerCase().includes(q);
-  return src.filter(r=>inRange(r.date)&&recHasMode(r,_modeMode)&&matchQ(r)).slice().sort((a,b)=> a.date<b.date?1:-1); // date descending
+  return src.filter(r=>inRange(r.date)&&recHasMode(r,_modeMode)&&matchQ(r)).slice().sort(dDesc); // date descending, newest-added first
 }
 function modeProdSummary(rec){
   const its = _modeKind==='sale' ? (rec.items||[]) : purchaseItems(rec);
@@ -8867,14 +8903,13 @@ function invMoveDetails(from,to){
     const gross=purchaseGross(p), pend=Math.max(0,purchaseTotal(p)-(+p.paid||0)), pf=gross>0?pend/gross:0;
     purchaseItems(p).forEach(it=>{ if(!match(it.productId))return;
       const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0, amt=qty*rate;
-      buys.push({date:d,name:pr?pr.name:'—',where:p.supplier||'',orderNo:p.orderNo||p.ref||'',qty,rate,amt,pending:amt*pf}); }); });
+      buys.push({id:p.id,date:d,name:pr?pr.name:'—',where:p.supplier||'',orderNo:p.orderNo||p.ref||'',qty,rate,amt,pending:amt*pf}); }); });
   const sells=[]; DB.sales.forEach(s=>{ const d=s.date||''; if(!inWin(d))return;
     const gross=(s.items||[]).reduce((a,it)=>a+(+it.qty||0)*(+it.rate||0),0), pend=Math.max(0,(+s.total||0)-(+s.paid||0)), pf=gross>0?pend/gross:0;
     (s.items||[]).forEach(it=>{ if(!match(it.productId))return;
       const pr=productById(it.productId), qty=+it.qty||0, rate=+it.rate||0, amt=qty*rate;
-      sells.push({date:d,name:pr?pr.name:'—',where:s.customer||'Walk-in',inv:s.invoiceNo||'',qty,rate,amt,pending:amt*pf}); }); });
-  const byDate=(a,b)=>a.date<b.date?1:(a.date>b.date?-1:0);
-  buys.sort(byDate); sells.sort(byDate);
+      sells.push({id:s.id,date:d,name:pr?pr.name:'—',where:s.customer||'Walk-in',inv:s.invoiceNo||'',qty,rate,amt,pending:amt*pf}); }); });
+  buys.sort(dDesc); sells.sort(dDesc);
   return {buys,sells};
 }
 function invMoveDetailTablesHtml(from,to){
@@ -9584,7 +9619,7 @@ function exportSalesExcel(){
   const head=['Invoice','Date','Customer','Phone','Items','Subtotal','Discount','VAT %','VAT','Total','Paid','Balance','Payment','Status'];
   if(isOwner())head.push('Profit');
   const rows=[head];
-  [...DB.sales].sort((a,b)=>a.date<b.date?1:-1).forEach(s=>{ const bal=s.total-(s.paid||0);
+  [...DB.sales].sort(dDesc).forEach(s=>{ const bal=s.total-(s.paid||0);
     const r=[s.invoiceNo,s.date,s.customer||'Walk-in',s.custPhone||'',s.items.length,num2(s.subtotal),num2(s.discount),s.vatPercent||0,num2(s.vat),num2(s.total),num2(s.paid),num2(bal),(s.payment||'').toUpperCase(),payStatus(s.total,s.paid).toUpperCase()];
     if(isOwner())r.push(num2(netOf(s)-(eng.saleCost[s.id]||0)));
     rows.push(r); });
@@ -9593,7 +9628,7 @@ function exportSalesExcel(){
 function exportPurchasesExcel(){
   const head=['Ref','Date','Supplier','Products','Qty','Items Total','Discount','Net Total','Paid','Balance','Method','Status'];
   const rows=[head];
-  [...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).forEach(p=>{ const gross=purchaseGross(p),disc=purchaseDiscount(p),tot=purchaseTotal(p),bal=tot-(p.paid||0);
+  [...DB.purchases].sort(dDesc).forEach(p=>{ const gross=purchaseGross(p),disc=purchaseDiscount(p),tot=purchaseTotal(p),bal=tot-(p.paid||0);
     const names=purchaseItems(p).map(it=>{const pr=productById(it.productId);return pr?pr.name:'Item';}).join(', ');
     rows.push([p.ref,p.date,p.supplier||'',names,num2(purchaseQty(p)),num2(gross),num2(disc),num2(tot),num2(p.paid),num2(bal),(p.payment||'cash').toUpperCase(),payStatus(tot,p.paid).toUpperCase()]); });
   exportExcel('purchases_report_'+todayStr()+'.xlsx',[{name:'Purchases',rows}]);
