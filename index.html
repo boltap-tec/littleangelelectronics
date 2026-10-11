@@ -7562,7 +7562,7 @@ function billSummaryHtml(kind, from, to){
     <tbody>${g.bills.map(b=>`<tr>
       <td><b>${esc(b.ref)}</b></td>
       <td>${esc(b.party)}</td>
-      <td class="psum">${b.prods.map(x=>`<div class="pl">${esc(x.name)} <em>×${N(x.qty)}</em></div>`).join('')}</td>
+      <td class="psum">${b.prods.map(x=>`<div class="pl">${esc(x.name)} <em>×${N(x.qty)}</em> <span class="rt">@ ${M(x.amount/(x.qty||1))}</span></div>`).join('')}</td>
       <td class="r qc">${N(b.qty)}</td>
       <td class="r"><b>${M(b.amount)}</b></td></tr>`).join('')}</tbody></table>`).join('');
   const noteHtml = kind==='sale'
@@ -7594,6 +7594,7 @@ function billSummaryHtml(kind, from, to){
       #summArea .ds-t td.psum .pl{display:block;flex:none;overflow-wrap:anywhere}
       #summArea .ds-t td.psum .pl+.pl{margin-top:2px;padding-top:2px;border-top:1px dashed #eee}
       #summArea .ds-t td.psum em{font-style:normal;color:#9a8450;font-weight:700}
+      #summArea .ds-t td.psum .pl .rt{color:#8a8a8a;font-weight:600}
       #summArea .ds-t tr.tot td{background:#faf6ec;border-top:2px solid #c9962f;border-bottom:none;font-weight:800;color:#111}
       #summArea .shr{width:150px}
       #summArea .shr .shrw{display:inline-block;width:92px;height:7px;background:#eee;border-radius:4px;overflow:hidden;vertical-align:middle}
@@ -7906,9 +7907,9 @@ function billSummaryExcel(){
   d.prods.forEach(p=>prodRows.push([p.name,num2(p.qty),p.bills,num2(p.amount)]));
   prodRows.push(['TOTAL ('+d.prodCount+' products)',num2(d.totQty),d.totBills,num2(d.totAmount)]);
   const billHdr = m.billWord==='bill' ? 'Invoice' : 'Ref';
-  const dateRows=[['Date',billHdr,m.partyLabel,'Product',m.qtyLabel,m.valLabel]];
-  d.dates.forEach(g=>g.bills.forEach(b=>b.prods.forEach((x,i)=>dateRows.push([i===0?fmtDate(g.date):'',i===0?b.ref:'',i===0?b.party:'',x.name,num2(x.qty),num2(x.amount)]))));
-  dateRows.push(['TOTAL ('+d.totBills+' '+m.billWord+'s)','','','',num2(d.totQty),num2(d.totAmount)]);
+  const dateRows=[['Date',billHdr,m.partyLabel,'Product',m.qtyLabel,'Unit rate',m.valLabel]];
+  d.dates.forEach(g=>g.bills.forEach(b=>b.prods.forEach((x,i)=>dateRows.push([i===0?fmtDate(g.date):'',i===0?b.ref:'',i===0?b.party:'',x.name,num2(x.qty),num2(x.amount/(x.qty||1)),num2(x.amount)]))));
+  dateRows.push(['TOTAL ('+d.totBills+' '+m.billWord+'s)','','','',num2(d.totQty),'',num2(d.totAmount)]);
   exportExcel(m.fileTag+'_summary_'+(_summFrom||'all')+'.xlsx',[{name:'By product',rows:prodRows},{name:'Bills by date',rows:dateRows}]);
 }
 /* =========================================================
