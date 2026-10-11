@@ -8934,6 +8934,7 @@ views.invmove=function(){
       <input id="imTo" type="date" class="mini-btn" style="padding:9px" oninput="renderInvMove()" title="To date">
       <button class="btn-sm btn-ghost" onclick="clearInvMoveRange()">Clear</button>
       <label class="chk" style="align-self:center;white-space:nowrap"><input type="checkbox" id="imAll" onchange="renderInvMove()"> Show all products</label>
+      <label class="chk" style="align-self:center;white-space:nowrap"><input type="checkbox" id="imDaily" onchange="renderInvMove()"> Day-wise</label>
       <button class="btn-sm btn-green" onclick="exportInvMoveExcel()">⬇ Excel</button>
       <button class="btn-sm btn-ghost" onclick="pdfInvMove()">📄 PDF</button>
     </div></div>
@@ -8946,16 +8947,33 @@ views._after_invmove=()=>{ if(!canView('invmove'))return; const f=$('#imFrom'),t
   if(f&&!f.value){ const d=new Date(); d.setDate(1); f.value=isoDate(d); }   // default: this month to date
   renderInvMove(); };
 function clearInvMoveRange(){ if($('#imFrom'))$('#imFrom').value=''; if($('#imTo'))$('#imTo').value=''; renderInvMove(); }
-function invMoveRows(){
-  const from=$('#imFrom')?.value||'', to=$('#imTo')?.value||'';
-  const all=!!$('#imAll')?.checked, q=($('#imSearch')?.value||'').trim().toLowerCase();
-  const mv=inventoryMovement(from,to);
+/* build movement rows from a computed movement map, applying show-all / search filters */
+function invMoveBuildRows(mv, all, q){
   let rows=DB.products.map(p=>{ const m=mv[p.id]||{opening:0,purchased:0,sold:0};
     return { p, opening:m.opening, purchased:m.purchased, sold:m.sold, closing:m.opening+m.purchased-m.sold }; });
   if(!all) rows=rows.filter(r=> Math.abs(r.opening)>1e-9||Math.abs(r.purchased)>1e-9||Math.abs(r.sold)>1e-9||Math.abs(r.closing)>1e-9);
   if(q) rows=rows.filter(r=>[r.p.name,r.p.category].some(v=>(v||'').toLowerCase().includes(q)));
   rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
-  return {rows,from,to};
+  return rows;
+}
+function invMoveRows(){
+  const from=$('#imFrom')?.value||'', to=$('#imTo')?.value||'';
+  const all=!!$('#imAll')?.checked, q=($('#imSearch')?.value||'').trim().toLowerCase();
+  return { rows:invMoveBuildRows(inventoryMovement(from,to), all, q), from, to };
+}
+/* day-wise breakdown: one entry per date (with activity) inside the range.
+   Each day's Opening = net stock before that day, so the days chain continuously. */
+function invMoveDayList(from,to){
+  const all=!!$('#imAll')?.checked, q=($('#imSearch')?.value||'').trim().toLowerCase();
+  const inWin=d=>(!from||d>=from)&&(!to||d<=to);
+  const set=new Set();
+  DB.purchases.forEach(p=>{ const d=p.date||''; if(d&&inWin(d))set.add(d); });
+  DB.sales.forEach(s=>{ const d=s.date||''; if(d&&inWin(d))set.add(d); });
+  return [...set].sort().map(d=>{
+    let rows=invMoveBuildRows(inventoryMovement(d,d), true, q);         // all products for the day…
+    if(!all) rows=rows.filter(r=> r.purchased>1e-9||r.sold>1e-9);       // …then keep only what actually moved
+    return { date:d, rows };
+  });
 }
 function invMoveRangeLabel(from,to){ return (from?fmtDate(from):'start')+' → '+(to?fmtDate(to):fmtDate(todayStr())); }
 /* consolidated purchase & sale line items within the current range + product search */
@@ -9007,6 +9025,27 @@ function renderInvMove(){
   const body=$('#imBody'); if(!body)return;
   if(!DB.products.length){ body.innerHTML=`<div class="panel">${emptyBox('📦','No products','Add products in Products first.')}</div>`; return; }
   if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No movement','No stock movement for this range/filter. Tick “Show all products” to list everything.')}</div>`; return; }
+  if($('#imDaily')?.checked){
+    const days=invMoveDayList(from,to);
+    const panels = days.length
+      ? days.map(day=>{
+          const dT=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
+          return `<div class="panel" style="margin-top:14px">
+            <div style="font-weight:800;font-size:13px;margin:0 2px 10px">📅 ${fmtDate(day.date)} <span style="color:var(--muted2);font-weight:600;font-size:11.5px">· ${day.rows.length} product${day.rows.length===1?'':'s'}</span></div>
+            ${invMoveTableHtml(day.rows,dT)}</div>`;
+        }).join('')
+      : `<div class="panel">${emptyBox('🔎','No movement','No stock movement on any date in this range/filter.')}</div>`;
+    body.innerHTML = panels + invMoveDetailTablesHtml(from,to);
+    return;
+  }
+  body.innerHTML=`<div class="panel">
+    <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
+    ${invMoveTableHtml(rows,{o:tO,p:tP,s:tS,c:tC})}
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
+    ${invMoveDetailTablesHtml(from,to)}`;
+}
+/* the Opening / Purchased / Sold / Closing table for a set of movement rows + its totals */
+function invMoveTableHtml(rows,t){
   const tr=rows.map(r=>`<tr>
       <td><b>${esc(r.p.name)}</b>${r.p.category?`<div style="color:var(--muted2);font-size:11.5px">${esc(r.p.category)}</div>`:''}</td>
       <td class="num">${num(r.opening)}</td>
@@ -9014,18 +9053,19 @@ function renderInvMove(){
       <td class="num"${r.sold>0?' style="color:var(--amber)"':''}>${r.sold?num(r.sold):'—'}</td>
       <td class="num" style="font-weight:700${r.closing<0?';color:var(--red)':''}">${num(r.closing)}</td>
     </tr>`).join('');
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(tO)}</td><td class="num">${num(tP)}</td><td class="num">${num(tS)}</td><td class="num">${num(tC)}</td></tr>`;
-  body.innerHTML=`<div class="panel">
-    <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
-    <div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
-    ${invMoveDetailTablesHtml(from,to)}`;
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(t.o)}</td><td class="num">${num(t.p)}</td><td class="num">${num(t.s)}</td><td class="num">${num(t.c)}</td></tr>`;
+  return `<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>`;
 }
 function exportInvMoveExcel(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return toast('No movement to export',1);
-  const out=[['Inventory Movement'],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Closing']];
-  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
-  out.push(['Total','',num2(rows.reduce((s,r)=>s+r.opening,0)),num2(rows.reduce((s,r)=>s+r.purchased,0)),num2(rows.reduce((s,r)=>s+r.sold,0)),num2(rows.reduce((s,r)=>s+r.closing,0))]);
+  const daily=!!$('#imDaily')?.checked;
+  const out=[['Inventory Movement'+(daily?' (Day-wise)':'')],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Closing']];
+  const pushRows=rs=>{ rs.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
+    out.push(['Total','',num2(rs.reduce((s,r)=>s+r.opening,0)),num2(rs.reduce((s,r)=>s+r.purchased,0)),num2(rs.reduce((s,r)=>s+r.sold,0)),num2(rs.reduce((s,r)=>s+r.closing,0))]); };
+  if(daily){
+    out.length=0; out.push(['Inventory Movement (Day-wise)'],['Range',invMoveRangeLabel(from,to)]);
+    invMoveDayList(from,to).forEach(day=>{ out.push([],[fmtDate(day.date)],['Product','Category','Opening','Purchased','Sold','Closing']); pushRows(day.rows); });
+  } else { pushRows(rows); }
   const {buys,sells}=invMoveDetails(from,to);
   const buyOut=[['Purchase Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending']];
   buys.forEach(b=>buyOut.push([b.date,b.name,b.where||'',b.orderNo||'',num2(b.qty),num2(b.rate),num2(b.amt),num2(b.pending)]));
@@ -9051,6 +9091,21 @@ function invMoveReportHtml(){
       <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${lines.length?ft:''}</tbody></table>
       ${lines.length?'':'<div style="color:#888;font-size:10.5px;padding:4px 2px">None in this range.</div>'}</div>`;
   };
+  /* day-wise movement tables (shown above the details when Day-wise is on) */
+  let daysHtml='';
+  if($('#imDaily')?.checked){
+    const mCell=(v,i,tag,ex)=>`<${tag} style="text-align:${i===0?'left':'right'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
+    const mHead=['Product','Opening','Purchased','Sold','Closing'];
+    daysHtml=invMoveDayList(from,to).map(day=>{
+      const t=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
+      const th=mHead.map((h,i)=>mCell(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
+      const trs=day.rows.map(r=>'<tr>'+[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)].map((v,i)=>mCell(v,i,'td')).join('')+'</tr>').join('');
+      const ft='<tr style="font-weight:800">'+['Total · '+day.rows.length+' product'+(day.rows.length===1?'':'s'),num(t.o),num(t.p),num(t.s),num(t.c)].map((v,i)=>mCell(v,i,'td',';border-top:2px solid #222')).join('')+'</tr>';
+      return `<div style="margin-top:18px"><div style="font-size:12.5px;font-weight:800;margin-bottom:6px">📅 ${fmtDate(day.date)}</div>
+        <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${ft}</tbody></table></div>`;
+    }).join('') || '<div style="margin-top:18px;color:#888;font-size:10.5px">No movement on any date in this range.</div>';
+    daysHtml='<div style="margin-top:20px;font-size:14px;font-weight:800;border-top:2px solid #111;padding-top:12px">Day-wise breakdown</div>'+daysHtml;
+  }
   const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt),b.pending>0.005?money(b.pending):'—']);
   const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt),s.pending>0.005?money(s.pending):'—']);
   const bP=buys.reduce((s,b)=>s+b.pending,0), sP=sells.reduce((s,r)=>s+r.pending,0);
@@ -9061,8 +9116,8 @@ function invMoveReportHtml(){
     pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0))+(sP>0.005?' · '+money(sP)+' pending':''),
       ['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending'],[4,5,6,7],sellLines,
       'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—');
-  return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
-    head, numCols:[1,2,3,4], rows:body, foot, extra,
+  return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)'+($('#imDaily')?.checked?' · day-wise':''),
+    head, numCols:[1,2,3,4], rows:body, foot, extra:daysHtml+extra,
     note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
 }
 function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
