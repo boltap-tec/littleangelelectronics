@@ -4361,6 +4361,7 @@ const CARD_THEMES=[
   {k:'silver', g:'linear-gradient(135deg,#c2c9d4,#eef1f6)', d:1}      /* liv */
 ];
 function cardGrad(c){ return (CARD_THEMES.find(t=>t.k===(c&&c.theme))||CARD_THEMES[0]).g; }
+function cardGradByKey(k){ return (CARD_THEMES.find(t=>t.k===k)||CARD_THEMES[0]).g; }
 /* most-recent colour you saved for a given bank/issuer, so re-using a bank re-applies its look */
 function bankTheme(bank){ bank=(bank||'').trim(); if(!bank)return null;
   /* a colour set for this bank in Settings → Card Names & Banks wins */
@@ -9216,6 +9217,92 @@ function delPayMode(k){
     if(S().hiddenPayModes)S().hiddenPayModes=S().hiddenPayModes.filter(x=>x!==k);
     logAct('delete','payment mode',m.label,'');
     save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderPayModes(); toast('Payment mode deleted');
+  },'Delete');
+}
+/* ---- Card Name & Bank master lists (owner-editable; feed the Add-Card dropdowns) ---- */
+function cardNamesM(){ return (S().cardNames)||[]; }
+function cardBanksM(){ return (S().cardBanks)||[]; }
+function renderCardNames(){
+  const host=$('#cardNamesList'); if(!host)return; const list=cardNamesM();
+  if(!list.length){ host.innerHTML=emptyBox('💳','No card names yet','Add a card name — it then appears in the Card Name dropdown when you add or edit a card.'); return; }
+  const rows=list.map((m,i)=>({m,i})).sort((a,b)=>((a.m.name)||'').localeCompare((b.m.name)||''));
+  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Card Name</th><th>Default bank</th><th></th></tr></thead><tbody>
+    ${rows.map(({m,i})=>`<tr>
+      <td><b>${esc(m.name)}</b></td>
+      <td style="color:var(--muted)">${m.bank?esc(m.bank):'<span style="color:var(--muted2)">—</span>'}</td>
+      <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="editCardName(${i})">Edit</button> <button class="mini-btn red" onclick="delCardName(${i})">Del</button></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+function editCardName(i){
+  const add=(i==null); const m=add?{name:'',bank:''}:cardNamesM()[i]; if(!m)return;
+  openModal(`${add?'Add':'Edit'} Card Name`,`
+    <div class="field"><label>Card Name *</label><input id="cn_name" value="${esc(m.name||'')}" placeholder="e.g. ADCB Visa Signature"></div>
+    <div class="field"><label>Default Bank / Issuer</label>${selectList('cn_bank',allCardBanks(),m.bank||'')}
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Optional — when you pick this card name while adding a card, the bank (and its colour) is filled in for you.</div></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveCardName(${add?-1:i})">Save</button>`);
+  setTimeout(()=>$('#cn_name')?.focus(),30);
+}
+function saveCardName(i){
+  if(!requireOnline())return;
+  const name=$('#cn_name').value.trim(); if(!name)return toast('Card name is required',1);
+  const bank=$('#cn_bank').value.trim();
+  if(!Array.isArray(S().cardNames))S().cardNames=[]; const arr=S().cardNames;
+  const dupIdx=arr.findIndex(x=>((x&&x.name)||'').trim().toLowerCase()===name.toLowerCase());
+  if(dupIdx>=0 && dupIdx!==+i)return toast('That card name already exists',1);
+  if(+i>=0 && arr[+i]){ arr[+i].name=name; arr[+i].bank=bank; logAct('edit','card name',name,''); }
+  else{ arr.push({name,bank}); logAct('add','card name',name,''); }
+  save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderCardNames(); toast('Card name saved');
+}
+function delCardName(i){
+  if(!requireOnline())return; const m=cardNamesM()[i]; if(!m)return;
+  confirmBox('Delete card name?',`Remove <b>${esc(m.name)}</b> from the Card Name dropdown? Cards already using it keep their name — only the dropdown option is removed.`,()=>{
+    S().cardNames=cardNamesM().filter((_,j)=>j!==+i); logAct('delete','card name',m.name,'');
+    save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderCardNames(); toast('Card name deleted');
+  },'Delete');
+}
+let _cbankTheme='';
+function renderCardBanks(){
+  const host=$('#cardBanksList'); if(!host)return; const list=cardBanksM();
+  if(!list.length){ host.innerHTML=emptyBox('🏦','No banks yet','Add a bank / issuer — it appears in the Bank dropdown, and any colour you give it auto-applies to cards of that bank.'); return; }
+  const rows=list.map((m,i)=>({m,i})).sort((a,b)=>((a.m.name)||'').localeCompare((b.m.name)||''));
+  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Bank / Issuer</th><th>Colour</th><th></th></tr></thead><tbody>
+    ${rows.map(({m,i})=>`<tr>
+      <td><b>${esc(m.name)}</b></td>
+      <td>${m.theme?`<span style="display:inline-block;width:34px;height:20px;border-radius:5px;vertical-align:middle;background:${cardGradByKey(m.theme)};border:1px solid var(--line)"></span>`:'<span style="color:var(--muted2)">—</span>'}</td>
+      <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="editCardBank(${i})">Edit</button> <button class="mini-btn red" onclick="delCardBank(${i})">Del</button></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+function editCardBank(i){
+  const add=(i==null); const m=add?{name:'',theme:''}:cardBanksM()[i]; if(!m)return;
+  _cbankTheme=m.theme||'';
+  openModal(`${add?'Add':'Edit'} Bank / Issuer`,`
+    <div class="field"><label>Bank / Issuer *</label><input id="cb_name" value="${esc(m.name||'')}" placeholder="e.g. ADCB"></div>
+    <div class="field"><label>Default Card Colour</label>
+      <div class="swatches card-swatches" id="cb_themes"><button type="button" class="sw ${_cbankTheme?'':'on'}" data-k="" style="background:var(--panel2,#e5e7eb);border:1px dashed var(--line2)" onclick="pickBankTheme('')" title="No default"></button>${CARD_THEMES.map(t=>`<button type="button" class="sw ${_cbankTheme===t.k?'on':''}" data-k="${t.k}" style="background:${t.g}" onclick="pickBankTheme('${t.k}')"></button>`).join('')}</div>
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Optional — when you pick this bank while adding a card, this colour is applied automatically. Leave as “No default” to skip.</div></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveCardBank(${add?-1:i})">Save</button>`);
+  setTimeout(()=>$('#cb_name')?.focus(),30);
+}
+function pickBankTheme(k){ _cbankTheme=k; $$('#cb_themes .sw').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); }
+function saveCardBank(i){
+  if(!requireOnline())return;
+  const name=$('#cb_name').value.trim(); if(!name)return toast('Bank name is required',1);
+  if(!Array.isArray(S().cardBanks))S().cardBanks=[]; const arr=S().cardBanks;
+  const dupIdx=arr.findIndex(x=>((x&&x.name)||'').trim().toLowerCase()===name.toLowerCase());
+  if(dupIdx>=0 && dupIdx!==+i)return toast('That bank already exists',1);
+  if(+i>=0 && arr[+i]){ arr[+i].name=name; arr[+i].theme=_cbankTheme||''; logAct('edit','bank',name,''); }
+  else{ arr.push({name,theme:_cbankTheme||''}); logAct('add','bank',name,''); }
+  save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderCardBanks(); toast('Bank saved');
+}
+function delCardBank(i){
+  if(!requireOnline())return; const m=cardBanksM()[i]; if(!m)return;
+  confirmBox('Delete bank?',`Remove <b>${esc(m.name)}</b> from the Bank dropdown? Cards already using it keep their bank — only the dropdown option is removed.`,()=>{
+    S().cardBanks=cardBanksM().filter((_,j)=>j!==+i); logAct('delete','bank',m.name,'');
+    save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderCardBanks(); toast('Bank deleted');
   },'Delete');
 }
 function toggle(id,label,on){return `<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:12px 14px;border-radius:11px;cursor:pointer;margin-bottom:0">
