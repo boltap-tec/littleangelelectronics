@@ -516,6 +516,7 @@ body.light .tag.other{background:#fdf0de;color:#9a5a12;border-color:#efcd9f}
 .mini-btn{background:var(--panel2);border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:600}
 .mini-btn.red{color:#fca5a5;border-color:#7f1d2b}
 .mini-btn.gold{color:#f5cf7a;border-color:#7a5b1e}
+.mini-btn.green{color:#7ee2a8;border-color:#1f5136}
 .mini-btn:hover{background:var(--panel)}
 .empty{padding:40px 20px;text-align:center;color:var(--muted2)}
 .empty .big{font-size:34px;margin-bottom:8px;opacity:.7}
@@ -1265,7 +1266,8 @@ function seed(){
       avgWindowN:0, avgWindowUnit:'all',
       imgApiKey:'', imgCseId:'',
       creditCapPeriod:'statement', creditStmtDaysBeforeDue:24,
-      payModes:[],
+      payModes:[], hiddenPayModes:[],
+      cardNames:[], cardBanks:[],
       creditRules:[
         {id:uid(),name:'ENBD Platinum',match:'ENBD Platinum',pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
         {id:uid(),name:'ENBD Share',   match:'ENBD Share',   pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
@@ -1371,6 +1373,19 @@ function migrate(){
   });
   if((DB.users||[]).length && !DB.users.some(u=>u.role==='owner')) DB.users[0].role='owner';
   if(!DB.settings._cbGrant){ (DB.users||[]).forEach(u=>{ if(u.role!=='owner'&&Array.isArray(u.perms)&&!u.perms.includes('cashbook'))u.perms.push('cashbook'); }); DB.settings._cbGrant=true; }
+  /* Card Name & Bank master lists (managed in Settings, used by the Add-Card dropdowns).
+     Seed them once from the card names/banks already in use so nothing is lost. */
+  if(!Array.isArray(DB.settings.cardNames)) DB.settings.cardNames=[];
+  if(!Array.isArray(DB.settings.cardBanks)) DB.settings.cardBanks=[];
+  if(!DB.settings._cardMasterSeed){
+    const names=DB.settings.cardNames, banks=DB.settings.cardBanks;
+    (DB.cards||[]).forEach(c=>{
+      const nm=(c.name||'').trim(), bk=(c.bank||'').trim();
+      if(nm && !names.some(x=>((x&&x.name)||'').trim().toLowerCase()===nm.toLowerCase())) names.push({name:nm,bank:bk});
+      if(bk && !banks.some(x=>((x&&x.name)||'').trim().toLowerCase()===bk.toLowerCase())) banks.push({name:bk,theme:bankDominantTheme(bk)||''});
+    });
+    DB.settings._cardMasterSeed=true;
+  }
   (DB.sales||[]).forEach(s=>{ const tot=+s.total||0;
     if(s.paid===undefined){ s.paid=tot; s.payments=[{id:uid(),date:s.date,amount:tot,method:s.payment||'cash',ref:'Initial'}]; }
     if(!s.payments)s.payments=[];
@@ -1670,6 +1685,12 @@ function allCustomers(){ return uniqSorted(DB.sales.map(s=>s.customer)); }
 function allCategories(){ return uniqSorted(DB.products.map(p=>p.category)); }
 function productsByRecent(){ return [...DB.products].sort((a,b)=>lastBuyKey(b.id).localeCompare(lastBuyKey(a.id))||a.name.localeCompare(b.name)); }
 function dataList(id,arr){ return `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`; }
+/* a <select> built from a list of values; keeps `cur` even if it isn't in the list (so editing an
+   old card whose name/bank was never added to the master list still shows its value) */
+function selectList(id,arr,cur,attrs){
+  cur=(cur||'').trim(); const list=[...arr]; if(cur && !list.some(v=>v===cur)) list.unshift(cur);
+  return `<select id="${id}" ${attrs||''}><option value="">— select —</option>${list.map(v=>`<option value="${esc(v)}" ${v===cur?'selected':''}>${esc(v)}</option>`).join('')}</select>`;
+}
 /* ---- roles & permissions (ALL_VIEWS/WORKER_DEFAULT/VIEW_LABELS declared near top, before load()) ---- */
 function userPerms(u){ if(!u)return[]; if(u.role==='owner')return ALL_VIEWS.slice(); return (u.perms&&u.perms.length)?u.perms.slice():WORKER_DEFAULT.slice(); }
 function canView(v){ if(!session)return false; if(session.role==='owner')return true; return userPerms(session).includes(v); }
@@ -1708,6 +1729,18 @@ function payMethods(){
 }
 function payByKey(){ return Object.fromEntries(payMethods().map(m=>[m.k,m])); }
 function payMethodInfo(k){ return payByKey()[k] || {k,label:(k==='bank'?'Bank':k==='cheque'?'Cheque':k==='split'?'Split':(k||'').toUpperCase()),tag:(k==='bank'||k==='cheque')?'bank':(k==='split'?'split':(k||''))}; }
+/* modes the owner has switched off in Settings — kept resolvable (payByKey still
+   knows them) so old records keep their label, but hidden from the entry pickers */
+function hiddenPayModes(){ return (((typeof DB!=='undefined'&&DB&&DB.settings)?DB.settings.hiddenPayModes:null)||[]); }
+function isPayModeHidden(k){ return hiddenPayModes().includes(k); }
+function payMethodsActive(){ return payMethods().filter(m=>!isPayModeHidden(m.k)); }
+/* options for an entry picker: active modes, plus the currently-selected mode if
+   it happens to be switched off (so editing an old entry never silently changes it) */
+function pickerModes(selKey){
+  const act=payMethodsActive();
+  if(selKey && !act.some(m=>m.k===selKey)){ const info=payMethodInfo(selKey); return act.concat([{...info,label:(info.label||selKey)+' (off)'}]); }
+  return act;
+}
 function normBuyMethod(m){ if(m==='credit')return 'card'; return payByKey()[m]?m:'cash'; }
 function payMethodTag(m){ const i=payMethodInfo(m==='split'?'split':m); return `<span class="tag ${i.tag}">${(m==='split'?'SPLIT':i.label).toUpperCase()}</span>`; }
 /* net cash that actually moves for a payment line: a cash payment with a
@@ -2267,7 +2300,7 @@ function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=activeCards();
   host.innerHTML=buySplits.map((s,i)=>{
     const info=payMethodInfo(s.method);
-    const opts=payMethods().map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
+    const opts=pickerModes(s.method).map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
     let mid;
     if(s.method==='card'){
       mid=`<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`;
@@ -2327,8 +2360,8 @@ function quickAddCardFromPurchase(i){
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Quick-add a card — it's saved to Card Master and selected for this payment. Fine-tune colour, alerts & opening balance later in Credit Cards.</p>
     <div class="field"><label>Card Owner Name</label><input id="qc_owner" list="dl_cardowner" placeholder="friend's name, or blank if your own">${dataList('dl_cardowner',allCardOwners())}</div>
     <div class="grid2">
-      <div class="field"><label>Card Name *</label><input id="qc_name" list="dl_cardname" placeholder="e.g. ADCB Visa">${dataList('dl_cardname',allCardNames())}</div>
-      <div class="field"><label>Bank / Issuer</label><input id="qc_bank" list="dl_cardbank" placeholder="e.g. ADCB">${dataList('dl_cardbank',allCardBanks())}</div>
+      <div class="field"><label>Card Name *</label>${selectList('qc_name',allCardNames(),'','onchange="cardNameChanged(\'qc\')"')}</div>
+      <div class="field"><label>Bank / Issuer</label>${selectList('qc_bank',allCardBanks(),'','onchange="cardBankChanged(\'qc\')"')}</div>
     </div>
     <div class="field"><label>Card Number</label><input id="qc_number" inputmode="numeric" placeholder="stored on device, shown masked (last 4)"></div>
     <div class="grid3">
@@ -3316,7 +3349,7 @@ function renderOnlineModal(o){
     <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:10px;display:block">💳 Payment now — optional (leave amount 0 to pay on delivery)</label>
     <div class="grid3">
       <div class="field"><label>Paid now (${S().currency})</label><input id="o_payamt" type="number" min="0" step="any" value="${o?(+o.payAmt||0):0}" placeholder="0" oninput="onlPayToggle()"></div>
-      <div class="field"><label>Method</label><select id="o_paymethod" onchange="onlPayToggle()">${payMethods().map(m=>`<option value="${m.k}" ${payMethSel===m.k?'selected':''}>${m.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Method</label><select id="o_paymethod" onchange="onlPayToggle()">${pickerModes(payMethSel).map(m=>`<option value="${m.k}" ${payMethSel===m.k?'selected':''}>${m.label}</option>`).join('')}</select></div>
       <div class="field"><label>Paid on</label><input id="o_paydate" type="date" value="${o?(o.payDate||todayStr()):todayStr()}"></div>
     </div>
     <div id="o_paypick"></div>
@@ -3526,7 +3559,7 @@ function renderDeliverModal(o){
     <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:10px;display:block">💳 Pay now on delivery — optional (leave 0 to stock unpaid and settle later in Purchases)</label>
     <div class="grid3">
       <div class="field"><label>Pay now (${S().currency})</label><input id="d_payamt" type="number" min="0" step="any" value="${(+bal.toFixed(2))}" oninput="deliverPayToggle()"></div>
-      <div class="field"><label>Method</label><select id="d_paymethod" onchange="deliverPayToggle()">${payMethods().map(m=>`<option value="${m.k}" ${m.k==='cash'?'selected':''}>${m.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Method</label><select id="d_paymethod" onchange="deliverPayToggle()">${pickerModes('cash').map(m=>`<option value="${m.k}" ${m.k==='cash'?'selected':''}>${m.label}</option>`).join('')}</select></div>
       <div class="field"><label>Paid on</label><input id="d_paydate" type="date" value="${todayStr()}"></div>
     </div>
     <div id="d_paypick"></div>
@@ -4329,7 +4362,11 @@ const CARD_THEMES=[
 ];
 function cardGrad(c){ return (CARD_THEMES.find(t=>t.k===(c&&c.theme))||CARD_THEMES[0]).g; }
 /* most-recent colour you saved for a given bank/issuer, so re-using a bank re-applies its look */
-function bankTheme(bank){ bank=(bank||'').trim().toLowerCase(); if(!bank)return null;
+function bankTheme(bank){ bank=(bank||'').trim(); if(!bank)return null;
+  /* a colour set for this bank in Settings → Card Names & Banks wins */
+  const mb=((S().cardBanks)||[]).find(x=>((x&&x.name)||'').trim().toLowerCase()===bank.toLowerCase());
+  if(mb&&mb.theme)return mb.theme;
+  bank=bank.toLowerCase();
   const m=(DB.cards||[]).filter(c=>(c.bank||'').trim().toLowerCase()===bank && c.theme); return m.length?m[m.length-1].theme:null; }
 /* the colour used MOST for a bank across saved cards (ties → most recent) */
 function bankDominantTheme(bank){ bank=(bank||'').trim().toLowerCase(); if(!bank)return null;
@@ -4353,8 +4390,12 @@ function unifyCardColours(){
 }
 function cardOwnerLabel(c){ return (c&&c.owner&&c.owner.trim())?c.owner.trim():'My own'; }
 function allCardOwners(){ return uniqSorted((DB.cards||[]).map(c=>c.owner)); }
-function allCardNames(){ return uniqSorted((DB.cards||[]).map(c=>c.name)); }
-function allCardBanks(){ return uniqSorted((DB.cards||[]).map(c=>c.bank)); }
+/* card names/banks = the Settings master list MERGED with anything already on saved cards */
+function allCardNames(){ return uniqSorted([...((S().cardNames)||[]).map(x=>(x&&x.name)||x), ...(DB.cards||[]).map(c=>c.name)]); }
+function allCardBanks(){ return uniqSorted([...((S().cardBanks)||[]).map(x=>(x&&x.name)||x), ...(DB.cards||[]).map(c=>c.bank)]); }
+/* default bank a card-name master entry points to (lets picking a name auto-fill the bank) */
+function cardNameDefaultBank(name){ name=(name||'').trim().toLowerCase(); if(!name)return '';
+  const m=((S().cardNames)||[]).find(x=>((x&&x.name)||'').trim().toLowerCase()===name); return (m&&m.bank)||''; }
 function cardById(id){ return (DB.cards||[]).find(c=>c.id===id); }
 function maskCard(n){ n=(n||'').replace(/\s+/g,''); if(!n)return '•••• •••• •••• ••••'; return '•••• •••• •••• '+n.slice(-4).padStart(4,'•'); }
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -5172,7 +5213,15 @@ function delCardTxn(cid,tid){ if(!requireOnline())return; const c=cardById(cid);
 let _cardTheme='indigo';
 function pickCardTheme(k){ _cardTheme=k; $$('#c_themes .sw').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); }
 /* when you type/pick a bank you've saved before, auto-apply the colour you last used for it */
-function cardBankChanged(){ const t=bankTheme($('#c_bank')?.value); if(t)pickCardTheme(t); }
+function cardBankChanged(pfx){ pfx=pfx||'c'; const t=bankTheme($('#'+pfx+'_bank')?.value); if(t)pickCardTheme(t); }
+/* picking a card name auto-selects its default bank (if the bank isn't already chosen),
+   which in turn applies that bank's colour */
+function cardNameChanged(pfx){ pfx=pfx||'c';
+  const name=$('#'+pfx+'_name')?.value||'', bankSel=$('#'+pfx+'_bank');
+  if(bankSel && !bankSel.value){ const db=cardNameDefaultBank(name);
+    if(db){ if(!Array.from(bankSel.options).some(o=>o.value===db)) bankSel.add(new Option(db,db)); bankSel.value=db; } }
+  cardBankChanged(pfx);
+}
 /* show the right day inputs for the chosen due-date basis + preview the next due date */
 function cardDueModeToggle(){
   const pv=$('#c_duepreview'); if(!pv)return;
@@ -5188,8 +5237,9 @@ function editCard(id){
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Use this for cards borrowed from friends/family so you can track each person's balance.</div></div>
     <div class="grid2">
-      <div class="field"><label>Card Name *</label><input id="c_name" list="dl_cardname" value="${esc(c.name)}" placeholder="e.g. ADCB Visa Signature">${dataList('dl_cardname',allCardNames())}</div>
-      <div class="field"><label>Bank / Issuer</label><input id="c_bank" list="dl_cardbank" value="${esc(c.bank||'')}" placeholder="e.g. ADCB" oninput="cardBankChanged()">${dataList('dl_cardbank',allCardBanks())}</div>
+      <div class="field"><label>Card Name *</label>${selectList('c_name',allCardNames(),c.name,'onchange="cardNameChanged()"')}
+        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Add new names in <b>Settings → Card Names &amp; Banks</b>.</div></div>
+      <div class="field"><label>Bank / Issuer</label>${selectList('c_bank',allCardBanks(),c.bank||'','onchange="cardBankChanged()"')}</div>
     </div>
     <div class="field"><label>Card Number</label><input id="c_number" value="${esc(c.number||'')}" inputmode="numeric" placeholder="Stored on your device only — shown masked (last 4)"></div>
     <div class="field"><label>Card Colour</label>
@@ -5673,7 +5723,7 @@ function renderGiftBuySplits(){
   const host=$('#gb_splits'); if(!host)return; const cards=activeCards();
   host.innerHTML=giftBuySplits.map((s,i)=>{
     const info=payMethodInfo(s.method);
-    const opts=payMethods().map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
+    const opts=pickerModes(s.method).map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
     let mid, hint='';
     if(s.method==='card'||info.savedCard){
       // same searchable card picker as a purchase — shows owner · ••last4 · name (card number ref)
@@ -8984,9 +9034,23 @@ views.settings=function(){
   </div>`:''}
   ${owner?`
   <div class="panel">
-    <h3>💳 Modes of Payment</h3><p class="psub">Add your own payment modes. Anything you add here appears in the payment picker when recording a <b>purchase</b>, a <b>gift-card recharge</b> and an <b>online-order</b> payment. The built-in modes (Cash, Credit Card, points, Gift Card, Other…) are always available.</p>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:14px">Your custom modes</b><button class="btn-sm btn-ghost" onclick="editPayMode()">＋ Add Mode</button></div>
+    <h3>💳 Modes of Payment</h3><p class="psub">Every payment mode in the app — built-in and your own. Switch any one <b>On/Off</b> to show or hide it in the payment picker for <b>purchases</b>, <b>gift-card recharges</b> and <b>online orders</b>. Add your own with ＋ Add Mode. Hiding a mode never changes entries already recorded with it.</p>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:14px">All modes</b><button class="btn-sm btn-ghost" onclick="editPayMode()">＋ Add Mode</button></div>
     <div id="payModesList"></div>
+  </div>`:''}
+  ${owner?`
+  <div class="panel">
+    <h3>💳 Card Names &amp; Banks</h3><p class="psub">The master lists behind the <b>Card Name</b> and <b>Bank / Issuer</b> dropdowns when you add or edit a credit card. Add an entry here and it appears in those dropdowns everywhere. A card name can point to a default <b>bank</b> (auto-filled when you pick the name), and a bank can carry a default <b>colour</b> (auto-applied to any card of that bank).</p>
+    <div class="grid2">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:14px">Card Names</b><button class="btn-sm btn-ghost" onclick="editCardName()">＋ Add Name</button></div>
+        <div id="cardNamesList"></div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:14px">Banks / Issuers</b><button class="btn-sm btn-ghost" onclick="editCardBank()">＋ Add Bank</button></div>
+        <div id="cardBanksList"></div>
+      </div>
+    </div>
   </div>`:''}
   <div class="panel">
     <h3>🔐 My PIN</h3><p class="psub">Change the PIN for your own login (${esc(session.name)} · ${esc(session.phone||session.username||'')}).</p>
@@ -9026,7 +9090,7 @@ views.settings=function(){
   </div>`:''}
   <!-- ===== END DEV-ONLY ===== -->`;
 };
-views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules(); renderPayModes();} const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
+views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules(); renderPayModes(); renderCardNames(); renderCardBanks();} const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
 /* ---- Credit & Cashback rules (central, owner-editable) ---- */
 function renderCreditRules(){
   const host=$('#creditRulesList'); if(!host)return;
@@ -9095,14 +9159,28 @@ function delCreditRule(id){
 function payModes(){ return (S().payModes)||[]; }
 function renderPayModes(){
   const host=$('#payModesList'); if(!host)return;
-  const modes=payModes();
-  if(!modes.length){ host.innerHTML=emptyBox('💳','No custom modes yet','Add a payment mode — it then shows up everywhere you record a purchase, gift-card recharge or online-order payment.'); return; }
-  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Mode</th><th></th></tr></thead><tbody>
-    ${modes.map(m=>`<tr>
-      <td><span class="tag other">${esc(m.label)}</span></td>
-      <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="editPayMode('${esc(m.k)}')">Edit</button> <button class="mini-btn red" onclick="delPayMode('${esc(m.k)}')">Del</button></td>
-    </tr>`).join('')}
-  </tbody></table></div>`;
+  const custKeys=new Set(payModes().map(m=>m.k));   // which rows are owner-added (editable)
+  const rows=payMethods().map(m=>{                   // full catalogue: built-ins + custom, in picker order
+    const custom=custKeys.has(m.k), on=!isPayModeHidden(m.k);
+    return `<tr>
+      <td><span class="tag ${esc(m.tag||'other')}">${esc(m.label)}</span></td>
+      <td>${custom?'<span style="color:var(--muted);font-size:12px">Custom</span>':'<span style="color:var(--muted2);font-size:12px">Built-in</span>'}</td>
+      <td class="num"><button class="mini-btn ${on?'green':''}" onclick="togglePayMode('${esc(m.k)}')" title="Show or hide in the payment pickers">${on?'● On':'○ Off'}</button></td>
+      <td class="num" style="white-space:nowrap">${custom?`<button class="mini-btn" onclick="editPayMode('${esc(m.k)}')">Edit</button> <button class="mini-btn red" onclick="delPayMode('${esc(m.k)}')">Del</button>`:'<span style="color:var(--muted2)">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  host.innerHTML=`<div class="table-wrap"><table style="min-width:460px"><thead><tr><th>Mode</th><th>Type</th><th class="num">In pickers</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+/* show/hide a mode in the entry pickers (built-in or custom); always reversible */
+function togglePayMode(k){
+  if(!requireOnline())return;
+  if(!S().hiddenPayModes)S().hiddenPayModes=[];
+  const h=S().hiddenPayModes;
+  if(h.includes(k)){ S().hiddenPayModes=h.filter(x=>x!==k); }
+  else{ h.push(k); }
+  const info=payMethodInfo(k);
+  logAct('edit','payment mode',info.label||k,isPayModeHidden(k)?'hidden from pickers':'shown in pickers');
+  save(); if($('.nav-item.active')?.dataset.view==='settings')renderPayModes();
 }
 /* unique key for a new mode — slugged from the label, prefixed so it never
    collides with a built-in key; existing modes keep their key on edit */
@@ -9134,7 +9212,9 @@ function delPayMode(k){
   if(!requireOnline())return;
   const m=payModes().find(x=>x.k===k); if(!m)return;
   confirmBox('Delete payment mode?',`Remove <b>${esc(m.label)}</b> from the payment pickers? Purchases, recharges & orders already recorded with it keep their label — only new entries lose the option.`,()=>{
-    S().payModes=payModes().filter(x=>x.k!==k); logAct('delete','payment mode',m.label,'');
+    S().payModes=payModes().filter(x=>x.k!==k);
+    if(S().hiddenPayModes)S().hiddenPayModes=S().hiddenPayModes.filter(x=>x!==k);
+    logAct('delete','payment mode',m.label,'');
     save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderPayModes(); toast('Payment mode deleted');
   },'Delete');
 }
