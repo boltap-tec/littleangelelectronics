@@ -716,6 +716,7 @@ body.light .pstack>*{border-color:#fff!important}
 
 .line-items{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px}
 .li-head,.li-row{display:grid;grid-template-columns:2.4fr .9fr 1fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px}
+#s_items .li-head,#s_items .li-row{grid-template-columns:2.2fr .72fr .92fr .72fr 1fr 34px}
 .li-head{background:var(--panel2);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
 .li-row{border-top:1px solid var(--line)}
 .li-row input,.li-row select{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
@@ -3944,10 +3945,11 @@ function newSale(id,prefillPid){
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Items *</label>
     <div class="line-items" id="s_items">
-      <div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Rate</div><div>Amount</div><div></div></div>
+      <div class="li-head"><div class="rqh">Product</div><div class="rqh">Qty</div><div class="rqh">Rate</div><div>Disc %</div><div>Amount</div><div></div></div>
       <div id="s_rows"></div>
     </div>
     <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button><button class="mini-btn" onclick="salePickMulti()">☰ Pick multiple</button>
+    <div class="field" style="margin-top:12px;max-width:280px"><label>Discount % on all items — optional</label><input id="s_discall" type="number" min="0" max="100" step="any" placeholder="e.g. 4" oninput="saleApplyDiscAll(this.value)"><div class="li-hint">Applies this % to every product line above — each line's amount updates. Edit a line's Disc % to override it.</div></div>
     <div class="field" style="margin-top:14px"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received — put 0 if paid later" oninput="_salePaidTouched=true;saleCalc()"><div style="margin-top:6px"><button type="button" class="mini-btn" onclick="salePaidQuick('full')">✓ Paid fully</button><button type="button" class="mini-btn" onclick="salePaidQuick('none')">✗ Not paid</button></div><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Mandatory. Put <b>0</b> (or a part amount) if the customer pays later — the balance is tracked as credit in Payments.</div></div>
     <div class="grid2">
       <div class="field"><label>VAT Mode</label><select id="s_vatmode" onchange="saleCalc()">
@@ -3991,7 +3993,8 @@ function saleLineAvail(i,eng){ const it=saleDraft[i]; if(!it||!it.productId)retu
   return saleAvail(it.productId,eng) - used; }
 function saleHintHtml(i,eng){ const it=saleDraft[i]; if(!it||!it.productId)return 'Search &amp; pick a product (most recent shown first)';
   const bp=avgBuyPrice(it.productId,eng), avail=saleLineAvail(i,eng), over=(+it.qty||0)>avail+1e-9;
-  return `Avg buy price <b style="color:var(--gold2)">${money(bp)}</b> <span style="opacity:.6">(${avgWindowLabel()})</span> · available <b style="color:${over?'var(--red)':'var(--green)'}">${num(Math.max(0,avail))}</b>${over?` · <span class="blink" style="color:#fff;background:var(--red);padding:1px 7px;border-radius:6px;font-weight:800">⚠ only ${num(Math.max(0,avail))} in stock</span>`:''}${(+it.rate>0&&+it.rate<bp)?` · <span style="color:var(--red)">below cost</span>`:''}`; }
+  const eff=(+it.rate||0)*(1-(+it.disc||0)/100);
+  return `Avg buy price <b style="color:var(--gold2)">${money(bp)}</b> <span style="opacity:.6">(${avgWindowLabel()})</span> · available <b style="color:${over?'var(--red)':'var(--green)'}">${num(Math.max(0,avail))}</b>${over?` · <span class="blink" style="color:#fff;background:var(--red);padding:1px 7px;border-radius:6px;font-weight:800">⚠ only ${num(Math.max(0,avail))} in stock</span>`:''}${((+it.disc||0)>0&&eff>0)?` · net <b style="color:var(--gold2)">${money(eff)}</b>/unit`:''}${(eff>0&&eff<bp)?` · <span style="color:var(--red)">below cost</span>`:''}`; }
 function renderSaleRows(){
   const host=$('#s_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=saleDraft.map((it,i)=>{ const over=it.productId&&(+it.qty||0)>saleLineAvail(i,eng)+1e-9;
@@ -3999,12 +4002,15 @@ function renderSaleRows(){
     <select class="rq srch" onchange="saleDraft[${i}].productId=this.value;renderSaleRows()">${saleProdOpts(it.productId,eng)}</select>
     <input type="number" min="0" step="any" value="${it.qty}" oninput="saleDraft[${i}].qty=+this.value;saleCalc()" placeholder="Qty" class="rq ${over?'qty-over':''}">
     <input class="rq" type="number" min="0" step="any" value="${it.rate}" oninput="saleDraft[${i}].rate=+this.value;saleCalc()" placeholder="Sell rate">
-    <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
+    <input type="number" min="0" max="100" step="any" value="${it.disc!=null&&it.disc!==''?it.disc:''}" oninput="saleDraft[${i}].disc=this.value;saleCalc()" placeholder="0" title="Discount % on this line">
+    <input disabled value="${num((+it.qty||0)*(+it.rate||0)*(1-(+it.disc||0)/100))}">
     <button class="li-x" onclick="saleDraft.splice(${i},1);renderSaleRows()">✕</button>
   </div><div class="li-hint">${saleHintHtml(i,eng)}</div>`; }).join('');
   saleCalc();
 }
 function addSaleRow(){saleDraft.push({productId:'',qty:1,rate:''});renderSaleRows();flashNewRow('#s_rows .li-row');}
+/* apply one discount % to every product line above */
+function saleApplyDiscAll(v){ const d=(v===''||v==null)?'':v; saleDraft.forEach(it=>{it.disc=d;}); renderSaleRows(); }
 /* tick several products at once → one sales row each (only in-stock products, existing rows untouched) */
 function salePickMulti(){
   if(!DB.products.length)return toast('Add a product first.',1);
@@ -4030,7 +4036,7 @@ function salePaidQuick(mode){
 }
 function saleCalc(){
   const eng=computeEngine();
-  const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
+  const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0)*(1-(+i.disc||0)/100),0);
   const disc=+($('#s_disc')?.value||0);
   const base=Math.max(0,sub-disc);
   const mode=$('#s_vatmode')?.value||'none', r=+S().vatPercent||0;
@@ -4054,7 +4060,7 @@ function saleCalc(){
   box._t={sub,disc,vat,total,net,mode};
   /* live per-row amount + stock warning */
   $$('#s_rows .li-row').forEach((row,i)=>{ if(!saleDraft[i])return;
-    const amt=row.querySelector('input[disabled]'); if(amt)amt.value=num((+saleDraft[i].qty||0)*(+saleDraft[i].rate||0));
+    const amt=row.querySelector('input[disabled]'); if(amt)amt.value=num((+saleDraft[i].qty||0)*(+saleDraft[i].rate||0)*(1-(+saleDraft[i].disc||0)/100));
     const qtyIn=row.querySelector('input:not([disabled])'); const over=saleDraft[i].productId&&(+saleDraft[i].qty||0)>saleLineAvail(i,eng)+1e-9;
     if(qtyIn)qtyIn.classList.toggle('qty-over',!!over);
     const hint=row.nextElementSibling; if(hint&&hint.classList.contains('li-hint'))hint.innerHTML=saleHintHtml(i,eng);
@@ -4083,7 +4089,7 @@ function saveSale(id,print){
   const payMeta={}; if(deductPct>0)payMeta.deductPct=deductPct; if(payNote)payMeta.note=payNote;
   const base={date:$('#s_date').value,customer:$('#s_cust').value.trim(),custPhone:$('#s_phone').value.trim(),
     custAddress:$('#s_addr').value.trim(),custVat:$('#s_vat').value.trim(),billNo:($('#s_billno')?.value||'').trim(),collectedBy:($('#s_collby')?.value||session.id),
-    items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:+i.rate})),
+    items:items.map(i=>({productId:i.productId,qty:+i.qty,rate:Math.round((+i.rate||0)*(1-(+i.disc||0)/100)*100)/100})),
     payment:method,payNote,discount:+($('#s_disc').value||0),vatMode:t.mode,
     subtotal:t.sub,vat:t.vat,net:t.net,vatPercent:t.mode!=='none'?(+S().vatPercent||0):0,total:t.total};
   const bal=Math.round((t.total-paid)*100)/100;
