@@ -6613,6 +6613,12 @@ views.inventory=function(){
     <button class="btn-sm btn-gold" id="scToggleBtn" style="align-self:flex-end" onclick="toggleInvCheck()">✓ Stock Check</button>
     <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="toggleInvCat()">📊 Category Totals</button>
     <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="exportInventoryExcel()">⬇ Excel</button>
+    <select id="invPdfFilter" class="mini-btn srch" style="padding:9px;align-self:flex-end" title="Which products the PDF includes">
+      <option value="all">PDF: All products</option>
+      <option value="instock">PDF: Only stock available</option>
+      <option value="out">PDF: Only out of stock</option>
+    </select>
+    <button class="btn-sm btn-ghost" style="align-self:flex-end" onclick="pdfInventory()">📄 PDF</button>
     <div class="field" style="margin:0;min-width:210px"><label>Sort by</label>
       <select id="invSort" onchange="setInvSort(this.value)">
         <option value="recent" ${_invSort==='recent'?'selected':''}>Recent purchase (newest top)</option>
@@ -9705,6 +9711,28 @@ function exportInventoryExcel(){
     rows.push(r); });
   exportExcel('inventory_report_'+todayStr()+'.xlsx',[{name:'Inventory',rows}]);
 }
+/* ---- Inventory PDF report — filter: all / stock available / out of stock ---- */
+function invReportRows(filter){
+  const eng=computeEngine();
+  let rows=DB.products.map(p=>{ const qty=stockOf(p.id,eng), avg=avgCostOf(p.id,eng);
+    return { p, qty, avg, val:(qty>0?qty:0)*avg, bought:totalBought(p.id), sold:totalSold(p.id) }; });
+  if(filter==='instock') rows=rows.filter(r=>r.qty>1e-9);
+  else if(filter==='out') rows=rows.filter(r=>r.qty<=1e-9);
+  rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
+  return rows;
+}
+function inventoryReportHtml(filter){
+  const rows=invReportRows(filter); if(!rows.length)return '';
+  const head=['Product','Category','Balance','Purchased','Sold','Avg Cost','Stock Value','Status'];
+  const body=rows.map(r=>[r.p.name,r.p.category||'',num(r.qty)+(r.p.unit?' '+r.p.unit:''),num(r.bought),num(r.sold),money(r.avg),money(r.val>0?r.val:0),r.qty<=0?'OUT':r.qty<=S().lowStockLevel?'LOW':'OK']);
+  const totUnits=rows.reduce((s,r)=>s+(r.qty>0?r.qty:0),0), totVal=rows.reduce((s,r)=>s+(r.val>0?r.val:0),0);
+  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),'',num(totUnits),'','','',money(totVal),''];
+  const lab=filter==='instock'?'Stock available only':filter==='out'?'Out of stock only':'All products';
+  return reportAreaHtml({areaId:'invPdfArea',width:980,icon:'📦',title:'Inventory',sub:lab+' · '+rows.length+' product(s) · as of '+fmtDate(todayStr()),
+    head, numCols:[2,3,4,5,6], rows:body, foot,
+    note:'Balance = stock on hand · Avg Cost = weighted-average purchase cost · Stock Value = balance × avg cost.'});
+}
+function pdfInventory(){ const f=($('#invPdfFilter')?.value||'all'); const html=inventoryReportHtml(f); if(!html)return toast('No products for this filter',1); downloadReportPdf(html,'invPdfArea','inventory_'+f+'_'+todayStr()+'.pdf'); }
 function exportProfitExcel(){
   const eng=computeEngine();
   const from=$('#rpFrom')?.value, to=$('#rpTo')?.value, inRange=d=>(!from||d>=from)&&(!to||d<=to);
