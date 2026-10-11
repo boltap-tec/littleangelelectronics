@@ -7480,7 +7480,7 @@ function modeRecords(){
   const src=_modeKind==='sale'?DB.sales:DB.purchases;
   const from=_modeFrom, to=_modeTo, q=(_modeSearch||'').trim().toLowerCase();
   const inRange=d=> (!from||d>=from) && (!to||d<=to);
-  const matchQ=r=> !q || String(modeRef(r)).toLowerCase().includes(q) || String(modeParty(r)).toLowerCase().includes(q);
+  const matchQ=r=> !q || String(modeRef(r)).toLowerCase().includes(q) || String(modeParty(r)).toLowerCase().includes(q) || String(recNote(r)).toLowerCase().includes(q);
   return src.filter(r=>inRange(r.date)&&recHasMode(r,_modeMode)&&matchQ(r)).slice().sort((a,b)=> a.date<b.date?1:-1); // date descending
 }
 function modeProdSummary(rec){
@@ -7506,7 +7506,7 @@ function openModeReport(kind){
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
-      <input id="modeSearch" class="mini-btn" style="padding:8px 11px;flex:1;min-width:180px" placeholder="🔍 Search ${refLabel} or ${partyLabel} name…" value="${esc(_modeSearch)}" oninput="modeSetSearch()">
+      <input id="modeSearch" class="mini-btn" style="padding:8px 11px;flex:1;min-width:180px" placeholder="🔍 Search ${refLabel}, ${partyLabel} name or note…" value="${esc(_modeSearch)}" oninput="modeSetSearch()">
       <button class="mini-btn" onclick="modeClearSearch()">Clear</button>
     </div>
     <div id="modeRepWrap"></div>`,
