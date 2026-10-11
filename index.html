@@ -9027,15 +9027,15 @@ function renderInvMove(){
   if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No movement','No stock movement for this range/filter. Tick “Show all products” to list everything.')}</div>`; return; }
   if($('#imDaily')?.checked){
     const days=invMoveDayList(from,to);
-    const panels = days.length
-      ? days.map(day=>{
-          const dT=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
-          return `<div class="panel" style="margin-top:14px">
-            <div style="font-weight:800;font-size:13px;margin:0 2px 10px">📅 ${fmtDate(day.date)} <span style="color:var(--muted2);font-weight:600;font-size:11.5px">· ${day.rows.length} product${day.rows.length===1?'':'s'}</span></div>
-            ${invMoveTableHtml(day.rows,dT)}</div>`;
-        }).join('')
-      : `<div class="panel">${emptyBox('🔎','No movement','No stock movement on any date in this range/filter.')}</div>`;
-    body.innerHTML = panels + invMoveDetailTablesHtml(from,to);
+    if(!days.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No movement','No stock movement on any date in this range/filter.')}</div>`; return; }
+    body.innerHTML = days.map(day=>{
+      const dT=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
+      return `<div style="margin-top:18px">
+        <div style="font-weight:800;font-size:15px;margin:6px 2px 8px;padding-bottom:6px;border-bottom:2px solid var(--line2)">📅 ${fmtDate(day.date)} <span style="color:var(--muted2);font-weight:600;font-size:12px">· ${day.rows.length} product${day.rows.length===1?'':'s'}</span></div>
+        <div class="panel">${invMoveTableHtml(day.rows,dT)}</div>
+        ${invMoveDetailTablesHtml(day.date,day.date)}
+      </div>`;
+    }).join('');
     return;
   }
   body.innerHTML=`<div class="panel">
@@ -9077,48 +9077,55 @@ function exportInvMoveExcel(){
 }
 function invMoveReportHtml(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return '';
+  const daily=!!$('#imDaily')?.checked;
   const head=['Product','Opening','Purchased','Sold','Closing'];
-  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
-  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
-  const {buys,sells}=invMoveDetails(from,to);
+  const note='Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.';
   const pdfTbl=(title,heads,numCols,lines,footLabel,footQty,footAmt,footPend)=>{
     const isN=i=>numCols.includes(i);
     const cell=(v,i,tag,ex)=>`<${tag} style="text-align:${isN(i)?'right':'left'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
     const th=heads.map((h,i)=>cell(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
     const trs=lines.map(r=>'<tr>'+r.map((v,i)=>cell(v,i,'td')).join('')+'</tr>').join('');
     const ft=`<tr style="font-weight:800">${cell(footLabel,0,'td',';border-top:2px solid #222')}`+heads.slice(1).map((h,i)=>{const i2=i+1;const v=h==='Qty'?footQty:(h==='Amount'?footAmt:(h==='Pending'?footPend:''));return cell(v,i2,'td',';border-top:2px solid #222');}).join('')+'</tr>';
-    return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:800;margin-bottom:6px">${title}</div>
+    return `<div style="margin-top:14px"><div style="font-size:12.5px;font-weight:800;margin-bottom:6px">${title}</div>
       <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${lines.length?ft:''}</tbody></table>
-      ${lines.length?'':'<div style="color:#888;font-size:10.5px;padding:4px 2px">None in this range.</div>'}</div>`;
+      ${lines.length?'':'<div style="color:#888;font-size:10.5px;padding:4px 2px">None.</div>'}</div>`;
   };
-  /* day-wise movement tables (shown above the details when Day-wise is on) */
-  let daysHtml='';
-  if($('#imDaily')?.checked){
-    const mCell=(v,i,tag,ex)=>`<${tag} style="text-align:${i===0?'left':'right'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
-    const mHead=['Product','Opening','Purchased','Sold','Closing'];
-    daysHtml=invMoveDayList(from,to).map(day=>{
-      const t=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
-      const th=mHead.map((h,i)=>mCell(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
-      const trs=day.rows.map(r=>'<tr>'+[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)].map((v,i)=>mCell(v,i,'td')).join('')+'</tr>').join('');
-      const ft='<tr style="font-weight:800">'+['Total · '+day.rows.length+' product'+(day.rows.length===1?'':'s'),num(t.o),num(t.p),num(t.s),num(t.c)].map((v,i)=>mCell(v,i,'td',';border-top:2px solid #222')).join('')+'</tr>';
-      return `<div style="margin-top:18px"><div style="font-size:12.5px;font-weight:800;margin-bottom:6px">📅 ${fmtDate(day.date)}</div>
-        <table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${ft}</tbody></table></div>`;
-    }).join('') || '<div style="margin-top:18px;color:#888;font-size:10.5px">No movement on any date in this range.</div>';
-    daysHtml='<div style="margin-top:20px;font-size:14px;font-weight:800;border-top:2px solid #111;padding-top:12px">Day-wise breakdown</div>'+daysHtml;
+  /* the Opening/Purchased/Sold/Closing table for a set of movement rows */
+  const movTbl=mr=>{
+    const t=mr.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
+    const mC=(v,i,tag,ex)=>`<${tag} style="text-align:${i===0?'left':'right'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
+    const th=head.map((h,i)=>mC(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
+    const trs=mr.map(r=>'<tr>'+[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)].map((v,i)=>mC(v,i,'td')).join('')+'</tr>').join('');
+    const ft='<tr style="font-weight:800">'+['Total · '+mr.length+' product'+(mr.length===1?'':'s'),num(t.o),num(t.p),num(t.s),num(t.c)].map((v,i)=>mC(v,i,'td',';border-top:2px solid #222')).join('')+'</tr>';
+    return `<table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${ft}</tbody></table>`;
+  };
+  /* Purchase + Sales detail tables for a date window */
+  const detailTbls=(f,t)=>{
+    const {buys,sells}=invMoveDetails(f,t);
+    const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt),b.pending>0.005?money(b.pending):'—']);
+    const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt),s.pending>0.005?money(s.pending):'—']);
+    const bP=buys.reduce((s,b)=>s+b.pending,0), sP=sells.reduce((s,r)=>s+r.pending,0);
+    return pdfTbl('📥 Purchase Details — '+num(buys.reduce((s,b)=>s+b.qty,0))+' pcs · '+money(buys.reduce((s,b)=>s+b.amt,0))+(bP>0.005?' · '+money(bP)+' pending':''),
+        ['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending'],[4,5,6,7],buyLines,
+        'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)),bP>0.005?money(bP):'—')+
+      pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0))+(sP>0.005?' · '+money(sP)+' pending':''),
+        ['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending'],[4,5,6,7],sellLines,
+        'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—');
+  };
+  if(daily){
+    const sections=invMoveDayList(from,to).map(day=>
+      `<div style="margin-top:22px;padding-top:12px;border-top:2px solid #111">
+        <div style="font-size:16px;font-weight:800;margin-bottom:8px">📅 ${fmtDate(day.date)}</div>
+        ${movTbl(day.rows)}${detailTbls(day.date,day.date)}</div>`
+    ).join('') || '<div style="margin-top:18px;color:#888;font-size:10.5px">No movement on any date in this range.</div>';
+    return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',
+      sub:'Range: '+invMoveRangeLabel(from,to)+' · day-wise',
+      head:[], numCols:[], rows:[], extra:'<div style="color:#888;font-size:10px;margin-bottom:4px">'+note+'</div>'+sections});
   }
-  const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt),b.pending>0.005?money(b.pending):'—']);
-  const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt),s.pending>0.005?money(s.pending):'—']);
-  const bP=buys.reduce((s,b)=>s+b.pending,0), sP=sells.reduce((s,r)=>s+r.pending,0);
-  const extra=
-    pdfTbl('📥 Purchase Details — '+num(buys.reduce((s,b)=>s+b.qty,0))+' pcs · '+money(buys.reduce((s,b)=>s+b.amt,0))+(bP>0.005?' · '+money(bP)+' pending':''),
-      ['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending'],[4,5,6,7],buyLines,
-      'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)),bP>0.005?money(bP):'—')+
-    pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0))+(sP>0.005?' · '+money(sP)+' pending':''),
-      ['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending'],[4,5,6,7],sellLines,
-      'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—');
-  return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)'+($('#imDaily')?.checked?' · day-wise':''),
-    head, numCols:[1,2,3,4], rows:body, foot, extra:daysHtml+extra,
-    note:'Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.'});
+  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
+  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
+  return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
+    head, numCols:[1,2,3,4], rows:body, foot, extra:detailTbls(from,to), note});
 }
 function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
 
