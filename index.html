@@ -7507,10 +7507,13 @@ function billSummaryData(kind, from, to){
   const byDate={}, byProd={}, byParty={}; let totQty=0, totAmount=0;
   recs.forEach(r=>{ const d=r.date||'';
     const pname=partyOf(r)||partyFallback;
-    if(!byDate[d])byDate[d]={date:d,prods:{},qty:0,amount:0,count:0};
+    if(!byDate[d])byDate[d]={date:d,prods:{},bills:[],qty:0,amount:0,count:0};
     byDate[d].count++;
     if(!byParty[pname])byParty[pname]={name:pname,prods:{},qty:0,amount:0,bills:new Set()};
     byParty[pname].bills.add(r.id);
+    const billRef = kind==='purchase' ? (r.ref||'—') : (r.invoiceNo||r.billNo||'—');     // the bill's own number
+    const billNum = parseInt(String(billRef).replace(/\D/g,''),10)||0;                    // numeric part → sort in entry order
+    const bill = {ref:billRef, num:billNum, party:pname, prods:{}, qty:0, amount:0};
     itemsOf(r).forEach(it=>{ const q=+it.qty||0, amt=q*(+it.rate||0), pid=it.productId||'__x';
       const pr=productById(it.productId), name=pr?pr.name:'(removed product)';
       const dp=byDate[d].prods; if(!dp[pid])dp[pid]={pid,name,qty:0,amount:0}; dp[pid].qty+=q; dp[pid].amount+=amt;
@@ -7519,10 +7522,15 @@ function billSummaryData(kind, from, to){
       byProd[pid].qty+=q; byProd[pid].amount+=amt; byProd[pid].bills.add(r.id);
       const pp=byParty[pname].prods; if(!pp[pid])pp[pid]={pid,name,qty:0,amount:0}; pp[pid].qty+=q; pp[pid].amount+=amt;
       byParty[pname].qty+=q; byParty[pname].amount+=amt;
+      const bp=bill.prods; if(!bp[pid])bp[pid]={pid,name,qty:0,amount:0}; bp[pid].qty+=q; bp[pid].amount+=amt;
+      bill.qty+=q; bill.amount+=amt;
       totQty+=q; totAmount+=amt; });
+    bill.prods=Object.values(bill.prods);
+    byDate[d].bills.push(bill);
   });
   const dates=Object.values(byDate).sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0))   // oldest day first (entered first shows first)
-    .map(g=>({...g,prods:Object.values(g.prods)}));                                      // keep each day's products in entry order
+    .map(g=>({...g,prods:Object.values(g.prods),
+      bills:(g.bills||[]).sort((a,b)=>a.num-b.num||(a.ref<b.ref?-1:1))}));               // each day's bills in bill-number (entry) order
   const prods=Object.values(byProd).map(p=>({pid:p.pid,name:p.name,qty:p.qty,amount:p.amount,bills:p.bills.size}))
     .sort((a,b)=>b.amount-a.amount);
   const parties=Object.values(byParty).map(p=>({name:p.name,qty:p.qty,amount:p.amount,bills:p.bills.size,
@@ -7546,18 +7554,17 @@ function billSummaryHtml(kind, from, to){
       <td class="r"><b>${M(p.amount)}</b></td>
       <td class="shr"><div class="shrw"><span style="width:${(p.amount/grand*100).toFixed(1)}%"></span></div><em>${(p.amount/grand*100).toFixed(1)}%</em></td></tr>`).join('');
   const prodTotal=`<tr class="tot"><td></td><td>TOTAL · ${d.prodCount} product${d.prodCount===1?'':'s'}</td><td class="r">${N(d.totQty)}</td><td class="r">${d.totBills}</td><td class="r">${M(d.totAmount)}</td><td></td></tr>`;
-  const partyRows=d.parties.map((p,i)=>`<tr>
-      <td class="idx">${i+1}</td>
-      <td><b>${esc(p.name)}</b></td>
-      <td class="psum">${p.prods.map(x=>`<div class="pl">${esc(x.name)} <em>×${N(x.qty)}</em></div>`).join('')}</td>
-      <td class="r qc">${N(p.qty)}</td>
-      <td class="r"><b>${M(p.amount)}</b></td></tr>`).join('');
-  const partyTotal=`<tr class="tot"><td></td><td>TOTAL · ${d.partyCount} ${m.partyLabel.toLowerCase()}${d.partyCount===1?'':'s'}</td><td></td><td class="r">${N(d.totQty)}</td><td class="r">${M(d.totAmount)}</td></tr>`;
+  const billHdr = m.billWord==='bill' ? 'Invoice' : 'Ref';
   const dateBlocks=d.dates.map(g=>`
     <div class="dayhd"><span class="dd">📅 ${esc(fmtDayLong(g.date))}</span>
       <span class="dm">${g.count} ${g.count===1?m.billWord:m.billWord+'s'} · ${N(g.qty)} ${m.dayVerb} · <b>${M(g.amount)}</b></span></div>
-    <table class="ds-t day"><thead><tr><th>Product</th><th class="r">Qty</th><th class="r">${m.valLabel}</th></tr></thead>
-    <tbody>${g.prods.map(p=>`<tr><td>${esc(p.name)}</td><td class="r">${N(p.qty)}</td><td class="r">${M(p.amount)}</td></tr>`).join('')}</tbody></table>`).join('');
+    <table class="ds-t day"><thead><tr><th>${billHdr}</th><th>${m.partyLabel}</th><th>Products</th><th class="r">Qty</th><th class="r">${m.valLabel}</th></tr></thead>
+    <tbody>${g.bills.map(b=>`<tr>
+      <td><b>${esc(b.ref)}</b></td>
+      <td>${esc(b.party)}</td>
+      <td class="psum">${b.prods.map(x=>`<div class="pl">${esc(x.name)} <em>×${N(x.qty)}</em></div>`).join('')}</td>
+      <td class="r qc">${N(b.qty)}</td>
+      <td class="r"><b>${M(b.amount)}</b></td></tr>`).join('')}</tbody></table>`).join('');
   const noteHtml = kind==='sale'
     ? `<div class="note">Values are line amounts (qty × rate), before bill-level discount &amp; VAT.</div>` : '';
   return `<div id="summArea" style="max-width:820px;width:100%;margin:0 auto;padding:28px;font-family:Segoe UI,Arial,sans-serif;color:#111;background:#fff;box-sizing:border-box">
@@ -7612,14 +7619,11 @@ function billSummaryHtml(kind, from, to){
       <div><div class="k">${m.qtyLabel}</div><div class="v">${N(d.totQty)}</div></div>
     </div>
     <div class="kpi big"><div><div class="k">${m.totalLabel}</div><div class="v">${M(d.totAmount)}</div></div></div>
-    <div class="ds-h">👤 ${m.partyLabel}-wise summary — product, qty &amp; amount</div>
-    <table class="ds-t"><thead><tr><th class="idx">#</th><th>${m.partyLabel}</th><th>Products</th><th class="r">${m.qtyLabel}</th><th class="r">${m.valLabel}</th></tr></thead>
-      <tbody>${partyRows}${partyTotal}</tbody></table>
     <div class="ds-h">${m.icon} Product consolidation — quantity &amp; value</div>
     <table class="ds-t"><thead><tr><th class="idx">#</th><th>Product</th><th class="r">${m.qtyLabel}</th><th class="r">${m.billWord==='bill'?'Bills':'Buys'}</th><th class="r">${m.valLabel}</th><th>Share</th></tr></thead>
       <tbody>${prodRows}${prodTotal}</tbody></table>
     ${noteHtml}
-    <div class="ds-h">🗓️ Date-wise breakdown</div>
+    <div class="ds-h">🗓️ Date-wise ${m.billWord==='bill'?'bills':'purchases'} — ${m.billWord==='bill'?'each bill':'each entry'} in order</div>
     ${dateBlocks}
     <div class="ft">Generated ${fmtDate(todayStr())} · ${esc(st.company)}</div>
   </div>`;
@@ -7901,12 +7905,11 @@ function billSummaryExcel(){
   const prodRows=[[m.noun+' summary — '+bsPeriodLabel(_summFrom,_summTo)],[],['Product',m.qtyLabel,'Bills',m.valLabel]];
   d.prods.forEach(p=>prodRows.push([p.name,num2(p.qty),p.bills,num2(p.amount)]));
   prodRows.push(['TOTAL ('+d.prodCount+' products)',num2(d.totQty),d.totBills,num2(d.totAmount)]);
-  const partyRows=[[m.partyLabel,'Products',m.qtyLabel,m.valLabel]];
-  d.parties.forEach(p=>p.prods.forEach((x,i)=>partyRows.push([i===0?p.name:'',x.name,num2(x.qty),num2(x.amount)])));
-  partyRows.push(['TOTAL ('+d.partyCount+' '+m.partyLabel.toLowerCase()+'s)','',num2(d.totQty),num2(d.totAmount)]);
-  const dateRows=[['Date',m.billWord+'s','Product',m.qtyLabel,m.valLabel]];
-  d.dates.forEach(g=>g.prods.forEach((p,i)=>dateRows.push([i===0?fmtDate(g.date):'',i===0?g.count:'',p.name,num2(p.qty),num2(p.amount)])));
-  exportExcel(m.fileTag+'_summary_'+(_summFrom||'all')+'.xlsx',[{name:'By '+m.partyLabel.toLowerCase(),rows:partyRows},{name:'By product',rows:prodRows},{name:'By date',rows:dateRows}]);
+  const billHdr = m.billWord==='bill' ? 'Invoice' : 'Ref';
+  const dateRows=[['Date',billHdr,m.partyLabel,'Product',m.qtyLabel,m.valLabel]];
+  d.dates.forEach(g=>g.bills.forEach(b=>b.prods.forEach((x,i)=>dateRows.push([i===0?fmtDate(g.date):'',i===0?b.ref:'',i===0?b.party:'',x.name,num2(x.qty),num2(x.amount)]))));
+  dateRows.push(['TOTAL ('+d.totBills+' '+m.billWord+'s)','','','',num2(d.totQty),num2(d.totAmount)]);
+  exportExcel(m.fileTag+'_summary_'+(_summFrom||'all')+'.xlsx',[{name:'By product',rows:prodRows},{name:'Bills by date',rows:dateRows}]);
 }
 /* =========================================================
    GIFT-CARD DATE-WISE SUMMARY  (Purchases / recharges & Utilization)
