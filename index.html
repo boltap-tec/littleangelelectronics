@@ -7521,8 +7521,8 @@ function billSummaryData(kind, from, to){
       byParty[pname].qty+=q; byParty[pname].amount+=amt;
       totQty+=q; totAmount+=amt; });
   });
-  const dates=Object.values(byDate).sort((a,b)=>a.date<b.date?1:-1)
-    .map(g=>({...g,prods:Object.values(g.prods).sort((a,b)=>b.amount-a.amount)}));
+  const dates=Object.values(byDate).sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0))   // oldest day first (entered first shows first)
+    .map(g=>({...g,prods:Object.values(g.prods)}));                                      // keep each day's products in entry order
   const prods=Object.values(byProd).map(p=>({pid:p.pid,name:p.name,qty:p.qty,amount:p.amount,bills:p.bills.size}))
     .sort((a,b)=>b.amount-a.amount);
   const parties=Object.values(byParty).map(p=>({name:p.name,qty:p.qty,amount:p.amount,bills:p.bills.size,
@@ -7549,7 +7549,7 @@ function billSummaryHtml(kind, from, to){
   const partyRows=d.parties.map((p,i)=>`<tr>
       <td class="idx">${i+1}</td>
       <td><b>${esc(p.name)}</b></td>
-      <td class="prodcell">${p.prods.map(x=>`${esc(x.name)} <em>×${N(x.qty)}</em>`).join('<br>')}</td>
+      <td class="psum">${p.prods.map(x=>`<div class="pl">${esc(x.name)} <em>×${N(x.qty)}</em></div>`).join('')}</td>
       <td class="r qc">${N(p.qty)}</td>
       <td class="r"><b>${M(p.amount)}</b></td></tr>`).join('');
   const partyTotal=`<tr class="tot"><td></td><td>TOTAL · ${d.partyCount} ${m.partyLabel.toLowerCase()}${d.partyCount===1?'':'s'}</td><td></td><td class="r">${N(d.totQty)}</td><td class="r">${M(d.totAmount)}</td></tr>`;
@@ -7583,8 +7583,10 @@ function billSummaryHtml(kind, from, to){
       #summArea .ds-t td.r,#summArea .ds-t th.r{text-align:right}
       #summArea .ds-t td.idx{color:#aaa;width:22px}
       #summArea .ds-t td.qc{font-weight:700}
-      #summArea .ds-t td.prodcell{font-size:11.5px;line-height:1.6;color:#333}
-      #summArea .ds-t td.prodcell em{font-style:normal;color:#9a8450;font-weight:700}
+      #summArea .ds-t td.psum{display:table-cell;font-size:11.5px;line-height:1.5;color:#333}
+      #summArea .ds-t td.psum .pl{display:block;flex:none;overflow-wrap:anywhere}
+      #summArea .ds-t td.psum .pl+.pl{margin-top:2px;padding-top:2px;border-top:1px dashed #eee}
+      #summArea .ds-t td.psum em{font-style:normal;color:#9a8450;font-weight:700}
       #summArea .ds-t tr.tot td{background:#faf6ec;border-top:2px solid #c9962f;border-bottom:none;font-weight:800;color:#111}
       #summArea .shr{width:150px}
       #summArea .shr .shrw{display:inline-block;width:92px;height:7px;background:#eee;border-radius:4px;overflow:hidden;vertical-align:middle}
@@ -7864,6 +7866,17 @@ async function modeReportPdf(){
 function renderBillSummary(){ const host=$('#summPreviewWrap'); if(!host)return;
   const html=billSummaryHtml(_summKind,_summFrom,_summTo);
   host.innerHTML = html || `<div style="background:#fff;border-radius:10px">${emptyBox(summMeta(_summKind).icon,'Nothing in this period','Pick a wider date range — or a different day — to see a summary.')}</div>`;
+  fitSummPreview();
+  if(!window._summFitBound){ window._summFitBound=1; window.addEventListener('resize',()=>{ if($('#summPreviewWrap')) fitSummPreview(); }); }
+}
+/* scale the fixed-width (820px) document down so the whole page — company header,
+   the total-sales consolidation bar and every table — fits the modal with no
+   horizontal scroll, on phones and the APK. PDF export stays at full 820px. */
+function fitSummPreview(){ const host=$('#summPreviewWrap'); if(!host)return;
+  const area=host.querySelector('#summArea'); if(!area)return;
+  area.style.width='820px'; area.style.maxWidth='820px'; area.style.margin='0';
+  const avail=host.clientWidth-30; if(avail<=0)return;        // minus 14px wrap padding each side + 2px safety
+  area.style.zoom=Math.min(1, avail/820);                     // zoom resizes layout too, so vertical scroll stays correct
 }
 async function billSummaryPdf(){
   if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
