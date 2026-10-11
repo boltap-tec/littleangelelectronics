@@ -1264,6 +1264,7 @@ function seed(){
       avgWindowN:0, avgWindowUnit:'all',
       imgApiKey:'', imgCseId:'',
       creditCapPeriod:'statement', creditStmtDaysBeforeDue:24,
+      payModes:[],
       creditRules:[
         {id:uid(),name:'ENBD Platinum',match:'ENBD Platinum',pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
         {id:uid(),name:'ENBD Share',   match:'ENBD Share',   pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
@@ -1664,7 +1665,7 @@ function canView(v){ if(!session)return false; if(session.role==='owner')return 
 /* Purchase payment methods. 'card' is the tracked credit-card charge (value kept as
    'card' so cashbook/reports/charging keep working). The rest capture an optional or
    mandatory reference (card number / holder name / mobile) and don't touch the wallet. */
-const PAY_METHODS=[
+const BUILTIN_PAY_METHODS=[
   {k:'card',        label:'Credit Card',          tag:'card',   ref:null},
   {k:'cardborrow',  label:'Credit Card by Vendor',tag:'card',  ref:'mandatory', refLabel:'Borrower name', refKind:'text'},
   {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
@@ -1678,9 +1679,25 @@ const PAY_METHODS=[
   {k:'cash',        label:'Cash Payment',         tag:'cash',   ref:null},
   {k:'other',       label:'Other',                tag:'other',  ref:'mandatory', refLabel:'Notes (what / how it was paid)', refKind:'text'},
 ];
-const PAY_BY_KEY=Object.fromEntries(PAY_METHODS.map(m=>[m.k,m]));
-function payMethodInfo(k){ return PAY_BY_KEY[k] || {k,label:(k==='bank'?'Bank':k==='cheque'?'Cheque':k==='split'?'Split':(k||'').toUpperCase()),tag:(k==='bank'||k==='cheque')?'bank':(k==='split'?'split':(k||''))}; }
-function normBuyMethod(m){ if(m==='credit')return 'card'; return PAY_BY_KEY[m]?m:'cash'; }
+/* Owner-defined payment modes (Settings → Modes of Payment). They capture a
+   label only — an optional note, no wallet / card effect — and are merged into
+   every payment picker (purchases, gift-card recharge, online orders). */
+function customPayModes(){
+  return (((typeof DB!=='undefined'&&DB&&DB.settings)?DB.settings.payModes:null)||[])
+    .filter(m=>m&&m.k&&m.label)
+    .map(m=>({k:m.k,label:m.label,tag:'other',ref:'optional',refLabel:'Reference / note (optional)',refKind:'text',custom:true}));
+}
+/* full picker list = built-ins with custom modes inserted just before "Other" */
+function payMethods(){
+  const base=BUILTIN_PAY_METHODS.slice(), custom=customPayModes();
+  if(!custom.length)return base;
+  const i=base.findIndex(m=>m.k==='other');
+  if(i>=0)base.splice(i,0,...custom); else base.push(...custom);
+  return base;
+}
+function payByKey(){ return Object.fromEntries(payMethods().map(m=>[m.k,m])); }
+function payMethodInfo(k){ return payByKey()[k] || {k,label:(k==='bank'?'Bank':k==='cheque'?'Cheque':k==='split'?'Split':(k||'').toUpperCase()),tag:(k==='bank'||k==='cheque')?'bank':(k==='split'?'split':(k||''))}; }
+function normBuyMethod(m){ if(m==='credit')return 'card'; return payByKey()[m]?m:'cash'; }
 function payMethodTag(m){ const i=payMethodInfo(m==='split'?'split':m); return `<span class="tag ${i.tag}">${(m==='split'?'SPLIT':i.label).toUpperCase()}</span>`; }
 /* net cash that actually moves for a payment line: a cash payment with a
    deduction % pays that % less (a cash discount) — the doc is still settled by
@@ -2228,7 +2245,7 @@ function renderBuySplits(){
   const host=$('#b_splits'); if(!host)return; const cards=activeCards();
   host.innerHTML=buySplits.map((s,i)=>{
     const info=payMethodInfo(s.method);
-    const opts=PAY_METHODS.map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
+    const opts=payMethods().map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
     let mid;
     if(s.method==='card'){
       mid=`<div class="cardpick-wrap">${cardPickerHtml('bsplit_'+i, cards, s.cardId, c=>'avail '+money(cardAvailForSplit(c)), 'Owner name or last 4 digits…', (id,raw)=>{ if(raw==='＋ Add new card…'){ quickAddCardFromPurchase(i); return; } buySplitCardPick(i, id); }, ['＋ Add new card…'])}</div>`;
@@ -3277,7 +3294,7 @@ function renderOnlineModal(o){
     <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:10px;display:block">💳 Payment now — optional (leave amount 0 to pay on delivery)</label>
     <div class="grid3">
       <div class="field"><label>Paid now (${S().currency})</label><input id="o_payamt" type="number" min="0" step="any" value="${o?(+o.payAmt||0):0}" placeholder="0" oninput="onlPayToggle()"></div>
-      <div class="field"><label>Method</label><select id="o_paymethod" onchange="onlPayToggle()">${PAY_METHODS.map(m=>`<option value="${m.k}" ${payMethSel===m.k?'selected':''}>${m.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Method</label><select id="o_paymethod" onchange="onlPayToggle()">${payMethods().map(m=>`<option value="${m.k}" ${payMethSel===m.k?'selected':''}>${m.label}</option>`).join('')}</select></div>
       <div class="field"><label>Paid on</label><input id="o_paydate" type="date" value="${o?(o.payDate||todayStr()):todayStr()}"></div>
     </div>
     <div id="o_paypick"></div>
@@ -3487,7 +3504,7 @@ function renderDeliverModal(o){
     <label style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:10px;display:block">💳 Pay now on delivery — optional (leave 0 to stock unpaid and settle later in Purchases)</label>
     <div class="grid3">
       <div class="field"><label>Pay now (${S().currency})</label><input id="d_payamt" type="number" min="0" step="any" value="${(+bal.toFixed(2))}" oninput="deliverPayToggle()"></div>
-      <div class="field"><label>Method</label><select id="d_paymethod" onchange="deliverPayToggle()">${PAY_METHODS.map(m=>`<option value="${m.k}" ${m.k==='cash'?'selected':''}>${m.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Method</label><select id="d_paymethod" onchange="deliverPayToggle()">${payMethods().map(m=>`<option value="${m.k}" ${m.k==='cash'?'selected':''}>${m.label}</option>`).join('')}</select></div>
       <div class="field"><label>Paid on</label><input id="d_paydate" type="date" value="${todayStr()}"></div>
     </div>
     <div id="d_paypick"></div>
@@ -5592,7 +5609,7 @@ function renderGiftBuySplits(){
   const host=$('#gb_splits'); if(!host)return; const cards=activeCards();
   host.innerHTML=giftBuySplits.map((s,i)=>{
     const info=payMethodInfo(s.method);
-    const opts=PAY_METHODS.map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
+    const opts=payMethods().map(m=>`<option value="${m.k}" ${s.method===m.k?'selected':''}>${m.label}</option>`).join('');
     let mid, hint='';
     if(s.method==='card'||info.savedCard){
       // same searchable card picker as a purchase — shows owner · ••last4 · name (card number ref)
@@ -7405,7 +7422,7 @@ function recHasMode(rec,mode){
 }
 function modeOptions(kind){
   if(kind==='sale')return [['all','All modes'],['cash','Cash'],['card','Card'],['bank','Bank Transfer'],['cheque','Cheque'],['other','Other']];
-  return [['all','All modes']].concat(PAY_METHODS.map(m=>[m.k,m.label])).concat([['split','Split (multiple)']]);
+  return [['all','All modes']].concat(payMethods().map(m=>[m.k,m.label])).concat([['split','Split (multiple)']]);
 }
 function modeRecords(){
   const src=_modeKind==='sale'?DB.sales:DB.purchases;
@@ -8668,6 +8685,12 @@ views.settings=function(){
     <p class="psub" style="margin-top:0">A rule applies to any card whose name or bank contains the <b>match text</b>. First matching rule wins. Blank % or cap = use the card's own value.</p>
     <div id="creditRulesList"></div>
   </div>`:''}
+  ${owner?`
+  <div class="panel">
+    <h3>💳 Modes of Payment</h3><p class="psub">Add your own payment modes. Anything you add here appears in the payment picker when recording a <b>purchase</b>, a <b>gift-card recharge</b> and an <b>online-order</b> payment. The built-in modes (Cash, Credit Card, points, Gift Card, Other…) are always available.</p>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:14px">Your custom modes</b><button class="btn-sm btn-ghost" onclick="editPayMode()">＋ Add Mode</button></div>
+    <div id="payModesList"></div>
+  </div>`:''}
   <div class="panel">
     <h3>🔐 My PIN</h3><p class="psub">Change the PIN for your own login (${esc(session.name)} · ${esc(session.phone||session.username||'')}).</p>
     <div class="grid3">
@@ -8706,7 +8729,7 @@ views.settings=function(){
   </div>`:''}
   <!-- ===== END DEV-ONLY ===== -->`;
 };
-views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules();} const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
+views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules(); renderPayModes();} const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
 /* ---- Credit & Cashback rules (central, owner-editable) ---- */
 function renderCreditRules(){
   const host=$('#creditRulesList'); if(!host)return;
@@ -8769,6 +8792,53 @@ function delCreditRule(id){
   confirmBox('Delete rule?','Cards matching “'+esc(r.match||'')+'” will fall back to their own cashback % & cap and the default period.',()=>{
     S().creditRules=creditRules().filter(x=>x.id!==id); logAct('delete','cashback rule',r.name||r.match||'','');
     save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderCreditRules(); toast('Rule deleted');
+  },'Delete');
+}
+/* ---- Custom modes of payment (owner-editable, merged into every payment picker) ---- */
+function payModes(){ return (S().payModes)||[]; }
+function renderPayModes(){
+  const host=$('#payModesList'); if(!host)return;
+  const modes=payModes();
+  if(!modes.length){ host.innerHTML=emptyBox('💳','No custom modes yet','Add a payment mode — it then shows up everywhere you record a purchase, gift-card recharge or online-order payment.'); return; }
+  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Mode</th><th></th></tr></thead><tbody>
+    ${modes.map(m=>`<tr>
+      <td><span class="tag other">${esc(m.label)}</span></td>
+      <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="editPayMode('${esc(m.k)}')">Edit</button> <button class="mini-btn red" onclick="delPayMode('${esc(m.k)}')">Del</button></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+/* unique key for a new mode — slugged from the label, prefixed so it never
+   collides with a built-in key; existing modes keep their key on edit */
+function payModeKey(label){
+  const base='pm_'+(String(label||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')||'mode');
+  const used=new Set([...BUILTIN_PAY_METHODS.map(m=>m.k),...payModes().map(m=>m.k)]);
+  if(!used.has(base))return base; let i=2; while(used.has(base+'_'+i))i++; return base+'_'+i;
+}
+function editPayMode(k){
+  const m=k?payModes().find(x=>x.k===k):{k:'',label:''};
+  if(!m)return;
+  openModal(`${k?'Edit':'Add'} Payment Mode`,`
+    <div class="field"><label>Mode name *</label><input id="pm_label" value="${esc(m.label||'')}" placeholder="e.g. Bank Transfer, Cheque, Tabby, Apple Pay"></div>
+    <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Shown in the payment picker for purchases, gift-card recharges & online orders. It records <i>how</i> a payment was made and doesn't change the cash wallet or any card balance.</div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="savePayMode('${k||''}')">Save Mode</button>`);
+}
+function savePayMode(k){
+  if(!requireOnline())return;
+  const label=$('#pm_label').value.trim(); if(!label)return toast('Mode name is required',1);
+  if(!S().payModes)S().payModes=[];
+  const dup=payModes().find(m=>m.k!==k && m.label.toLowerCase()===label.toLowerCase());
+  if(dup)return toast('A mode with that name already exists',1);
+  if(k){ const m=payModes().find(x=>x.k===k); if(m)m.label=label; logAct('edit','payment mode',label,''); }
+  else{ S().payModes.push({k:payModeKey(label),label}); logAct('add','payment mode',label,''); }
+  save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderPayModes(); toast('Payment mode saved');
+}
+function delPayMode(k){
+  if(!requireOnline())return;
+  const m=payModes().find(x=>x.k===k); if(!m)return;
+  confirmBox('Delete payment mode?',`Remove <b>${esc(m.label)}</b> from the payment pickers? Purchases, recharges & orders already recorded with it keep their label — only new entries lose the option.`,()=>{
+    S().payModes=payModes().filter(x=>x.k!==k); logAct('delete','payment mode',m.label,'');
+    save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderPayModes(); toast('Payment mode deleted');
   },'Delete');
 }
 function toggle(id,label,on){return `<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:12px 14px;border-radius:11px;cursor:pointer;margin-bottom:0">
