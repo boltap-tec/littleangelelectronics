@@ -1386,6 +1386,21 @@ function migrate(){
     });
     DB.settings._cardMasterSeed=true;
   }
+  /* Total Cashback per card name: bootstrap once from the cards already using each name
+     (their Our% + Borrower% = that card's total). Owner can fine-tune in Settings afterwards. */
+  if(!DB.settings._cardNameTotalSeed){
+    (DB.settings.cardNames||[]).forEach(m=>{
+      if(!m || (m.totalCashback!=null && m.totalCashback!=='')) return;
+      const nm=((m.name)||'').trim().toLowerCase();
+      let best=null;
+      (DB.cards||[]).forEach(c=>{ if(((c.name)||'').trim().toLowerCase()!==nm) return;
+        const our=+c.discountPercent||0;
+        const bor=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):our;
+        const tot=our+bor; if(best==null||tot>best) best=tot; });
+      if(best!=null) m.totalCashback=best;
+    });
+    DB.settings._cardNameTotalSeed=true;
+  }
   (DB.sales||[]).forEach(s=>{ const tot=+s.total||0;
     if(s.paid===undefined){ s.paid=tot; s.payments=[{id:uid(),date:s.date,amount:tot,method:s.payment||'cash',ref:'Initial'}]; }
     if(!s.payments)s.payments=[];
@@ -2383,8 +2398,11 @@ function quickSaveCard(i){
   const name=$('#qc_name').value.trim(); if(!name)return toast('Card name is required',1);
   const day=Math.min(31,Math.max(1,+$('#qc_day').value||1));
   const qbank=$('#qc_bank').value.trim();
+  const our=redeemVal('qc_disc','qc_discOther');
+  const total=cardNameTotalCashback(name);  // borrower share = Total − Our when the name has a total configured, else mirror ours
+  const borrowerCashbackPercent = total!=null ? Math.max(0,+(total-our).toFixed(4)) : our;
   const c={id:uid(),name,owner:$('#qc_owner').value.trim(),bank:qbank,number:$('#qc_number').value.trim(),theme:bankTheme(qbank)||'indigo',
-    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,allowNegative:!!$('#qc_allowneg')?.checked,discountPercent:redeemVal('qc_disc','qc_discOther'),
+    creditLimit:+$('#qc_limit').value||0,balanceLimitAlert:0,allowNegative:!!$('#qc_allowneg')?.checked,discountPercent:our,borrowerCashbackPercent,
     maxDiscountMonthly:+$('#qc_maxdisc').value||0,paymentDay:day,openingOutstanding:0,txns:[]};
   DB.cards.push(c); save(); renderBell();
   buySplits[i].method='card'; buySplits[i].cardId=c.id;
@@ -4400,6 +4418,11 @@ function allCardBanks(){ return uniqSorted([...((S().cardBanks)||[]).map(x=>(x&&
 /* default bank a card-name master entry points to (lets picking a name auto-fill the bank) */
 function cardNameDefaultBank(name){ name=(name||'').trim().toLowerCase(); if(!name)return '';
   const m=((S().cardNames)||[]).find(x=>((x&&x.name)||'').trim().toLowerCase()===name); return (m&&m.bank)||''; }
+/* TOTAL cashback % configured for a card name in Settings (the card's maximum cashback ceiling).
+   Returns null when none is set for that name — callers then fall back to manual borrower entry. */
+function cardNameTotalCashback(name){ name=(name||'').trim().toLowerCase(); if(!name)return null;
+  const m=((S().cardNames)||[]).find(x=>((x&&x.name)||'').trim().toLowerCase()===name); if(!m)return null;
+  const v=m.totalCashback; return (v!=null&&v!=='')?(+v||0):null; }
 function cardById(id){ return (DB.cards||[]).find(c=>c.id===id); }
 function maskCard(n){ n=(n||'').replace(/\s+/g,''); if(!n)return '•••• •••• •••• ••••'; return '•••• •••• •••• '+n.slice(-4).padStart(4,'•'); }
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -5225,6 +5248,8 @@ function cardNameChanged(pfx){ pfx=pfx||'c';
   if(bankSel && !bankSel.value){ const db=cardNameDefaultBank(name);
     if(db){ if(!Array.from(bankSel.options).some(o=>o.value===db)) bankSel.add(new Option(db,db)); bankSel.value=db; } }
   cardBankChanged(pfx);
+  /* picking a new name may carry a different Total Cashback → re-derive the borrower share (main card form only) */
+  if(pfx==='c' && $('#c_bdisc')){ _borrowerCbTouched=false; cardSyncBorrower(false); }
 }
 /* show the right day inputs for the chosen due-date basis + preview the next due date */
 function cardDueModeToggle(){
@@ -5258,7 +5283,7 @@ function editCard(id){
       <div class="field"><label>Our Cashback (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}
         <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Our share of this card's cashback.</div></div>
       <div class="field"><label>Borrower Cashback (%)</label>${redeemSelect('c_bdisc','c_bdiscOther',bpct)}
-        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">The card owner / borrower's share — starts equal to ours; change it any time.</div></div>
+        <div class="li-hint" id="c_bcbhint" style="margin-top:5px">The card owner / borrower's share.</div></div>
     </div>
     <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap">
       <div class="li-hint" id="c_maxcbpreview" style="margin-top:6px"></div></div>
@@ -5288,19 +5313,44 @@ function editCard(id){
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme); cardDueModeToggle();
-  /* Borrower % starts mirroring OUR % until the owner deliberately changes it (per the module brief:
-     "initialize the borrower cashback as our cashback … so that we can change if needed"). */
+  /* Borrower cashback is DERIVED from the card-name's configured Total Cashback minus Our Cashback.
+     When the name has no total set, fall back to the old behaviour: mirror OUR % until deliberately changed. */
   _borrowerCbTouched = !!(id && c.borrowerCashbackPercent!=null && c.borrowerCashbackPercent!=='' && (+c.borrowerCashbackPercent)!==(+c.discountPercent||0));
   ['c_bdisc','c_bdiscOther'].forEach(fid=>{ const el=$('#'+fid); if(el){ el.addEventListener('change',()=>{ _borrowerCbTouched=true; cardMaxCbPreview(); }); el.addEventListener('input',()=>{ _borrowerCbTouched=true; cardMaxCbPreview(); }); } });
   ['c_disc','c_discOther'].forEach(fid=>{ const el=$('#'+fid); if(el){ el.addEventListener('change',cardCashbackChanged); el.addEventListener('input',cardCashbackChanged); } });
+  cardSyncBorrower(true);
+}
+/* total cashback configured (in Settings) for the card name currently chosen in the Add/Edit Card form */
+function cardFormTotalCb(){ return cardNameTotalCashback($('#c_name')?.value); }
+/* Reconcile the Borrower Cashback field with the card-name's Total Cashback.
+   total set  → borrower = max(0, Total − Our), field locked (read-only, auto).
+   total unset → field editable; mirror Our % while still untouched (legacy behaviour). */
+function cardSyncBorrower(initial){
+  const total=cardFormTotalCb();
+  const bSel=$('#c_bdisc'), bOth=$('#c_bdiscOther'), hint=$('#c_bcbhint');
+  const our=redeemVal('c_disc','c_discOther');
+  if(total!=null){
+    const bor=Math.max(0,+ (total-our).toFixed(4));
+    setRedeemControl('c_bdisc','c_bdiscOther',bor);
+    if(bSel){ bSel.disabled=true; bSel.style.opacity='.6'; }
+    if(bOth){ bOth.disabled=true; bOth.style.opacity='.6'; }
+    if(hint) hint.innerHTML = (our>total)
+      ? `⚠ Our ${our}% is above this card's total ${total}% — borrower set to 0%. Lower our share, or raise the total in <b>Settings → Card Names</b>.`
+      : `Auto: Total <b>${total}%</b> − Our <b>${our}%</b> = <b style="color:var(--text)">${bor}%</b> &nbsp;·&nbsp; set the total in <b>Settings → Card Names</b>.`;
+  } else {
+    if(bSel){ bSel.disabled=false; bSel.style.opacity=''; }
+    if(bOth){ bOth.disabled=false; bOth.style.opacity=''; }
+    if(!_borrowerCbTouched && !initial) setRedeemControl('c_bdisc','c_bdiscOther',our);
+    if(hint) hint.innerHTML = `The card owner / borrower's share. Tip: set a <b>Total Cashback</b> for this card name in <b>Settings → Card Names</b> and this fills in automatically.`;
+  }
   cardMaxCbPreview();
 }
 /* a card's cashback % control — set select to a known step, or "Other…" with the raw value */
 function setRedeemControl(idSel,idOther,v){ v=+v||0; const sel=$('#'+idSel), oth=$('#'+idOther); if(!sel)return;
   if([0,1,2,3,4,5].includes(v)){ sel.value=String(v); if(oth){ oth.style.display='none'; oth.value=''; } }
   else{ sel.value='__other'; if(oth){ oth.style.display=''; oth.value=v; } } }
-/* our cashback changed — mirror it into the borrower field while that field is still untouched */
-function cardCashbackChanged(){ if(!_borrowerCbTouched){ setRedeemControl('c_bdisc','c_bdiscOther',redeemVal('c_disc','c_discOther')); } cardMaxCbPreview(); }
+/* our cashback changed — recompute the borrower share (Total − Our, or legacy mirror when no total is set) */
+function cardCashbackChanged(){ cardSyncBorrower(false); }
 let _borrowerCbTouched=false;
 /* live preview of a card's MAXIMUM cashback for a statement period = limit × (our% + borrower%) / 100 */
 function cardMaxCbPreview(){
@@ -9283,20 +9333,25 @@ function renderCardNames(){
   const host=$('#cardNamesList'); if(!host)return; const list=cardNamesM();
   if(!list.length){ host.innerHTML=emptyBox('💳','No card names yet','Add a card name — it then appears in the Card Name dropdown when you add or edit a card.'); return; }
   const rows=list.map((m,i)=>({m,i})).sort((a,b)=>((a.m.name)||'').localeCompare((b.m.name)||''));
-  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Card Name</th><th>Default bank</th><th></th></tr></thead><tbody>
+  const totCell=m=>{ const v=m.totalCashback; return (v!=null&&v!=='')?`<b style="color:var(--text)">${(+v||0)}%</b>`:'<span style="color:var(--muted2)">—</span>'; };
+  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Card Name</th><th>Default bank</th><th class="num">Total cashback</th><th></th></tr></thead><tbody>
     ${rows.map(({m,i})=>`<tr>
       <td><b>${esc(m.name)}</b></td>
       <td style="color:var(--muted)">${m.bank?esc(m.bank):'<span style="color:var(--muted2)">—</span>'}</td>
+      <td class="num">${totCell(m)}</td>
       <td class="num" style="white-space:nowrap"><button class="mini-btn" onclick="editCardName(${i})">Edit</button> <button class="mini-btn red" onclick="delCardName(${i})">Del</button></td>
     </tr>`).join('')}
   </tbody></table></div>`;
 }
 function editCardName(i){
-  const add=(i==null); const m=add?{name:'',bank:''}:cardNamesM()[i]; if(!m)return;
+  const add=(i==null); const m=add?{name:'',bank:'',totalCashback:''}:cardNamesM()[i]; if(!m)return;
+  const tot=(m.totalCashback!=null&&m.totalCashback!=='')?m.totalCashback:'';
   openModal(`${add?'Add':'Edit'} Card Name`,`
     <div class="field"><label>Card Name *</label><input id="cn_name" value="${esc(m.name||'')}" placeholder="e.g. ADCB Visa Signature"></div>
     <div class="field"><label>Default Bank / Issuer</label>${selectList('cn_bank',allCardBanks(),m.bank||'')}
-      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Optional — when you pick this card name while adding a card, the bank (and its colour) is filled in for you.</div></div>`,
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Optional — when you pick this card name while adding a card, the bank (and its colour) is filled in for you.</div></div>
+    <div class="field"><label>Total Cashback (%)</label><input id="cn_total" type="number" min="0" step="any" value="${tot}" placeholder="e.g. 5  (leave blank if unknown)">
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">The card's <b>maximum</b> cashback. When you add or edit a card with this name, you enter <b>our</b> share and the <b>borrower's</b> share is auto-filled as <b>Total − Ours</b>.</div></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveCardName(${add?-1:i})">Save</button>`);
   setTimeout(()=>$('#cn_name')?.focus(),30);
@@ -9305,11 +9360,12 @@ function saveCardName(i){
   if(!requireOnline())return;
   const name=$('#cn_name').value.trim(); if(!name)return toast('Card name is required',1);
   const bank=$('#cn_bank').value.trim();
+  const totRaw=$('#cn_total').value; const totalCashback=(totRaw!==''&&totRaw!=null)?(+totRaw||0):'';
   if(!Array.isArray(S().cardNames))S().cardNames=[]; const arr=S().cardNames;
   const dupIdx=arr.findIndex(x=>((x&&x.name)||'').trim().toLowerCase()===name.toLowerCase());
   if(dupIdx>=0 && dupIdx!==+i)return toast('That card name already exists',1);
-  if(+i>=0 && arr[+i]){ arr[+i].name=name; arr[+i].bank=bank; logAct('edit','card name',name,''); }
-  else{ arr.push({name,bank}); logAct('add','card name',name,''); }
+  if(+i>=0 && arr[+i]){ arr[+i].name=name; arr[+i].bank=bank; arr[+i].totalCashback=totalCashback; logAct('edit','card name',name,''); }
+  else{ arr.push({name,bank,totalCashback}); logAct('add','card name',name,''); }
   save(); closeModal(); if($('.nav-item.active')?.dataset.view==='settings')renderCardNames(); toast('Card name saved');
 }
 function delCardName(i){
