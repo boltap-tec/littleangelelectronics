@@ -1663,14 +1663,21 @@ function computeEngine(){
   (DB.returns||[]).forEach(r=>{ const f=+r.factor||1; (r.items||[]).forEach(it=>tx.push({t:'buy',date:r.date,seq:r.id,productId:it.productId,qty:-(+it.qty||0),rate:(+it.rate||0)*f})); });
   tx.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : (a.t==='buy'&&b.t==='sell'?-1 : a.t==='sell'&&b.t==='buy'?1 : (a.seq<b.seq?-1:1)));
   const stock={}, saleCost={};
+  /* qty = TRUE running quantity: it is allowed to go negative so an over-sale (more sold
+     than ever bought) shows as a real shortage instead of a phantom 0 — an earlier version
+     clamped qty up to 0, which invented stock and overstated inventory. costQty/totalCost are
+     a SEPARATE cost basis, still clamped at 0 when depleted, so average cost & valuation stay
+     sane; value callers already read max(0,qty), so a negative qty contributes no value. */
   for(const e of tx){
-    const st=stock[e.productId]||(stock[e.productId]={qty:0,totalCost:0});
-    if(e.t==='buy'){ st.qty+=e.qty; st.totalCost+=e.qty*e.rate; }
-    else{
-      const avg= st.qty>0? st.totalCost/st.qty : (lastKnownRate(e.productId)||0);
+    const st=stock[e.productId]||(stock[e.productId]={qty:0,totalCost:0,costQty:0});
+    if(e.t==='buy'){
+      st.qty+=e.qty; st.costQty+=e.qty; st.totalCost+=e.qty*e.rate;
+      if(st.costQty<=0){st.costQty=0;st.totalCost=0;}   // a return that empties the shelf clears the basis
+    }else{
+      const avg= st.costQty>0? st.totalCost/st.costQty : (lastKnownRate(e.productId)||0);
       const cost=avg*e.qty; saleCost[e.saleId]=(saleCost[e.saleId]||0)+cost;
-      st.qty-=e.qty; st.totalCost-=cost;
-      if(st.qty<=0){st.qty=Math.max(0,st.qty);st.totalCost=Math.max(0,st.totalCost);}
+      st.qty-=e.qty; st.costQty-=e.qty; st.totalCost-=cost;
+      if(st.costQty<=0){st.costQty=0;st.totalCost=0;}   // depleted/oversold: no cost basis (qty keeps the true, possibly negative, figure)
     }
   }
   return {stock,saleCost};
@@ -1683,7 +1690,7 @@ function parseRefs(v){ if(Array.isArray(v))v=v.join(','); const seen=new Set(),o
   String(v||'').split(/[\s,;]+/).forEach(r=>{ r=r.trim(); if(r&&!seen.has(r.toLowerCase())){seen.add(r.toLowerCase());out.push(r);} }); return out; }
 function refsStr(p){ return (p&&Array.isArray(p.refs)?p.refs:[]).join(', '); }
 function stockOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s?s.qty:0; }
-function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s&&s.qty>0? s.totalCost/s.qty : lastKnownRate(pid); }
+function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s&&s.costQty>0? s.totalCost/s.costQty : lastKnownRate(pid); }
 /* average BUYING price for reference display — respects the Settings averaging window (falls back to moving-average) */
 function avgBuyPrice(pid,eng){
   const st=S(), unit=st.avgWindowUnit||'all', n=+st.avgWindowN||0;
