@@ -2107,14 +2107,25 @@ views.purchases=function(){
     <button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
     <button class="btn-sm btn-ghost" onclick="purchaseGiftModal()">🎁 New Gift Card Purchase</button>
     <button class="btn-sm" onclick="newPurchase()">📦 New Product Purchase</button></div></div>
-  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search supplier / product..." oninput="renderPurchases()"></div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search supplier / product / order no / note / mode / card no..." oninput="renderPurchases()"></div></div>
   <div id="buyList"></div>`;
 };
 views._after_purchases=renderPurchases;
+/* everything a purchase can be searched by: ref, order no, supplier, products,
+   note, payment mode(s) and credit-card number (full + digits-only + last4) */
+function purchaseSearchBlob(p){
+  const parts=[p.ref||'', p.orderNo||'', p.supplier||'', recNote(p)];
+  purchaseItems(p).forEach(it=>{ const pr=productById(it.productId); if(pr)parts.push(pr.name); });
+  const lines=(p.payments&&p.payments.length)?p.payments:[{method:p.payment||'cash'}];
+  lines.forEach(pm=>{ parts.push(payMethodInfo(pm.method||'cash').label, pm.method||'');
+    if(pm.cardId){ const c=cardById(pm.cardId); if(c){ const num=c.number||''; parts.push(c.name||'', num, num.replace(/\D/g,'')); } } });
+  if(p.payment==='split')parts.push('split');
+  return parts.join(' ').toLowerCase();
+}
 function renderPurchases(){
   const host=$('#buyList'); if(!host)return;
-  const q=($('#buySearch')?.value||'').toLowerCase();
-  const match=p=> purchaseItems(p).some(it=>{const pr=productById(it.productId);return pr&&pr.name.toLowerCase().includes(q);}) || (p.supplier||'').toLowerCase().includes(q) || (p.ref||'').toLowerCase().includes(q) || (p.orderNo||'').toLowerCase().includes(q);
+  const q=($('#buySearch')?.value||'').toLowerCase().trim();
+  const match=p=> !q || purchaseSearchBlob(p).includes(q);
   const rows=[...DB.purchases].sort((a,b)=>a.date<b.date?1:-1).filter(match);
   if(!DB.purchases.length){host.innerHTML=`<div class="panel">${emptyBox('📥','No purchases yet','Record your first stock purchase.')}</div>`;return;}
   host.innerHTML=`<div class="table-wrap"><table>
