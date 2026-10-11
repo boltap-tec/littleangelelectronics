@@ -5234,9 +5234,20 @@ function editCard(id){
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme); cardDueModeToggle();
-  ['c_disc','c_discOther','c_bdisc','c_bdiscOther'].forEach(fid=>{ const el=$('#'+fid); if(el)el.addEventListener('change',cardMaxCbPreview); if(el)el.addEventListener('input',cardMaxCbPreview); });
+  /* Borrower % starts mirroring OUR % until the owner deliberately changes it (per the module brief:
+     "initialize the borrower cashback as our cashback … so that we can change if needed"). */
+  _borrowerCbTouched = !!(id && c.borrowerCashbackPercent!=null && c.borrowerCashbackPercent!=='' && (+c.borrowerCashbackPercent)!==(+c.discountPercent||0));
+  ['c_bdisc','c_bdiscOther'].forEach(fid=>{ const el=$('#'+fid); if(el){ el.addEventListener('change',()=>{ _borrowerCbTouched=true; cardMaxCbPreview(); }); el.addEventListener('input',()=>{ _borrowerCbTouched=true; cardMaxCbPreview(); }); } });
+  ['c_disc','c_discOther'].forEach(fid=>{ const el=$('#'+fid); if(el){ el.addEventListener('change',cardCashbackChanged); el.addEventListener('input',cardCashbackChanged); } });
   cardMaxCbPreview();
 }
+/* a card's cashback % control — set select to a known step, or "Other…" with the raw value */
+function setRedeemControl(idSel,idOther,v){ v=+v||0; const sel=$('#'+idSel), oth=$('#'+idOther); if(!sel)return;
+  if([0,1,2,3,4,5].includes(v)){ sel.value=String(v); if(oth){ oth.style.display='none'; oth.value=''; } }
+  else{ sel.value='__other'; if(oth){ oth.style.display=''; oth.value=v; } } }
+/* our cashback changed — mirror it into the borrower field while that field is still untouched */
+function cardCashbackChanged(){ if(!_borrowerCbTouched){ setRedeemControl('c_bdisc','c_bdiscOther',redeemVal('c_disc','c_discOther')); } cardMaxCbPreview(); }
+let _borrowerCbTouched=false;
 /* live preview of a card's MAXIMUM cashback for a statement period = limit × (our% + borrower%) / 100 */
 function cardMaxCbPreview(){
   const pv=$('#c_maxcbpreview'); if(!pv)return;
