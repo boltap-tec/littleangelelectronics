@@ -2213,7 +2213,7 @@ function newPurchase(id,prefillPid){
   buyItems = p? purchaseItems(p).map(it=>({productId:it.productId,qty:+it.qty,rate:+it.rate}))
     : (Array.isArray(prefillPid)&&prefillPid.length ? prefillPid.map(i=>({productId:i.productId,qty:+i.qty||1,rate:(i.rate!==''&&i.rate!=null)?i.rate:(lastKnownRate(i.productId)||'')}))
        : (prefillPid ? [{productId:prefillPid,qty:1,rate:lastKnownRate(prefillPid)||''}]
-          : lastBillLines('purchase')));
+          : [{productId:'',qty:1,rate:''}]));
   if(!buyItems.length)buyItems=[{productId:'',qty:1,rate:''}];
   buySplits = (p&&p.payments&&p.payments.length)? p.payments.map(pm=>({method:normBuyMethod(pm.method),cardId:pm.cardId||'',giftId:pm.giftId||'',ref:pm.payRef||'',deductPct:pm.deductPct||'',amount:pm.amount}))
     : [{method:'card',cardId:'',giftId:'',ref:'',amount:''}];
@@ -5605,8 +5605,8 @@ views.giftcards=function(){
     <div class="search"><span class="si">🔎</span><input id="giftSearch" placeholder="Search gift card name..." oninput="renderGiftCards()"></div>
   </div>
   <div id="giftStats" class="cards"></div>
-  <div id="giftHist"></div>
-  <div id="giftWrap"></div>`;
+  <div id="giftWrap"></div>
+  <div id="giftHist"></div>`;
 };
 views._after_giftcards=renderGiftCards;
 let _giftShowHist=true;   // overall gift-card history shown by default
@@ -5705,10 +5705,11 @@ function renderGiftCards(){
     <div class="stat blue"><span class="ic">💰</span><div class="label">Total Loaded</div><div class="val">${money(tLoad)}</div></div>
     <div class="stat gold"><span class="ic">🛍️</span><div class="label">Spent</div><div class="val">${money(Math.max(0,tLoad-tBal))}</div></div>`:'';
   if(!prods.length && !legacy.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No gift cards match your search.'):emptyBox('🎁','No gift cards yet','Add a gift-card type (e.g. Lulu, Carrefour, Apple) with ＋ New Gift Card — then Buy / Recharge its balance and use it to pay for stock.')}</div>`; return; }
-  const act=prods.filter(giftActive), inact=prods.filter(g=>!giftActive(g));
+  /* recently-added cards first (DB.giftcards is in creation order, so reverse) */
+  const act=prods.filter(giftActive).reverse(), inact=prods.filter(g=>!giftActive(g)).reverse();
   const sec=(title,arr,color)=>arr.length?`<div class="cat-head">${title} <span class="cc" style="color:${color}">${arr.length}</span></div><div class="ccgrid">${arr.map(giftCell).join('')}</div>`:'';
   host.innerHTML=sec('🟢 Active',act,'var(--green)')+sec('⚪ Inactive',inact,'var(--muted)')
-    +(legacy.length?`<div class="cat-head" style="margin-top:18px">📦 Archived — old numbered cards <span class="cc" style="color:var(--muted)">${legacy.length}</span></div><div class="li-hint" style="margin:-4px 2px 10px">Your previous individual gift cards, kept for history. You can still spend down any balance; new buys use the gift-card products above.</div><div class="ccgrid">${legacy.map(giftCell).join('')}</div>`:'');
+    +(legacy.length?`<div class="cat-head" style="margin-top:18px">📦 Archived — old numbered cards <span class="cc" style="color:var(--muted)">${legacy.length}</span></div><div class="li-hint" style="margin:-4px 2px 10px">Your previous individual gift cards, kept for history. You can still spend down any balance; new buys use the gift-card products above.</div><div class="ccgrid">${legacy.slice().reverse().map(giftCell).join('')}</div>`:'');
 }
 /* add a gift-card product (a type: Lulu / Carrefour / Apple …) */
 function newGiftProductModal(){
