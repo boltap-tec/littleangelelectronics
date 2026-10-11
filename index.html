@@ -8502,7 +8502,7 @@ function pdfCusage(){ downloadReportPdf(cusageReportHtml(),'cusagePdfArea','card
      • Available limit (period), Used limit (period), Old due, Due date                        */
 function cashbackRepRows(){
   const q=($('#cbrSearch')?.value||'').trim().toLowerCase();
-  const order=$('#cbrOrder')?.value||'near';
+  const order=$('#cbrOrder')?.value||'rem';
   const onlyUsed=($('#cbrCards')?.value||'all')==='used';
   const today=todayStr();
   let rows=(DB.cards||[]).map(c=>{
@@ -8524,7 +8524,13 @@ function cashbackRepRows(){
   });
   if(onlyUsed) rows=rows.filter(r=>r.usedPeriod>0.005 || r.earned>0.005);
   if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number].some(v=>(v||'').toLowerCase().includes(q)));
-  rows.sort((a,b)=> order==='near' ? (a.due-b.due) : (b.due-a.due));
+  /* 'rem' = card-preference order: the card that can still earn the MOST cashback first
+     (remCb already equals availablePeriod × total% ÷ 100, so it is 0 once a card's limit is used up —
+     this naturally floats the best card to use next to the top). */
+  rows.sort((a,b)=>
+    order==='near' ? (a.due-b.due) :
+    order==='far'  ? (b.due-a.due) :
+    ((b.remCb-a.remCb) || (b.availPeriod-a.availPeriod) || (b.totPct-a.totPct) || (a.due-b.due)));
   return rows;
 }
 views.cashbackrep=function(){
@@ -8536,7 +8542,8 @@ views.cashbackrep=function(){
         <option value="all">All cards</option>
         <option value="used">With activity this period</option>
       </select>
-      <select id="cbrOrder" class="mini-btn srch" style="padding:9px" onchange="renderCashbackRep()" title="Due-date order">
+      <select id="cbrOrder" class="mini-btn srch" style="padding:9px" onchange="renderCashbackRep()" title="How to order the cards">
+        <option value="rem">⭐ Best to use · most remaining cashback</option>
         <option value="near">Due date · nearest first</option>
         <option value="far">Due date · latest first</option>
       </select>
@@ -8563,11 +8570,14 @@ function renderCashbackRep(){
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see cashback.')}</div>`; return; }
   const rows=cashbackRepRows();
   if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No cards match your filter.')}</div>`; return; }
-  const tr=rows.map(r=>{
+  const prefOrder=($('#cbrOrder')?.value||'rem')==='rem';
+  const tr=rows.map((r,idx)=>{
     const dueCls=(r.dleft<=3 && (r.oldDue>0.005||r.usedPeriod>0.005))?';color:var(--red);font-weight:700':'';
     const bar=`<div style="margin-top:5px;height:6px;border-radius:5px;background:var(--line2);overflow:hidden"><div style="height:100%;width:${Math.round(r.earnedPct)}%;background:var(--gold2,#f5b301)"></div></div>`;
-    return `<tr>
-      <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.bank?' · '+esc(r.c.bank):''}</div>
+    const best=prefOrder && idx===0 && r.remCb>0.005;
+    const badge=best?`<span class="tag" style="background:var(--gold2,#f5b301);color:#1a1200;font-weight:800;margin-left:6px">⭐ Best to use</span>`:'';
+    return `<tr${best?' style="background:color-mix(in srgb,var(--gold2,#f5b301) 10%,transparent)"':''}>
+      <td><b>${esc(r.c.name)}</b>${badge}<div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.bank?' · '+esc(r.c.bank):''}</div>
         <div style="color:var(--muted2);font-size:11px">${esc(cardOwnerLabel(r.c))}</div></td>
       <td class="num"><b>${r.totPct?r.totPct+'%':'—'}</b><div style="color:var(--muted2);font-size:11px">${r.ourPct}% + ${r.borPct}%</div></td>
       <td class="num"><b style="color:var(--gold2,#f5b301)">${money(r.maxCb)}</b>${bar}<div style="color:var(--muted2);font-size:10.5px;margin-top:3px">${Math.round(r.earnedPct)}% earned</div></td>
@@ -8599,17 +8609,61 @@ function exportCashbackRepExcel(){
   rows.forEach(r=>out.push([r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.ourPct,r.borPct,r.totPct,num2(r.maxCb),num2(r.ourCb),num2(r.borCb),num2(r.remCb),num2(r.usedPeriod),num2(r.availPeriod),num2(r.oldDue),isoDate(r.due),r.dleft,r.capPeriod==='month'?'Calendar month':'Statement cycle',r.pr.start,r.pr.end]));
   exportExcel('cashback_report_'+todayStr()+'.xlsx',[{name:'Cashback Report',rows:out}]);
 }
-function cashbackRepReportHtml(){
-  const rows=cashbackRepRows(); if(!rows.length)return '';
-  const head=['Card','Holder','Our%','Bor%','Max Cashback','Our Cashback','Borrower Cashback','Remaining','Used Limit','Avail Limit','Old Due','Due Date','Days'];
-  const body=rows.map(r=>[r.c.name,cardOwnerLabel(r.c),r.ourPct+'%',r.borPct+'%',money(r.maxCb),money(r.ourCb),money(r.borCb),money(r.remCb),money(r.usedPeriod),money(r.availPeriod),r.oldDue>0.005?money(r.oldDue):'—',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)]);
-  const t=k=>rows.reduce((s,r)=>s+r[k],0);
-  const foot=['Total · '+rows.length+' card'+(rows.length===1?'':'s'),'','','',money(t('maxCb')),money(t('ourCb')),money(t('borCb')),money(t('remCb')),money(t('usedPeriod')),money(t('availPeriod')),money(t('oldDue')),'',''];
-  return reportAreaHtml({areaId:'cashbackRepPdfArea',width:1120,icon:'🎁',title:'Cashback Report',sub:rows.length+' card(s) · current statement period · '+fmtDate(todayStr()),
-    head, numCols:[2,3,4,5,6,7,8,9,10,12], rows:body, foot,
-    note:'Max Cashback = limit × (our% + borrower%) ÷ 100 · Our Cashback = this period\'s spend × our% · Borrower Cashback = this period\'s spend × borrower% · Remaining = max − our − borrower · Used / Available Limit are within this cashback period · ADCB Lulu &amp; ADCB 365 cap by calendar month, others by statement cycle · Days relative to today (negative = overdue).'});
+const CASHBACK_REP_HEAD=['Card','Holder','Our%','Bor%','Max Cashback','Our Cashback','Borrower Cashback','Remaining','Used Limit','Avail Limit','Old Due','Due Date','Days'];
+const CASHBACK_REP_NOTE='Max Cashback = limit × (our% + borrower%) ÷ 100 · Our Cashback = this period\'s spend × our% · Borrower Cashback = this period\'s spend × borrower% · Remaining = max − our − borrower (best-to-use cards have the most remaining) · Used / Available Limit are within this cashback period · ADCB Lulu &amp; ADCB 365 cap by calendar month, others by statement cycle · Days relative to today (negative = overdue).';
+function cashbackRepRowCells(r){ return [r.c.name,cardOwnerLabel(r.c),r.ourPct+'%',r.borPct+'%',money(r.maxCb),money(r.ourCb),money(r.borCb),money(r.remCb),money(r.usedPeriod),money(r.availPeriod),r.oldDue>0.005?money(r.oldDue):'—',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)]; }
+/* Build one report "page" area. `pageRows` = the cards shown on THIS page; `totalRows` = all cards
+   (so the grand-total foot is correct); `opt.sub` carries the page's own subtitle (e.g. "Page 2 of 5").
+   The title/company HEADER is part of reportAreaHtml, so building one area per page = header on EVERY page. */
+function cashbackRepReportHtml(pageRows, totalRows, opt){
+  const all = totalRows || cashbackRepRows();
+  const rows = pageRows || all;
+  if(!rows.length) return '';
+  opt = opt || {};
+  const body=rows.map(cashbackRepRowCells);
+  const t=k=>all.reduce((s,r)=>s+r[k],0);
+  const foot = opt.showFoot===false ? undefined
+    : ['Total · '+all.length+' card'+(all.length===1?'':'s'),'','','',money(t('maxCb')),money(t('ourCb')),money(t('borCb')),money(t('remCb')),money(t('usedPeriod')),money(t('availPeriod')),money(t('oldDue')),'',''];
+  return reportAreaHtml({areaId:'cashbackRepPdfArea',width:1120,icon:'🎁',title:'Cashback Report',
+    sub: opt.sub || (all.length+' card(s) · current statement period · '+fmtDate(todayStr())),
+    head:CASHBACK_REP_HEAD, numCols:[2,3,4,5,6,7,8,9,10,12], rows:body, foot,
+    note: opt.note!==undefined ? opt.note : CASHBACK_REP_NOTE});
 }
-function pdfCashbackRep(){ downloadReportPdf(cashbackRepReportHtml(),'cashbackRepPdfArea','cashback_report_'+todayStr()+'.pdf'); }
+/* Multi-page PDF that repeats the full header (title + company + column headings) on EVERY page,
+   by rendering one report area per chunk of rows instead of slicing a single tall image. */
+async function pdfCashbackRep(){
+  const rows=cashbackRepRows();
+  if(!rows.length){ toast('No cards to export',1); return; }
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  toast('Preparing PDF…',0);
+  try{
+    const {jsPDF}=window.jspdf; const pdf=new jsPDF('l','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight();
+    const perPage=18;
+    const pages=[]; for(let i=0;i<rows.length;i+=perPage) pages.push(rows.slice(i,i+perPage));
+    for(let pi=0; pi<pages.length; pi++){
+      const isLast = pi===pages.length-1;
+      const html=cashbackRepReportHtml(pages[pi], rows, {
+        showFoot: isLast,
+        note: isLast ? undefined : '',
+        sub: rows.length+' card(s) · current statement period · '+fmtDate(todayStr())+'  ·  Page '+(pi+1)+' of '+pages.length
+      });
+      const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;background:#fff;z-index:-1';
+      holder.innerHTML=html; document.body.appendChild(holder);
+      try{
+        const canvas=await html2canvas(holder.querySelector('#cashbackRepPdfArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+        const img=canvas.toDataURL('image/jpeg',0.95);
+        let w=pw, h=canvas.height*pw/canvas.width;
+        if(h>ph){ h=ph; w=canvas.width*ph/canvas.height; }   // keep aspect; fit within one page
+        if(pi>0) pdf.addPage();
+        pdf.addImage(img,'JPEG',(pw-w)/2,0,w,h);
+      } finally { document.body.removeChild(holder); }
+    }
+    const filename='cashback_report_'+todayStr()+'.pdf';
+    await saveExport(pdf.output('blob'), filename);
+    toast('PDF ready — '+filename);
+  }catch(e){ toast('Could not build the PDF',1); }
+}
 
 /* ============ Report 3 · Card Preference ============ */
 function cprefRows(){
