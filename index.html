@@ -1459,6 +1459,7 @@ function migrate(){
   }
   (DB.products||[]).forEach(p=>{ if(p.compPrices===undefined)p.compPrices=[]; });
   (DB.products||[]).forEach(p=>{ if(!Array.isArray(p.refs))p.refs=parseRefs(p.refs); });
+  (DB.cards||[]).forEach(c=>{ if(!Array.isArray(c.refs))c.refs=parseRefs(c.refs); });
 }
 load();
 
@@ -5045,6 +5046,7 @@ function cardVisual(c){
 let _cardView='owners';
 function setCardView(v){ _cardView=v; $$('#cardViewTgl button').forEach(b=>b.classList.toggle('active', b.dataset.cv===v)); renderCards(); }
 function cardCell(c,badge){ return `<div>${badge?`<div style="text-align:center;font-size:11px;font-weight:800;color:var(--green);margin-bottom:6px">${badge}</div>`:''}${cardVisual(c)}
+  ${refsStr(c)?`<div style="text-align:center;color:var(--muted2);font-size:11.5px;margin-top:6px">ref ${esc(refsStr(c))}</div>`:''}
   <div class="row-actions" style="margin-top:9px;justify-content:center">
     <button class="mini-btn" onclick="event.stopPropagation();cardTxnModal('${c.id}','recharge')">↑ Recharge</button>
     <button class="mini-btn gold" onclick="event.stopPropagation();cardTxnModal('${c.id}','payment')">＋ Pay</button>
@@ -5067,7 +5069,7 @@ views.cards=function(){
       <button data-cv="status" class="${_cardView==='status'?'active':''}" onclick="setCardView('status')">🟢 Status</button>
       <button data-cv="credit" class="${_cardView==='credit'?'active':''}" onclick="setCardView('credit')">💳 View credit</button>
     </div>
-    <div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank or number..." oninput="renderCards()"></div>
+    <div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank, number or ref..." oninput="renderCards()"></div>
   </div>
   <div id="cardStats" class="cards"></div>
   <div id="cardsWrap"></div>`;
@@ -5077,7 +5079,7 @@ function renderCards(){
   const host=$('#cardsWrap'); if(!host)return;
   const all=DB.cards||[], m=ym(todayStr());
   const q=($('#cardSearch')?.value||'').toLowerCase().trim();
-  const cards=q? all.filter(c=>[c.name,c.owner,c.bank,c.number].some(v=>(v||'').toLowerCase().includes(q))) : all;
+  const cards=q? all.filter(c=>[c.name,c.owner,c.bank,c.number].some(v=>(v||'').toLowerCase().includes(q))||refsStr(c).toLowerCase().includes(q)) : all;
   // totals & available count reflect ACTIVE (usable) cards only — inactive cards are excluded
   const actInView=cards.filter(cardActive), inactInView=cards.filter(c=>!cardActive(c));
   let tL=0,tA=0,tO=0,tD=0;
@@ -5097,7 +5099,7 @@ function renderCards(){
       <div class="table-wrap"><table style="min-width:640px">
       <thead><tr><th>Card</th><th class="num">Available</th><th class="num">Used / Limit</th><th class="num">Outstanding</th><th>Due date</th><th></th></tr></thead>
       <tbody>${rows.map(r=>{ const warn=r.out>0.005&&r.dl<=3; return `<tr>
-        <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.owner?` · <b style="color:var(--text)">👤 ${esc(r.c.owner)}</b>`:''}</div></td>
+        <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.owner?` · <b style="color:var(--text)">👤 ${esc(r.c.owner)}</b>`:''}</div>${refsStr(r.c)?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(refsStr(r.c))}</div>`:''}</td>
         <td class="num" style="color:${r.av<0?'var(--red)':'var(--green)'};font-weight:700">${money(r.av)}</td>
         <td class="num"><div>${money(r.out)} / ${money(r.lim)}</div><div class="bar" style="margin-top:4px"><i style="width:${r.use}%"></i></div></td>
         <td class="num">${money(r.out)}</td>
@@ -5308,6 +5310,7 @@ function editCard(id){
       <div class="field"><label>Bank / Issuer</label>${selectList('c_bank',allCardBanks(),c.bank||'','onchange="cardBankChanged()"')}</div>
     </div>
     <div class="field"><label>Card Number</label><input id="c_number" value="${esc(c.number||'')}" inputmode="numeric" placeholder="Stored on your device only — shown masked (last 4)"></div>
+    <div class="field"><label>Reference No(s)</label><input id="c_refs" value="${esc(refsStr(c))}" placeholder="e.g. 6651, 6695"><div style="color:var(--muted2);font-size:11px;margin-top:5px">One or more — separate with commas. Any of these can be searched on the Cards screen.</div></div>
     <div class="field"><label>Card Colour</label>
       <div class="swatches card-swatches" id="c_themes">${CARD_THEMES.map(t=>`<button type="button" class="sw" data-k="${t.k}" style="background:${t.g}" onclick="pickCardTheme('${t.k}')"></button>`).join('')}</div>
       <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Pick a bank you've used before and its saved colour is applied automatically — or choose any swatch to override.</div>
@@ -5410,7 +5413,7 @@ function saveCard(id){
   const day=Math.min(31,Math.max(1,+$('#c_day').value||1));
   const stmtRaw=$('#c_stmtday').value;
   const statementDay=(stmtRaw!==''&&stmtRaw!=null)?Math.min(31,Math.max(1,+stmtRaw||0)):0;
-  const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
+  const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), refs:parseRefs($('#c_refs')?.value), theme:_cardTheme,
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
     allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), borrowerCashbackPercent:redeemVal('c_bdisc','c_bdiscOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
