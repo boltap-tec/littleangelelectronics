@@ -1002,7 +1002,7 @@ const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',
 /* Report screens an admin can grant to a worker (otherwise owner-only). Stored in a
    worker's perms just like any other screen; granted workers see the report but any
    owner-only profit columns inside it stay hidden. */
-const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cprefrep','invmove','invtoday'];
+const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cashbackrep','cprefrep','invmove','invtoday'];
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -1031,6 +1031,7 @@ const NAV_GROUPS=[
     {v:'cardusage',  ic:'📊', lab:'Card Usage'},
     {v:'rcard',      ic:'💳', lab:'Recent Credit Card'},
     {v:'cusage',     ic:'📈', lab:'Card Usage & Cashback'},
+    {v:'cashbackrep',ic:'🎁', lab:'Cashback Report'},
     {v:'cprefrep',   ic:'⭐', lab:'Card Preference'},
     {v:'invmove',    ic:'📦', lab:'Inventory Movement'},
     {v:'invtoday',   ic:'📋', lab:"Today's Inventory"} ]},
@@ -1268,7 +1269,8 @@ function seed(){
       creditRules:[
         {id:uid(),name:'ENBD Platinum',match:'ENBD Platinum',pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
         {id:uid(),name:'ENBD Share',   match:'ENBD Share',   pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
-        {id:uid(),name:'ADCB Lulu',    match:'ADCB Lulu',    pct:null,maxCashback:null,capPeriod:'month',    ignoreLimit:false}
+        {id:uid(),name:'ADCB Lulu',    match:'ADCB Lulu',    pct:null,maxCashback:null,capPeriod:'month',    ignoreLimit:false},
+        {id:uid(),name:'ADCB 365',     match:'ADCB 365',     pct:null,maxCashback:null,capPeriod:'month',    ignoreLimit:false}
       ],
       theme:'ocean', sound:true
     }
@@ -1387,7 +1389,10 @@ function migrate(){
   (DB.lenders||[]).forEach(l=>{ if(!Array.isArray(l.cards))l.cards=[]; if(!Array.isArray(l.txns))l.txns=[]; if(l.status===undefined)l.status='active';
     if(l.feePct===undefined){ const fc=(l.cards||[]).find(c=>c.feePct!=null&&c.feePct!==''); l.feePct=fc?(+fc.feePct||0):((DB.settings&&+DB.settings.lenderCardFeePct)||2.3); }   // fee moved from per-card to lender level
     l.cards.forEach(c=>{ if(c.name===undefined)c.name=c.label||''; if(c.last4===undefined)c.last4=''; }); });
-  (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active'; });
+  (DB.cards||[]).forEach(c=>{ if(!c.txns)c.txns=[]; if(c.owner===undefined)c.owner=''; if(c.status===undefined)c.status='active';
+    /* Borrower cashback share: when a card is bought from a borrower the cashback is split
+       between us and them. Seed the borrower's % to match OUR cashback % so it can be tuned later. */
+    if(c.borrowerCashbackPercent===undefined)c.borrowerCashbackPercent=(+c.discountPercent||0); });
   // every card may go over-limit (negative) — one-time flip; still warns on each over-limit swipe
   if(!DB.settings._allowNegAll){ (DB.cards||[]).forEach(c=>{ c.allowNegative=true; }); DB.settings._allowNegAll=true; }
   (DB.giftcards||[]).forEach(g=>{ if(!g.txns)g.txns=[]; if(g.status===undefined)g.status='active'; });
@@ -1408,8 +1413,14 @@ function migrate(){
   if(DB.settings.creditRules===undefined)DB.settings.creditRules=[
     {id:uid(),name:'ENBD Platinum',match:'ENBD Platinum',pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
     {id:uid(),name:'ENBD Share',   match:'ENBD Share',   pct:1.25,maxCashback:250,capPeriod:'statement',ignoreLimit:true},
-    {id:uid(),name:'ADCB Lulu',    match:'ADCB Lulu',    pct:null,maxCashback:null,capPeriod:'month',    ignoreLimit:false}
+    {id:uid(),name:'ADCB Lulu',    match:'ADCB Lulu',    pct:null,maxCashback:null,capPeriod:'month',    ignoreLimit:false},
+    {id:uid(),name:'ADCB 365',     match:'ADCB 365',     pct:null,maxCashback:null,capPeriod:'month',    ignoreLimit:false}
   ];
+  /* ADCB 365 (like ADCB Lulu) caps cashback by the CALENDAR MONTH, not the statement date — add it
+     to existing users' rule sets once if they don't already have a matching rule. */
+  if(Array.isArray(DB.settings.creditRules) && !DB.settings.creditRules.some(r=>r&&String(r.match||'').toLowerCase()==='adcb 365')){
+    DB.settings.creditRules.push({id:uid(),name:'ADCB 365',match:'ADCB 365',pct:null,maxCashback:null,capPeriod:'month',ignoreLimit:false});
+  }
   (DB.products||[]).forEach(p=>{ if(p.compPrices===undefined)p.compPrices=[]; });
 }
 load();
@@ -4394,6 +4405,20 @@ function cardCashbackUsed(c, d){
 }
 /* total cashback credited to a card, all time (= "cashback availed till now") */
 function cardCashbackTotal(c){ return (c.txns||[]).filter(t=>t.type==='discount').reduce((s,t)=>s+(+t.amount||0),0); }
+/* ----- Borrower cashback split (cards bought from a borrower) -----
+   OUR cashback % = the card's effective rate (discountPercent, overlaid by any central rule).
+   The BORROWER's share defaults to equal ours until the owner edits it per card. */
+function cardOurCashbackPct(c){ return cardCashbackCfg(c).pct; }
+function cardBorrowerCashbackPct(c){ if(!c)return 0;
+  const v=c.borrowerCashbackPercent; return (v!=null&&v!=='')?(+v||0):cardOurCashbackPct(c); }
+function cardTotalCashbackPct(c){ return cardOurCashbackPct(c)+cardBorrowerCashbackPct(c); }
+/* a card's MAXIMUM cashback for one statement/cap period = limit × (our% + borrower%) / 100 */
+function cardMaxCashback(c){ return (+((c&&c.creditLimit))||0)*cardTotalCashbackPct(c)/100; }
+/* total purchases charged to a card WITHIN the cashback period that contains date d (default today).
+   For ADCB Lulu / ADCB 365 this period is the calendar month; for other cards, the statement cycle. */
+function cardUsedInPeriod(c,d){ const p=cashbackPeriodRange(c,d||todayStr());
+  return (c.txns||[]).filter(t=>(t.type==='purchase'||t.type==='oldbal') && t.date>=p.start && t.date<=p.end)
+    .reduce((s,t)=>s+(+t.amount||0),0); }
 function nextDue(day){ day=Math.min(31,Math.max(1,+day||1)); const t=new Date(); t.setHours(0,0,0,0);
   const mk=(y,m)=>new Date(y,m,Math.min(day,new Date(y,m+1,0).getDate()));
   let y=t.getFullYear(),m=t.getMonth(),d=mk(y,m); if(d<t){ if(++m>11){m=0;y++;} d=mk(y,m); } return d; }
@@ -5145,7 +5170,8 @@ function cardDueModeToggle(){
   pv.innerHTML = `Statement <b style="color:var(--text)">${fmtDate(isoDate(stmt))}</b> → due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${gap} day${gap===1?'':'s'} to pay · due ${dl<=0?'today':'in '+dl+' day'+(dl===1?'':'s')}`;
 }
 function editCard(id){
-  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active',allowNegative:true};
+  const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,borrowerCashbackPercent:'',maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active',allowNegative:true};
+  const bpct=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?c.borrowerCashbackPercent:c.discountPercent;
   _cardTheme=c.theme||'indigo';
   openModal(`${id?'Edit':'Add'} Card`,`
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
@@ -5160,13 +5186,17 @@ function editCard(id){
       <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Pick a bank you've used before and its saved colour is applied automatically — or choose any swatch to override.</div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00"></div>
+      <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00" oninput="cardMaxCbPreview()"></div>
       <div class="field"><label>Alert When Available Below (${S().currency})</label><input id="c_alert" type="number" min="0" step="any" value="${c.balanceLimitAlert}" placeholder="optional low-balance warning"></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Cashback (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}</div>
-      <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap"></div>
+      <div class="field"><label>Our Cashback (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}
+        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Our share of this card's cashback.</div></div>
+      <div class="field"><label>Borrower Cashback (%)</label>${redeemSelect('c_bdisc','c_bdiscOther',bpct)}
+        <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">The card owner / borrower's share — starts equal to ours; change it any time.</div></div>
     </div>
+    <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap">
+      <div class="li-hint" id="c_maxcbpreview" style="margin-top:6px"></div></div>
     <div class="grid2">
       <div class="field"><label>Payment Due Date (day 1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}" oninput="cardDueModeToggle()"></div>
       <div class="field"><label>Statement Day (1–31)</label><input id="c_stmtday" type="number" min="1" max="31" value="${c.statementDay||''}" placeholder="blank = ${STMT_DAYS_BEFORE_DUE} days before due" oninput="cardDueModeToggle()">
@@ -5193,6 +5223,18 @@ function editCard(id){
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme); cardDueModeToggle();
+  ['c_disc','c_discOther','c_bdisc','c_bdiscOther'].forEach(fid=>{ const el=$('#'+fid); if(el)el.addEventListener('change',cardMaxCbPreview); if(el)el.addEventListener('input',cardMaxCbPreview); });
+  cardMaxCbPreview();
+}
+/* live preview of a card's MAXIMUM cashback for a statement period = limit × (our% + borrower%) / 100 */
+function cardMaxCbPreview(){
+  const pv=$('#c_maxcbpreview'); if(!pv)return;
+  const limit=+$('#c_limit')?.value||0;
+  const our=redeemVal('c_disc','c_discOther'), bor=redeemVal('c_bdisc','c_bdiscOther');
+  const total=our+bor, max=limit*total/100;
+  pv.innerHTML = total>0&&limit>0
+    ? `Max cashback / statement period = <b style="color:var(--text)">${money(max)}</b> &nbsp;·&nbsp; ${money(limit)} × (${our}% + ${bor}%) = ${total}%`
+    : `Max cashback / statement period = <b>limit × (our% + borrower%)</b>. Set the limit &amp; cashback % above.`;
 }
 function saveCard(id){
   if(!requireOnline())return;
@@ -5203,7 +5245,7 @@ function saveCard(id){
   const data={ name, owner:$('#c_owner').value.trim(), bank:$('#c_bank').value.trim(), number:$('#c_number').value.trim(), theme:_cardTheme,
     creditLimit:+$('#c_limit').value||0, balanceLimitAlert:+$('#c_alert').value||0, status:$('#c_status').value,
     allowNegative:$('#c_allowneg').value==='1',
-    discountPercent:redeemVal('c_disc','c_discOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
+    discountPercent:redeemVal('c_disc','c_discOther'), borrowerCashbackPercent:redeemVal('c_bdisc','c_bdiscOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
     paymentDay:day, dueMode:'fixed', statementDay };
   if(id){ data.openingOutstanding=+$('#c_openbal').value||0; data.openingDate=($('#c_opendate').value||'').slice(0,10);
     Object.assign(cardById(id),data); logAct('edit','card',data.name,'card details updated'); }
@@ -7403,7 +7445,7 @@ function summSetRange(){ _summFrom=$('#summFrom')?.value||''; _summTo=$('#summTo
    MODE OF PAYMENT REPORT — purchases / sales filtered by payment
    mode & date, newest first, with notes shown and an edit link.
    ========================================================= */
-let _modeKind='sale', _modeMode='all', _modeFrom='', _modeTo='';
+let _modeKind='sale', _modeMode='all', _modeFrom='', _modeTo='', _modeSearch='';
 function recNote(rec){
   const parts=[];
   if(rec.payNote && rec.payNote.trim()) parts.push(rec.payNote.trim());
@@ -7424,11 +7466,22 @@ function modeOptions(kind){
   if(kind==='sale')return [['all','All modes'],['cash','Cash'],['card','Card'],['bank','Bank Transfer'],['cheque','Cheque'],['other','Other']];
   return [['all','All modes']].concat(payMethods().map(m=>[m.k,m.label])).concat([['split','Split (multiple)']]);
 }
+/* order/bill no & party name for a record (reused on screen, in search, Excel & PDF) */
+function modeRef(r){ return _modeKind==='sale' ? (r.invoiceNo||r.billNo||'—') : (r.ref||'—'); }
+function modeParty(r){ return (_modeKind==='sale'?r.customer:r.supplier) || (_modeKind==='sale'?'Walk-in':'—'); }
+/* plain-text payment-mode label for a record (for Excel / PDF) */
+function modeRecLabel(r){
+  const lines=(r.payments||[]).filter(pm=>(+pm.amount||0)>0.005);
+  if(lines.length>1 || r.payment==='split') return 'Split';
+  if(lines.length) return payMethodInfo(lines[0].method).label;
+  return payMethodInfo(r.payment||'cash').label;
+}
 function modeRecords(){
   const src=_modeKind==='sale'?DB.sales:DB.purchases;
-  const from=_modeFrom, to=_modeTo;
+  const from=_modeFrom, to=_modeTo, q=(_modeSearch||'').trim().toLowerCase();
   const inRange=d=> (!from||d>=from) && (!to||d<=to);
-  return src.filter(r=>inRange(r.date)&&recHasMode(r,_modeMode)).slice().sort((a,b)=> a.date<b.date?1:-1); // date descending
+  const matchQ=r=> !q || String(modeRef(r)).toLowerCase().includes(q) || String(modeParty(r)).toLowerCase().includes(q);
+  return src.filter(r=>inRange(r.date)&&recHasMode(r,_modeMode)&&matchQ(r)).slice().sort((a,b)=> a.date<b.date?1:-1); // date descending
 }
 function modeProdSummary(rec){
   const its = _modeKind==='sale' ? (rec.items||[]) : purchaseItems(rec);
@@ -7437,11 +7490,13 @@ function modeProdSummary(rec){
   return esc(names[0])+(names.length>1?` <span style="color:var(--muted2)">+${names.length-1} more</span>`:'');
 }
 function openModeReport(kind){
-  _modeKind=kind; _modeMode='all'; _modeFrom=''; _modeTo='';
+  _modeKind=kind; _modeMode='all'; _modeFrom=''; _modeTo=''; _modeSearch='';
   const noun=kind==='sale'?'Sales':'Purchases';
+  const refLabel=kind==='sale'?'invoice no':'order no';
+  const partyLabel=kind==='sale'?'customer':'purchaser';
   const opts=modeOptions(kind).map(([v,l])=>`<option value="${v}" ${v===_modeMode?'selected':''}>${l}</option>`).join('');
   openModal(`💳 Mode of Payment Report — ${noun}`,`
-    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px">
       <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">Payment mode
         <select id="modeSel" class="mini-btn" style="padding:7px" onchange="modeSetFilter()">${opts}</select></label>
       <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap;color:var(--muted);font-size:12.5px">
@@ -7450,11 +7505,19 @@ function openModeReport(kind){
         <button class="mini-btn" onclick="modeClearDates()">Clear dates</button>
       </div>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
+      <input id="modeSearch" class="mini-btn" style="padding:8px 11px;flex:1;min-width:180px" placeholder="🔍 Search ${refLabel} or ${partyLabel} name…" value="${esc(_modeSearch)}" oninput="modeSetSearch()">
+      <button class="mini-btn" onclick="modeClearSearch()">Clear</button>
+    </div>
     <div id="modeRepWrap"></div>`,
-    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>`);
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     <button class="btn-sm btn-green" onclick="modeReportExcel()">⬇ Excel</button>
+     <button class="btn-sm btn-gold" onclick="modeReportPdf()">📄 Download PDF</button>`);
   renderModeReport();
 }
 function modeSetFilter(){ _modeMode=$('#modeSel')?.value||'all'; _modeFrom=$('#modeFrom')?.value||''; _modeTo=$('#modeTo')?.value||''; renderModeReport(); }
+function modeSetSearch(){ _modeSearch=$('#modeSearch')?.value||''; renderModeReport(); }
+function modeClearSearch(){ _modeSearch=''; const s=$('#modeSearch'); if(s)s.value=''; renderModeReport(); }
 function modeClearDates(){ _modeFrom=''; _modeTo=''; const f=$('#modeFrom'),t=$('#modeTo'); if(f)f.value=''; if(t)t.value=''; renderModeReport(); }
 function renderModeReport(){
   const host=$('#modeRepWrap'); if(!host)return;
@@ -7493,6 +7556,98 @@ function renderModeReport(){
     </div>`;
 }
 
+/* label for the currently-selected payment-mode filter (for export headers) */
+function modeFilterLabel(){ const o=modeOptions(_modeKind).find(([v])=>v===_modeMode); return o?o[1]:'All modes'; }
+/* product list as plain text for a record (Excel / PDF) */
+function modeProdText(r){
+  const its=_modeKind==='sale'?(r.items||[]):purchaseItems(r);
+  const names=its.map(it=>{ const p=productById(it.productId); return p?p.name:'Item'; });
+  return names.join(', ');
+}
+function modeReportExcel(){
+  const isSale=_modeKind==='sale', recs=modeRecords();
+  if(!recs.length){ toast('Nothing to export in this view',1); return; }
+  const noun=isSale?'Sales':'Purchases', refHd=isSale?'Invoice No':'Order No', partyHd=isSale?'Customer':'Purchaser';
+  const total=recs.reduce((a,r)=> a + (isSale?(r.total||0):purchaseTotal(r)), 0);
+  const rows=[
+    ['Mode of Payment Report — '+noun],
+    ['Payment mode',modeFilterLabel()],
+    ['Period',bsPeriodLabel(_modeFrom,_modeTo)],
+    ..._modeSearch.trim()?[['Search',_modeSearch.trim()]]:[],
+    [],
+    [refHd,'Date',partyHd,'Payment Mode','Products','Amount','Note']
+  ];
+  recs.forEach(r=>{ const amt=isSale?(r.total||0):purchaseTotal(r);
+    rows.push([modeRef(r),fmtDate(r.date),modeParty(r),modeRecLabel(r),modeProdText(r),num2(amt),recNote(r)]); });
+  rows.push(['','','','','TOTAL ('+recs.length+')',num2(total),'']);
+  exportExcel('mode_of_payment_'+(isSale?'sales':'purchases')+'_'+todayStr()+'.xlsx',[{name:'Mode of Payment',rows}]);
+}
+function modeReportDocHtml(){
+  const isSale=_modeKind==='sale', recs=modeRecords(); if(!recs.length)return null;
+  const st=S(), noun=isSale?'Sales':'Purchases', refHd=isSale?'Invoice No':'Order No', partyHd=isSale?'Customer':'Purchaser';
+  const total=recs.reduce((a,r)=> a + (isSale?(r.total||0):purchaseTotal(r)), 0);
+  const body=recs.map(r=>{ const amt=isSale?(r.total||0):purchaseTotal(r); const note=recNote(r);
+    return `<tr>
+      <td class="b">${esc(modeRef(r))}</td>
+      <td>${esc(fmtDate(r.date))}</td>
+      <td>${esc(modeParty(r))}</td>
+      <td>${esc(modeRecLabel(r))}</td>
+      <td class="pr">${esc(modeProdText(r))||'—'}${note?`<div class="nt">📝 ${esc(note)}</div>`:''}</td>
+      <td class="r b">${money(amt)}</td>
+    </tr>`; }).join('');
+  const searchLine=_modeSearch.trim()?` · Search: “${esc(_modeSearch.trim())}”`:'';
+  return `<div id="modeDoc" style="background:#fff;color:#222;font-family:Arial,Helvetica,sans-serif;padding:26px 30px;width:100%;box-sizing:border-box">
+    <style>
+      #modeDoc .co{font-size:20px;font-weight:800;color:#111}
+      #modeDoc .ad{color:#666;font-size:11px;margin-top:2px}
+      #modeDoc .rt{text-align:right}
+      #modeDoc .rt .t{font-size:15px;font-weight:800;color:#8a5a12}
+      #modeDoc .rt .p{color:#666;font-size:11px;margin-top:3px}
+      #modeDoc .hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #e7dcc4;padding-bottom:12px;margin-bottom:14px}
+      #modeDoc .meta{display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:#555;margin-bottom:12px}
+      #modeDoc .meta b{color:#111}
+      #modeDoc table{width:100%;border-collapse:collapse;font-size:11.5px}
+      #modeDoc th{background:#faf4e6;color:#6b4a12;text-align:left;padding:8px 9px;border:1px solid #ecdfc4;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px}
+      #modeDoc td{padding:7px 9px;border:1px solid #eee;vertical-align:top}
+      #modeDoc td.r,#modeDoc th.r{text-align:right}
+      #modeDoc td.b{font-weight:700;color:#111}
+      #modeDoc td.pr{color:#444}
+      #modeDoc td.nt{}
+      #modeDoc .nt{color:#8a5a12;font-size:10px;margin-top:3px;font-style:italic}
+      #modeDoc tfoot td{background:#fbf7ee;font-weight:800;color:#111;border-top:2px solid #e7dcc4}
+      #modeDoc .ft{margin-top:16px;color:#999;font-size:10px;text-align:center;border-top:1px solid #eee;padding-top:9px}
+    </style>
+    <div class="hd">
+      <div><div class="co">${esc(st.company)}</div><div class="ad">${esc(st.address)}</div>
+        ${st.showTrn&&st.trn?`<div class="ad"><b>TRN:</b> ${esc(st.trn)}</div>`:''}</div>
+      <div class="rt"><div class="t">Mode of Payment — ${noun}</div><div class="p">📅 ${esc(bsPeriodLabel(_modeFrom,_modeTo))}</div></div>
+    </div>
+    <div class="meta"><span>Payment mode: <b>${esc(modeFilterLabel())}</b></span><span><b>${recs.length}</b> ${noun.toLowerCase()}</span><span>Total: <b>${money(total)}</b></span>${searchLine?`<span>${searchLine.replace(/^ · /,'')}</span>`:''}</div>
+    <table>
+      <thead><tr><th>${refHd}</th><th>Date</th><th>${partyHd}</th><th>Payment Mode</th><th>Products / Note</th><th class="r">Amount</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td colspan="5">TOTAL (${recs.length} ${noun.toLowerCase()})</td><td class="r">${money(total)}</td></tr></tfoot>
+    </table>
+    <div class="ft">Generated ${fmtDate(todayStr())} · ${esc(st.company)}</div>
+  </div>`;
+}
+async function modeReportPdf(){
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return; }
+  const html=modeReportDocHtml(); if(!html){ toast('Nothing to export in this view',1); return; }
+  toast('Preparing PDF…',0);
+  const holder=document.createElement('div'); holder.style.cssText='position:fixed;left:-10000px;top:0;width:900px;background:#fff;z-index:-1';
+  holder.innerHTML=html; document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#modeDoc'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(); const imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){ pdf.addPage(); pos-=ph; } } }
+    const filename='mode_of_payment_'+(_modeKind==='sale'?'sales':'purchases')+'_'+todayStr()+'.pdf';
+    await saveExport(pdf.output('blob'), filename);
+    toast('PDF ready — '+filename);
+  }catch(e){ toast('Could not build the PDF',1); }
+  finally{ document.body.removeChild(holder); }
+}
 function renderBillSummary(){ const host=$('#summPreviewWrap'); if(!host)return;
   const html=billSummaryHtml(_summKind,_summFrom,_summTo);
   host.innerHTML = html || `<div style="background:#fff;border-radius:10px">${emptyBox(summMeta(_summKind).icon,'Nothing in this period','Pick a wider date range — or a different day — to see a summary.')}</div>`;
@@ -8259,6 +8414,126 @@ function cusageReportHtml(){
     note:'Statement = this cycle\'s statement date (cashback posts then, not at the till) · Cashback % &amp; cap come from Settings → Credit &amp; Cashback Rules · Availed = total cashback credited so far · Days relative to today (negative = overdue).'});
 }
 function pdfCusage(){ downloadReportPdf(cusageReportHtml(),'cusagePdfArea','card_usage_cashback_'+todayStr()+'.pdf'); }
+
+/* ============ Report · Cashback (our share + borrower share, per statement period) ============
+   Cards are bought from a borrower; the cashback is split between us and them. This report shows,
+   for the CURRENT cashback period of each card (statement cycle, or calendar month for ADCB
+   Lulu / ADCB 365):
+     • Maximum cashback = limit × (our% + borrower%) / 100
+     • Our cashback credited this period  (the discount actually posted to the card)
+     • Borrower cashback this period      (used × borrower%)
+     • Remaining cashback still earnable  = max − our − borrower
+     • Available limit (period), Used limit (period), Old due, Due date                        */
+function cashbackRepRows(){
+  const q=($('#cbrSearch')?.value||'').trim().toLowerCase();
+  const order=$('#cbrOrder')?.value||'near';
+  const onlyUsed=($('#cbrCards')?.value||'all')==='used';
+  const today=todayStr();
+  let rows=(DB.cards||[]).map(c=>{
+    const ourPct=cardOurCashbackPct(c), borPct=cardBorrowerCashbackPct(c), totPct=ourPct+borPct;
+    const limit=+c.creditLimit||0;
+    const maxCb=cardMaxCashback(c);
+    const usedPeriod=cardUsedInPeriod(c,today);                 // spend charged inside this cashback period
+    const ourCb=usedPeriod*ourPct/100;                          // OUR share of this period's spend
+    const borCb=usedPeriod*borPct/100;                          // the BORROWER's share of this period's spend
+    const credited=cardCashbackUsed(c,today);                   // cashback actually posted to the card this period
+    const earned=ourCb+borCb;
+    const remCb=Math.max(0, maxCb-earned);
+    const availPeriod=Math.max(0, limit-usedPeriod);
+    const sp=cardDueSplit(c), due=cardDueDate(c);
+    const pr=cashbackPeriodRange(c,today);
+    return { c, ourPct, borPct, totPct, limit, maxCb, usedPeriod, ourCb, borCb, credited, earned, remCb, availPeriod,
+             oldDue:sp.oldDue, due, dleft:daysUntil(due), capPeriod:cardCashbackCfg(c).capPeriod, pr,
+             earnedPct: maxCb>0?Math.min(100,Math.max(0,earned/maxCb*100)):0 };
+  });
+  if(onlyUsed) rows=rows.filter(r=>r.usedPeriod>0.005 || r.earned>0.005);
+  if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number].some(v=>(v||'').toLowerCase().includes(q)));
+  rows.sort((a,b)=> order==='near' ? (a.due-b.due) : (b.due-a.due));
+  return rows;
+}
+views.cashbackrep=function(){
+  if(!canView('cashbackrep'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Cashback reports are restricted to the owner account.</p></div>`;
+  return `
+  <div class="page-head"><div><h2>🎁 Cashback Report</h2><p>Per card, for the current statement period — maximum cashback, our share credited, the borrower's share, what's still earnable, plus used / available limit, old due &amp; due date.</p></div>
+    <div class="row-actions">
+      <select id="cbrCards" class="mini-btn srch" style="padding:9px" onchange="renderCashbackRep()" title="Which cards to include">
+        <option value="all">All cards</option>
+        <option value="used">With activity this period</option>
+      </select>
+      <select id="cbrOrder" class="mini-btn srch" style="padding:9px" onchange="renderCashbackRep()" title="Due-date order">
+        <option value="near">Due date · nearest first</option>
+        <option value="far">Due date · latest first</option>
+      </select>
+      <button class="btn-sm btn-green" onclick="exportCashbackRepExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-ghost" onclick="pdfCashbackRep()">📄 PDF</button>
+    </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cbrSearch" placeholder="Search card, holder or bank..." oninput="renderCashbackRep()"></div></div>
+  <div id="cbrStats" class="cards"></div>
+  <div id="cbrBody"></div>`;
+};
+views._after_cashbackrep=()=>{ if(canView('cashbackrep'))renderCashbackRep(); };
+function renderCashbackRep(){
+  if(!canView('cashbackrep'))return;
+  const all=DB.cards||[];
+  const cs=$('#cbrStats');
+  if(cs){ const base=cashbackRepRows();
+    const tMax=base.reduce((s,r)=>s+r.maxCb,0), tOur=base.reduce((s,r)=>s+r.ourCb,0), tBor=base.reduce((s,r)=>s+r.borCb,0), tRem=base.reduce((s,r)=>s+r.remCb,0);
+    cs.innerHTML= all.length?`
+      <div class="stat gold"><span class="ic">🎯</span><div class="label">Maximum cashback</div><div class="val">${money(tMax)}</div><div class="foot">${base.length} card${base.length===1?'':'s'} · this period</div></div>
+      <div class="stat green"><span class="ic">💰</span><div class="label">Our cashback</div><div class="val">${money(tOur)}</div><div class="foot">credited this period</div></div>
+      <div class="stat blue"><span class="ic">🤝</span><div class="label">Borrower cashback</div><div class="val">${money(tBor)}</div><div class="foot">their share this period</div></div>
+      <div class="stat amber"><span class="ic">✨</span><div class="label">Remaining cashback</div><div class="val">${money(tRem)}</div><div class="foot">still earnable</div></div>`:''; }
+  const body=$('#cbrBody'); if(!body)return;
+  if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see cashback.')}</div>`; return; }
+  const rows=cashbackRepRows();
+  if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No cards match your filter.')}</div>`; return; }
+  const tr=rows.map(r=>{
+    const dueCls=(r.dleft<=3 && (r.oldDue>0.005||r.usedPeriod>0.005))?';color:var(--red);font-weight:700':'';
+    const bar=`<div style="margin-top:5px;height:6px;border-radius:5px;background:var(--line2);overflow:hidden"><div style="height:100%;width:${Math.round(r.earnedPct)}%;background:var(--gold2,#f5b301)"></div></div>`;
+    return `<tr>
+      <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.bank?' · '+esc(r.c.bank):''}</div>
+        <div style="color:var(--muted2);font-size:11px">${esc(cardOwnerLabel(r.c))}</div></td>
+      <td class="num"><b>${r.totPct?r.totPct+'%':'—'}</b><div style="color:var(--muted2);font-size:11px">${r.ourPct}% + ${r.borPct}%</div></td>
+      <td class="num"><b style="color:var(--gold2,#f5b301)">${money(r.maxCb)}</b>${bar}<div style="color:var(--muted2);font-size:10.5px;margin-top:3px">${Math.round(r.earnedPct)}% earned</div></td>
+      <td class="num"${r.ourCb>0.005?' style="color:var(--green)"':''}>${r.ourCb>0.005?money(r.ourCb):'—'}</td>
+      <td class="num"${r.borCb>0.005?' style="color:var(--blue,#38bdf8)"':''}>${r.borCb>0.005?money(r.borCb):'—'}</td>
+      <td class="num"${r.remCb>0.005?' style="color:var(--amber)"':' style="color:var(--muted2)"'}>${money(r.remCb)}</td>
+      <td class="num"${r.usedPeriod>0.005?' style="color:var(--amber)"':''}>${money(r.usedPeriod)}</td>
+      <td class="num"${r.availPeriod<=0?' style="color:var(--red)"':''}>${money(r.availPeriod)}</td>
+      <td class="num" style="color:${r.oldDue>0.005?'var(--red)':'var(--muted2)'}">${r.oldDue>0.005?money(r.oldDue):'—'}</td>
+      <td style="white-space:nowrap${dueCls}">${fmtDate(isoDate(r.due))}<div style="color:var(--muted2);font-size:11px;font-weight:400">${dueLeftTxt(r.dleft)} · ${r.capPeriod==='month'?'monthly':'statement'}</div></td>
+    </tr>`;
+  }).join('');
+  const t=k=>rows.reduce((s,r)=>s+r[k],0);
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)">
+    <td>Total · ${rows.length} card${rows.length===1?'':'s'}</td><td></td>
+    <td class="num">${money(t('maxCb'))}</td><td class="num">${money(t('ourCb'))}</td><td class="num">${money(t('borCb'))}</td>
+    <td class="num">${money(t('remCb'))}</td><td class="num">${money(t('usedPeriod'))}</td><td class="num">${money(t('availPeriod'))}</td>
+    <td class="num"${t('oldDue')>0.005?' style="color:var(--red)"':''}>${money(t('oldDue'))}</td><td></td></tr>`;
+  body.innerHTML=`<div class="panel">
+    <div class="table-wrap"><table style="min-width:1100px"><thead><tr>
+      <th>Card</th><th class="num">Cashback %</th><th class="num">Max Cashback</th><th class="num">Our Cashback</th><th class="num">Borrower Cashback</th><th class="num">Remaining</th><th class="num">Used Limit</th><th class="num">Available Limit</th><th class="num">Old Due</th><th>Due Date</th>
+    </tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Figures are for each card's <b>current cashback period</b> — the statement cycle, or the <b>calendar month</b> for ADCB Lulu &amp; ADCB 365. <b>Max Cashback</b> = limit × (our% + borrower%) ÷ 100 · <b>Our Cashback</b> = this period's spend × our% · <b>Borrower Cashback</b> = this period's spend × borrower% · <b>Remaining</b> = max − our − borrower (what more can still be earned) · <b>Used / Available Limit</b> are within this period. Edit each card's split in Credit Cards; monthly-cap cards are set in Settings → Credit &amp; Cashback Rules.</div>
+  </div>`;
+}
+function exportCashbackRepExcel(){
+  const rows=cashbackRepRows(); if(!rows.length)return toast('No cards to export',1);
+  const out=[['Card','Bank','Holder','Card No.','Our %','Borrower %','Total %','Max Cashback','Our Cashback (period)','Borrower Cashback (period)','Remaining Cashback','Used Limit (period)','Available Limit (period)','Old Due','Due Date','Days (– = overdue)','Cap Period','Period From','Period To']];
+  rows.forEach(r=>out.push([r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.ourPct,r.borPct,r.totPct,num2(r.maxCb),num2(r.ourCb),num2(r.borCb),num2(r.remCb),num2(r.usedPeriod),num2(r.availPeriod),num2(r.oldDue),isoDate(r.due),r.dleft,r.capPeriod==='month'?'Calendar month':'Statement cycle',r.pr.start,r.pr.end]));
+  exportExcel('cashback_report_'+todayStr()+'.xlsx',[{name:'Cashback Report',rows:out}]);
+}
+function cashbackRepReportHtml(){
+  const rows=cashbackRepRows(); if(!rows.length)return '';
+  const head=['Card','Holder','Our%','Bor%','Max Cashback','Our Cashback','Borrower Cashback','Remaining','Used Limit','Avail Limit','Old Due','Due Date','Days'];
+  const body=rows.map(r=>[r.c.name,cardOwnerLabel(r.c),r.ourPct+'%',r.borPct+'%',money(r.maxCb),money(r.ourCb),money(r.borCb),money(r.remCb),money(r.usedPeriod),money(r.availPeriod),r.oldDue>0.005?money(r.oldDue):'—',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)]);
+  const t=k=>rows.reduce((s,r)=>s+r[k],0);
+  const foot=['Total · '+rows.length+' card'+(rows.length===1?'':'s'),'','','',money(t('maxCb')),money(t('ourCb')),money(t('borCb')),money(t('remCb')),money(t('usedPeriod')),money(t('availPeriod')),money(t('oldDue')),'',''];
+  return reportAreaHtml({areaId:'cashbackRepPdfArea',width:1120,icon:'🎁',title:'Cashback Report',sub:rows.length+' card(s) · current statement period · '+fmtDate(todayStr()),
+    head, numCols:[2,3,4,5,6,7,8,9,10,12], rows:body, foot,
+    note:'Max Cashback = limit × (our% + borrower%) ÷ 100 · Our Cashback = this period\'s spend × our% · Borrower Cashback = this period\'s spend × borrower% · Remaining = max − our − borrower · Used / Available Limit are within this cashback period · ADCB Lulu &amp; ADCB 365 cap by calendar month, others by statement cycle · Days relative to today (negative = overdue).'});
+}
+function pdfCashbackRep(){ downloadReportPdf(cashbackRepReportHtml(),'cashbackRepPdfArea','cashback_report_'+todayStr()+'.pdf'); }
 
 /* ============ Report 3 · Card Preference ============ */
 function cprefRows(){
