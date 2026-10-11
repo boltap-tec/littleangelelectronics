@@ -2275,7 +2275,7 @@ function renderBuyRows(){
   const host=$('#b_rows'); if(!host)return; const eng=computeEngine();
   host.innerHTML=buyItems.map((it,i)=>{ const st=it.productId?stockOf(it.productId,eng):0, bp=it.productId?avgBuyPrice(it.productId,eng):0, last=it.productId?lastKnownRate(it.productId):0;
     return `<div class="li-row">
-      <select class="rq srch" onchange="buyItems[${i}].productId=this.value;renderBuyRows()">${buyProdOpts(it.productId,eng)}</select>
+      <select class="rq srch" onchange="buyPickProduct(${i},this.value)">${buyProdOpts(it.productId,eng)}</select>
       <input class="rq" type="number" min="0" step="any" value="${it.qty}" placeholder="Qty" oninput="buyItems[${i}].qty=+this.value;buyCalcTotal()">
       <input class="rq" type="number" min="0" step="any" value="${it.rate}" placeholder="Cost" oninput="buyItems[${i}].rate=+this.value;buyCalcTotal()">
       <input disabled value="${num((+it.qty||0)*(+it.rate||0))}">
@@ -2283,6 +2283,8 @@ function renderBuyRows(){
     </div><div class="li-hint">${it.productId?`In stock <b style="color:var(--green)">${num(st)}</b> · avg buy <b style="color:var(--gold2)">${money(bp)}</b>${last?` · last cost ${money(last)}`:''}`:'Search & pick a product (most recently stocked shown first)'}</div>`; }).join('');
   buyCalcTotal();
 }
+/* picking a product seeds Cost/unit from its latest saved purchase cost (stays editable) */
+function buyPickProduct(i,pid){ if(!buyItems[i])return; buyItems[i].productId=pid; buyItems[i].rate = pid ? (lastKnownRate(pid)||'') : ''; renderBuyRows(); }
 function addBuyRow(){ buyItems.push({productId:'',qty:1,rate:''}); renderBuyRows(); flashNewRow('#b_rows .li-row'); }
 /* tick several products at once → one purchase row each (existing rows untouched) */
 function buyPickMulti(){
@@ -2293,7 +2295,7 @@ function buyPickMulti(){
     disabled:have.has(p.id)}));
   openMultiPick({title:'Pick multiple products',items,onAdd:vals=>{
     if(buyItems.length===1 && !buyItems[0].productId) buyItems.splice(0,1);
-    vals.forEach(pid=>{ if(!buyItems.some(it=>it.productId===pid)) buyItems.push({productId:pid,qty:1,rate:''}); });
+    vals.forEach(pid=>{ if(!buyItems.some(it=>it.productId===pid)) buyItems.push({productId:pid,qty:1,rate:lastKnownRate(pid)||''}); });
     if(!buyItems.length) buyItems.push({productId:'',qty:1,rate:''});
     renderBuyRows(); flashNewRow('#b_rows .li-row'); }});
 }
@@ -3945,7 +3947,7 @@ function newSale(id,prefillPid){
       <div id="s_rows"></div>
     </div>
     <button class="mini-btn" onclick="addSaleRow()">＋ Add Item</button><button class="mini-btn" onclick="salePickMulti()">☰ Pick multiple</button>
-    <div class="field" style="margin-top:14px"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received — put 0 if paid later" oninput="_salePaidTouched=true;saleCalc()"><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Mandatory. Put <b>0</b> (or a part amount) if the customer pays later — the balance is tracked as credit in Payments.</div></div>
+    <div class="field" style="margin-top:14px"><label>Amount Received Now (${S().currency}) *</label><input id="s_paid" type="number" min="0" step="any" value="${paid==null?'':paid}" placeholder="Enter amount received — put 0 if paid later" oninput="_salePaidTouched=true;saleCalc()"><div style="margin-top:6px"><button type="button" class="mini-btn" onclick="salePaidQuick('full')">✓ Paid fully</button><button type="button" class="mini-btn" onclick="salePaidQuick('none')">✗ Not paid</button></div><div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Mandatory. Put <b>0</b> (or a part amount) if the customer pays later — the balance is tracked as credit in Payments.</div></div>
     <div class="grid2">
       <div class="field"><label>VAT Mode</label><select id="s_vatmode" onchange="saleCalc()">
         <option value="none" ${vmode==='none'?'selected':''}>Without VAT</option>
@@ -4018,6 +4020,13 @@ function salePickMulti(){
     renderSaleRows(); flashNewRow('#s_rows .li-row'); }});
 }
 let _salePaidTouched=false;
+function salePaidQuick(mode){
+  const paidEl=$('#s_paid'); if(!paidEl)return;
+  _salePaidTouched=true;
+  if(mode==='none'){ paidEl.value=0; }
+  else { const t=$('#s_tot')?._t?.total||0; paidEl.value=+t.toFixed(2); }
+  saleCalc();
+}
 function saleCalc(){
   const eng=computeEngine();
   const sub=saleDraft.reduce((a,i)=>a+(+i.qty||0)*(+i.rate||0),0);
