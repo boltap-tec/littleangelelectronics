@@ -4423,6 +4423,11 @@ function cardNameDefaultBank(name){ name=(name||'').trim().toLowerCase(); if(!na
 function cardNameTotalCashback(name){ name=(name||'').trim().toLowerCase(); if(!name)return null;
   const m=((S().cardNames)||[]).find(x=>((x&&x.name)||'').trim().toLowerCase()===name); if(!m)return null;
   const v=m.totalCashback; return (v!=null&&v!=='')?(+v||0):null; }
+/* save a card name's Total Cashback back to the Settings master (shared by every card of that name) */
+function upsertCardNameTotal(name,total){ name=(name||'').trim(); if(!name)return;
+  if(!Array.isArray(S().cardNames))S().cardNames=[]; const arr=S().cardNames, lc=name.toLowerCase();
+  const m=arr.find(x=>((x&&x.name)||'').trim().toLowerCase()===lc);
+  if(m) m.totalCashback=total; else arr.push({name,bank:($('#c_bank')?.value||'').trim(),totalCashback:total}); }
 function cardById(id){ return (DB.cards||[]).find(c=>c.id===id); }
 function maskCard(n){ n=(n||'').replace(/\s+/g,''); if(!n)return '•••• •••• •••• ••••'; return '•••• •••• •••• '+n.slice(-4).padStart(4,'•'); }
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -5248,8 +5253,8 @@ function cardNameChanged(pfx){ pfx=pfx||'c';
   if(bankSel && !bankSel.value){ const db=cardNameDefaultBank(name);
     if(db){ if(!Array.from(bankSel.options).some(o=>o.value===db)) bankSel.add(new Option(db,db)); bankSel.value=db; } }
   cardBankChanged(pfx);
-  /* picking a new name may carry a different Total Cashback → re-derive the borrower share (main card form only) */
-  if(pfx==='c' && $('#c_bdisc')){ _borrowerCbTouched=false; cardSyncBorrower(false); }
+  /* picking a new name loads that name's configured Total Cashback → re-derive borrower + cap (main card form only) */
+  if(pfx==='c' && $('#c_total')){ const t=cardNameTotalCashback(name); if(t!=null) $('#c_total').value=t; cardSyncBorrower(); }
 }
 /* show the right day inputs for the chosen due-date basis + preview the next due date */
 function cardDueModeToggle(){
@@ -5261,6 +5266,11 @@ function cardDueModeToggle(){
 function editCard(id){
   const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,borrowerCashbackPercent:'',maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active',allowNegative:true};
   const bpct=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?c.borrowerCashbackPercent:c.discountPercent;
+  /* Total Cashback shown on the form = the card name's configured total (Settings), else this card's own our%+borrower%. */
+  const _ourInit=+c.discountPercent||0;
+  const _borInit=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):_ourInit;
+  const _cfgTotal=cardNameTotalCashback(c.name);
+  const totalInit=(_cfgTotal!=null)?_cfgTotal:(_ourInit+_borInit);
   _cardTheme=c.theme||'indigo';
   openModal(`${id?'Edit':'Add'} Card`,`
     <div class="field"><label>Card Owner Name</label><input id="c_owner" list="dl_cardowner" value="${esc(c.owner||'')}" placeholder="whose card is this? (leave blank if your own)">${dataList('dl_cardowner',allCardOwners())}
@@ -5276,16 +5286,18 @@ function editCard(id){
       <div style="color:var(--muted2);font-size:11.5px;margin-top:6px">Pick a bank you've used before and its saved colour is applied automatically — or choose any swatch to override.</div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00" oninput="cardMaxCbPreview()"></div>
+      <div class="field"><label>Monthly Card Limit (${S().currency}) *</label><input id="c_limit" type="number" min="0" step="any" value="${c.creditLimit}" placeholder="0.00" oninput="cardMaxCbSync()"></div>
       <div class="field"><label>Alert When Available Below (${S().currency})</label><input id="c_alert" type="number" min="0" step="any" value="${c.balanceLimitAlert}" placeholder="optional low-balance warning"></div>
     </div>
+    <div class="field"><label>Total Cashback (%)</label><input id="c_total" type="number" min="0" step="any" value="${totalInit}" placeholder="the card's maximum cashback" oninput="cardTotalChanged()">
+      <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">The card's <b>maximum</b> cashback — our share + the borrower's share. Edit here to change it; it's also saved to this card name in <b>Settings → Card Names</b>.</div></div>
     <div class="grid2">
       <div class="field"><label>Our Cashback (%)</label>${redeemSelect('c_disc','c_discOther',c.discountPercent)}
         <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Our share of this card's cashback.</div></div>
       <div class="field"><label>Borrower Cashback (%)</label>${redeemSelect('c_bdisc','c_bdiscOther',bpct)}
-        <div class="li-hint" id="c_bcbhint" style="margin-top:5px">The card owner / borrower's share.</div></div>
+        <div class="li-hint" id="c_bcbhint" style="margin-top:5px">Auto = Total − Our.</div></div>
     </div>
-    <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="0 = no cap">
+    <div class="field"><label>Maximum Cashback / Month (${S().currency})</label><input id="c_maxdisc" type="number" min="0" step="any" value="${c.maxDiscountMonthly}" placeholder="auto = limit × total%" oninput="cardMaxCbTouched()">
       <div class="li-hint" id="c_maxcbpreview" style="margin-top:6px"></div></div>
     <div class="grid2">
       <div class="field"><label>Payment Due Date (day 1–31) *</label><input id="c_day" type="number" min="1" max="31" value="${c.paymentDay||1}" oninput="cardDueModeToggle()"></div>
@@ -5313,54 +5325,57 @@ function editCard(id){
     `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme); cardDueModeToggle();
-  /* Borrower cashback is DERIVED from the card-name's configured Total Cashback minus Our Cashback.
-     When the name has no total set, fall back to the old behaviour: mirror OUR % until deliberately changed. */
-  _borrowerCbTouched = !!(id && c.borrowerCashbackPercent!=null && c.borrowerCashbackPercent!=='' && (+c.borrowerCashbackPercent)!==(+c.discountPercent||0));
-  ['c_bdisc','c_bdiscOther'].forEach(fid=>{ const el=$('#'+fid); if(el){ el.addEventListener('change',()=>{ _borrowerCbTouched=true; cardMaxCbPreview(); }); el.addEventListener('input',()=>{ _borrowerCbTouched=true; cardMaxCbPreview(); }); } });
+  /* Borrower is ALWAYS derived = Total − Our (field locked). The Total Cashback field is editable.
+     Maximum Cashback / Month auto-fills from limit × total% unless the card already has a manual cap
+     or the user edits it. */
+  _maxCbTouched = !!(id && (+c.maxDiscountMonthly>0));
   ['c_disc','c_discOther'].forEach(fid=>{ const el=$('#'+fid); if(el){ el.addEventListener('change',cardCashbackChanged); el.addEventListener('input',cardCashbackChanged); } });
-  cardSyncBorrower(true);
+  cardSyncBorrower();
 }
-/* total cashback configured (in Settings) for the card name currently chosen in the Add/Edit Card form */
-function cardFormTotalCb(){ return cardNameTotalCashback($('#c_name')?.value); }
-/* Reconcile the Borrower Cashback field with the card-name's Total Cashback.
-   total set  → borrower = max(0, Total − Our), field locked (read-only, auto).
-   total unset → field editable; mirror Our % while still untouched (legacy behaviour). */
-function cardSyncBorrower(initial){
-  const total=cardFormTotalCb();
+/* current Total Cashback % typed on the Add/Edit Card form */
+function cardFormTotal(){ const el=$('#c_total'); return el?(+el.value||0):0; }
+/* Borrower is derived and locked: Borrower = max(0, Total − Our). */
+function cardSyncBorrower(){
+  const total=cardFormTotal(), our=redeemVal('c_disc','c_discOther');
+  const bor=Math.max(0,+(total-our).toFixed(4));
+  setRedeemControl('c_bdisc','c_bdiscOther',bor);
   const bSel=$('#c_bdisc'), bOth=$('#c_bdiscOther'), hint=$('#c_bcbhint');
-  const our=redeemVal('c_disc','c_discOther');
-  if(total!=null){
-    const bor=Math.max(0,+ (total-our).toFixed(4));
-    setRedeemControl('c_bdisc','c_bdiscOther',bor);
-    if(bSel){ bSel.disabled=true; bSel.style.opacity='.6'; }
-    if(bOth){ bOth.disabled=true; bOth.style.opacity='.6'; }
-    if(hint) hint.innerHTML = (our>total)
-      ? `⚠ Our ${our}% is above this card's total ${total}% — borrower set to 0%. Lower our share, or raise the total in <b>Settings → Card Names</b>.`
-      : `Auto: Total <b>${total}%</b> − Our <b>${our}%</b> = <b style="color:var(--text)">${bor}%</b> &nbsp;·&nbsp; set the total in <b>Settings → Card Names</b>.`;
-  } else {
-    if(bSel){ bSel.disabled=false; bSel.style.opacity=''; }
-    if(bOth){ bOth.disabled=false; bOth.style.opacity=''; }
-    if(!_borrowerCbTouched && !initial) setRedeemControl('c_bdisc','c_bdiscOther',our);
-    if(hint) hint.innerHTML = `The card owner / borrower's share. Tip: set a <b>Total Cashback</b> for this card name in <b>Settings → Card Names</b> and this fills in automatically.`;
-  }
-  cardMaxCbPreview();
+  if(bSel){ bSel.disabled=true; bSel.style.opacity='.6'; }
+  if(bOth){ bOth.disabled=true; bOth.style.opacity='.6'; }
+  if(hint) hint.innerHTML = (our>total)
+    ? `⚠ Our ${our}% is above the Total ${total}% — borrower set to 0%. Raise the Total, or lower our share.`
+    : `Auto: Total <b>${total}%</b> − Our <b>${our}%</b> = <b style="color:var(--text)">${bor}%</b>.`;
+  cardMaxCbSync();
 }
+/* Total Cashback edited → re-derive borrower + re-sync the monthly cap */
+function cardTotalChanged(){ cardSyncBorrower(); }
 /* a card's cashback % control — set select to a known step, or "Other…" with the raw value */
 function setRedeemControl(idSel,idOther,v){ v=+v||0; const sel=$('#'+idSel), oth=$('#'+idOther); if(!sel)return;
   if([0,1,2,3,4,5].includes(v)){ sel.value=String(v); if(oth){ oth.style.display='none'; oth.value=''; } }
   else{ sel.value='__other'; if(oth){ oth.style.display=''; oth.value=v; } } }
-/* our cashback changed — recompute the borrower share (Total − Our, or legacy mirror when no total is set) */
-function cardCashbackChanged(){ cardSyncBorrower(false); }
-let _borrowerCbTouched=false;
-/* live preview of a card's MAXIMUM cashback for a statement period = limit × (our% + borrower%) / 100 */
+/* our cashback changed — recompute the borrower share (Total − Our) */
+function cardCashbackChanged(){ cardSyncBorrower(); }
+let _maxCbTouched=false;
+/* user typed in the Maximum Cashback / Month box → stop auto-filling it */
+function cardMaxCbTouched(){ _maxCbTouched=true; cardMaxCbPreview(); }
+/* auto-fill the monthly cashback cap from limit × total% until the user edits it manually */
+function cardMaxCbSync(){
+  const mx=$('#c_maxdisc'), limit=+$('#c_limit')?.value||0, total=cardFormTotal();
+  const computed=+(limit*total/100).toFixed(2);
+  if(mx && !_maxCbTouched) mx.value = computed>0 ? computed : '';
+  cardMaxCbPreview();
+}
+/* live preview of a card's MAXIMUM cashback for a statement period = limit × total% / 100 */
 function cardMaxCbPreview(){
   const pv=$('#c_maxcbpreview'); if(!pv)return;
-  const limit=+$('#c_limit')?.value||0;
-  const our=redeemVal('c_disc','c_discOther'), bor=redeemVal('c_bdisc','c_bdiscOther');
-  const total=our+bor, max=limit*total/100;
-  pv.innerHTML = total>0&&limit>0
-    ? `Max cashback / statement period = <b style="color:var(--text)">${money(max)}</b> &nbsp;·&nbsp; ${money(limit)} × (${our}% + ${bor}%) = ${total}%`
-    : `Max cashback / statement period = <b>limit × (our% + borrower%)</b>. Set the limit &amp; cashback % above.`;
+  const limit=+$('#c_limit')?.value||0, total=cardFormTotal(), max=limit*total/100;
+  const capRaw=$('#c_maxdisc')?.value, cap=(capRaw!==''&&capRaw!=null)?(+capRaw||0):null;
+  let base = total>0&&limit>0
+    ? `Max possible = <b style="color:var(--text)">${money(max)}</b> &nbsp;·&nbsp; ${money(limit)} × ${total}%`
+    : `Max possible = <b>limit × total%</b>. Set the limit &amp; total above.`;
+  if(cap!=null && cap>0 && Math.abs(cap-max)>0.005) base += ` &nbsp;·&nbsp; capped at <b>${money(cap)}</b>`;
+  base += _maxCbTouched ? ` &nbsp;·&nbsp; <span style="color:var(--muted2)">(manual)</span>` : ` &nbsp;·&nbsp; <span style="color:var(--muted2)">(auto)</span>`;
+  pv.innerHTML=base;
 }
 function saveCard(id){
   if(!requireOnline())return;
@@ -5373,6 +5388,7 @@ function saveCard(id){
     allowNegative:$('#c_allowneg').value==='1',
     discountPercent:redeemVal('c_disc','c_discOther'), borrowerCashbackPercent:redeemVal('c_bdisc','c_bdiscOther'), maxDiscountMonthly:+$('#c_maxdisc').value||0,
     paymentDay:day, dueMode:'fixed', statementDay };
+  upsertCardNameTotal(name, cardFormTotal());   // remember this card name's Total Cashback (Settings master) so it's shared across cards
   if(id){ data.openingOutstanding=+$('#c_openbal').value||0; data.openingDate=($('#c_opendate').value||'').slice(0,10);
     Object.assign(cardById(id),data); logAct('edit','card',data.name,'card details updated'); }
   else{ const availRaw=$('#c_avail').value;   // opening outstanding is derived: Limit − Available (blank ⇒ nothing owed yet)
