@@ -1422,6 +1422,8 @@ function migrate(){
   if(!DB.counters.online)DB.counters.online=0;
   if(!Array.isArray(DB.returns))DB.returns=[];
   if(!DB.counters.ret)DB.counters.ret=0;
+  if(!Array.isArray(DB.adjustments))DB.adjustments=[];
+  if(!DB.counters.adj)DB.counters.adj=0;
   if(!Array.isArray(DB.lenders))DB.lenders=[];
   (DB.lenders||[]).forEach(l=>{ if(!Array.isArray(l.cards))l.cards=[]; if(!Array.isArray(l.txns))l.txns=[]; if(l.status===undefined)l.status='active';
     if(l.feePct===undefined){ const fc=(l.cards||[]).find(c=>c.feePct!=null&&c.feePct!==''); l.feePct=fc?(+fc.feePct||0):((DB.settings&&+DB.settings.lenderCardFeePct)||2.3); }   // fee moved from per-card to lender level
@@ -1661,6 +1663,10 @@ function computeEngine(){
   DB.sales.forEach(s=>s.items.forEach(it=>tx.push({t:'sell',date:s.date,seq:s.id,productId:it.productId,qty:+it.qty,rate:+it.rate,saleId:s.id})));
   /* purchase returns remove stock (goods go back to the supplier) — a negative buy at the item's net cost */
   (DB.returns||[]).forEach(r=>{ const f=+r.factor||1; (r.items||[]).forEach(it=>tx.push({t:'buy',date:r.date,seq:r.id,productId:it.productId,qty:-(+it.qty||0),rate:(+it.rate||0)*f})); });
+  /* owner stock adjustments: a manual +/- correction to the true quantity (physical count,
+     damage, loss, found stock). Valued at the current average cost so the correction moves
+     quantity and stock value together without distorting the weighted-average unit cost. */
+  (DB.adjustments||[]).forEach(a=>tx.push({t:'adjust',date:a.date,seq:a.id,productId:a.productId,qty:+a.qty||0}));
   tx.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : (a.t==='buy'&&b.t==='sell'?-1 : a.t==='sell'&&b.t==='buy'?1 : (a.seq<b.seq?-1:1)));
   const stock={}, saleCost={};
   /* qty = TRUE running quantity: it is allowed to go negative so an over-sale (more sold
@@ -1673,6 +1679,12 @@ function computeEngine(){
     if(e.t==='buy'){
       st.qty+=e.qty; st.costQty+=e.qty; st.totalCost+=e.qty*e.rate;
       if(st.costQty<=0){st.costQty=0;st.totalCost=0;}   // a return that empties the shelf clears the basis
+    }else if(e.t==='adjust'){
+      /* manual quantity correction at the running average cost — keeps the true qty and the
+         cost basis in step; no sale cost is recorded (this is not a sale). */
+      const avg= st.costQty>0? st.totalCost/st.costQty : (lastKnownRate(e.productId)||0);
+      st.qty+=e.qty; st.costQty+=e.qty; st.totalCost+=e.qty*avg;
+      if(st.costQty<=0){st.costQty=0;st.totalCost=0;}
     }else{
       const avg= st.costQty>0? st.totalCost/st.costQty : (lastKnownRate(e.productId)||0);
       const cost=avg*e.qty; saleCost[e.saleId]=(saleCost[e.saleId]||0)+cost;
@@ -5081,6 +5093,7 @@ views.cards=function(){
       <button data-cv="owners" class="${_cardView==='owners'?'active':''}" onclick="setCardView('owners')">👤 Owner</button>
       <button data-cv="status" class="${_cardView==='status'?'active':''}" onclick="setCardView('status')">🟢 Status</button>
       <button data-cv="credit" class="${_cardView==='credit'?'active':''}" onclick="setCardView('credit')">💳 View credit</button>
+      ${isOwner()?`<button data-cv="grid" class="${_cardView==='grid'?'active':''}" onclick="setCardView('grid')">⊞ Grid edit</button>`:''}
     </div>
     <div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank, number or ref..." oninput="renderCards()"></div>
   </div>
@@ -5128,6 +5141,36 @@ function renderCards(){
     host.innerHTML=(sec('🟢 Active',act,'var(--green)')+sec('⚪ Inactive',inact,'var(--muted)'))||`<div class="panel">${emptyBox('💳','No cards','—')}</div>`;
     renderBell(); return;
   }
+  if(_cardView==='grid'){
+    if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit card balances here.')}</div>`; renderBell(); return; }
+    const list=[...cards].sort((a,b)=> cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''));
+    const rowsHtml=list.map(c=>{
+      const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
+      const lim=+c.creditLimit||0, bal=r2(lim-old-used), id=c.id;
+      return `<tr data-id="${id}">
+        <td>${esc(cardOwnerLabel(c))}</td>
+        <td><b>${esc(c.name)}</b>${c.number?`<div style="color:var(--muted2);font-size:11px">${esc(maskCard(c.number))}</div>`:''}</td>
+        <td class="num"><input class="gin" id="g_lim_${id}" type="number" step="any" value="${r2(lim)}" oninput="cardGridCalc('${id}','bal')"></td>
+        <td class="num"><input class="gin" id="g_old_${id}" type="number" step="any" value="${old?r2(old):''}" placeholder="0" oninput="cardGridCalc('${id}','bal')"></td>
+        <td class="num"><input class="gin" id="g_used_${id}" type="number" step="any" value="${r2(used)}" oninput="cardGridCalc('${id}','bal')"></td>
+        <td class="num"><input class="gin bal" id="g_bal_${id}" type="number" step="any" value="${r2(bal)}" style="color:${bal<0?'var(--red)':'var(--green)'};font-weight:700" oninput="cardGridCalc('${id}','used')"></td>
+      </tr>`;
+    }).join('');
+    host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}</style>
+      <div class="panel" style="margin-bottom:12px"><div style="font-size:13px;color:var(--muted);line-height:1.65">
+        <b style="color:var(--text)">Quick balance update.</b> Type the numbers from your bank app — the rest fills in automatically:<br>
+        • Enter <b>Old statement due</b> + <b>Currently used</b> → <b>Balance limit</b> = Limit − Old due − Used.<br>
+        • Or type the <b>Balance limit</b> you see in the bank app → <b>Currently used</b> is worked out for you (Limit − Old due − Balance).<br>
+        • Leave <b>Old statement due</b> blank and it counts as <b>0</b>. Saving logs an <b>EDITED</b> entry in each card's ledger, so the history and reports stay correct.
+      </div></div>
+      <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
+        <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
+      <div class="table-wrap"><table id="cardGridTbl" style="min-width:760px">
+        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th></tr></thead>
+        <tbody>${rowsHtml}</tbody></table></div>
+      <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>`;
+    renderBell(); return;
+  }
   // group ACTIVE cards by owner; inactive cards go to a separate section at the bottom
   const groups={}; actInView.forEach(c=>{ const o=cardOwnerLabel(c); (groups[o]||(groups[o]=[])).push(c); });
   const owners=Object.keys(groups).sort((a,b)=>a==='My own'?-1:b==='My own'?1:a.localeCompare(b));
@@ -5141,6 +5184,39 @@ function renderCards(){
       <div class="ccgrid">${g.map(c=>cardCell(c)).join('')}</div>`; }
   host.innerHTML=out||`<div class="panel">${emptyBox('💳','No cards','—')}</div>`;
   renderBell();
+}
+/* ---- Grid balance editor ---- */
+function r2(n){ return Math.round((+n||0)*100)/100; }
+/* Two-way recompute for one grid row. target='bal' → recompute Balance from
+   Limit−Old−Used; target='used' → recompute Used from Limit−Old−Balance. */
+function cardGridCalc(id,target){
+  const lim=+($('#g_lim_'+id)?.value)||0, old=+($('#g_old_'+id)?.value)||0;
+  if(target==='used'){ const bal=+($('#g_bal_'+id)?.value)||0; const u=$('#g_used_'+id); if(u)u.value=r2(lim-old-bal); }
+  else { const used=+($('#g_used_'+id)?.value)||0; const b=$('#g_bal_'+id); if(b)b.value=r2(lim-old-used); }
+  const b=$('#g_bal_'+id); if(b){ b.style.color=(+b.value||0)<0?'var(--red)':'var(--green)'; }
+}
+/* Save every changed row: update the limit, then reconcile the outstanding to
+   (Old statement due + Currently used) by logging an 'adjust' entry — the same
+   non-destructive correction used by ✎ Edit Balance, so the ledger stays intact. */
+function saveCardGrid(){
+  if(!requireOnline())return;
+  let changed=0;
+  $$('#cardGridTbl tbody tr[data-id]').forEach(tr=>{
+    const id=tr.dataset.id, c=cardById(id); if(!c)return;
+    const lim=+($('#g_lim_'+id)?.value)||0, old=+($('#g_old_'+id)?.value)||0, used=+($('#g_used_'+id)?.value)||0;
+    const targetOut=r2(old+used);
+    if(Math.abs((+c.creditLimit||0)-lim)>0.005){ c.creditLimit=lim; changed++; }
+    const delta=r2(r2(cardOutstanding(c))-targetOut);   // +ve frees credit (raises available)
+    if(Math.abs(delta)>0.005){
+      if(!c.txns)c.txns=[];
+      c.txns.push({id:uid(),date:todayStr(),type:'adjust',amount:delta,note:'Balance updated · statement '+money(old)+' + used '+money(used)});
+      changed++;
+    }
+    c.statementDue=old;   // remember the statement/used split for next time
+  });
+  if(!changed)return toast('No changes to save',1);
+  logAct('edit','card balances','grid',changed+' value(s) updated');
+  save(); toast('Card balances updated ✓'); renderCards(); renderBell();
 }
 /* per-owner combined statement / ledger */
 function ownerStatement(owner){
@@ -6298,7 +6374,7 @@ function invCatTotalsHtml(catAgg,totUnits,totVal){
 }
 function invRow(x){
   const rf=refsStr(x.p);
-  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}<button class="mini-btn" onclick="editRefs('${x.p.id}')" title="Add or edit reference numbers">✎ Ref</button>`;
+  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}<button class="mini-btn" onclick="editRefs('${x.p.id}')" title="Add or edit reference numbers">✎ Ref</button>${isOwner()?`<button class="mini-btn" onclick="adjustStockModal('${x.p.id}')" title="Owner: correct the available stock quantity">⚖ Adjust</button>`:''}`;
   return `<tr>
     <td><div class="prodcell">${productThumbEdit(x.p)}<div><b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history" style="color:${prodNameColor(x.p)}">${esc(x.p.name)}</b>${rf?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(rf)}</div>`:''}</div></div></td>
     <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
@@ -6323,6 +6399,61 @@ function saveRefs(id){
   p.refs=parseRefs($('#er_refs')?.value);
   logAct('edit','product',p.name,'reference no(s) updated');
   save(); closeModal(); renderInventory(); toast('Reference no(s) saved');
+}
+/* ---- owner stock adjustment: correct the available quantity (physical count, damage, loss, found) ----
+   Stored as a +/- delta in DB.adjustments; the engine applies it at the current average cost so the
+   true quantity and stock value move together. Flows into Inventory Movement as the "Adjusted" column. */
+function adjustStockModal(pid){
+  if(!isOwner())return toast('Only the owner can adjust stock',1);
+  const p=productById(pid); if(!p)return;
+  const cur=stockOf(pid);
+  const hist=(DB.adjustments||[]).filter(a=>a.productId===pid).sort(dDesc);
+  const histHtml=hist.length?`<div style="margin-top:16px"><div style="font-weight:700;font-size:12.5px;color:var(--muted);margin-bottom:6px">Past adjustments</div>
+    <div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th class="num">Change</th><th>Reason</th><th></th></tr></thead>
+    <tbody>${hist.map(a=>{const q=+a.qty||0;return `<tr><td>${fmtDate(a.date)}</td><td class="num" style="color:${q>0?'var(--green)':'var(--red)'};font-weight:700">${q>0?'+':'−'}${num(Math.abs(q))}</td><td>${esc(a.reason||'—')}</td><td class="num"><button class="mini-btn btn-red" onclick="deleteStockAdjust('${a.id}','${pid}')" title="Remove this adjustment">✕</button></td></tr>`;}).join('')}</tbody></table></div></div>`:'';
+  openModal('⚖ Adjust Stock — '+esc(p.name),
+    `<div style="background:rgba(127,127,127,.08);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">Current available stock: <b style="font-size:16px">${num(cur)}</b> ${esc(p.unit||'')}</div>
+     <div class="field"><label>New counted quantity *</label><input id="as_new" type="number" step="any" value="${cur}" oninput="asDelta(${cur})"><div id="as_deltamsg" style="color:var(--muted2);font-size:11.5px;margin-top:5px">Set this to the real quantity on the shelf — the change is recorded automatically.</div></div>
+     <div class="field"><label>Reason *</label><input id="as_reason" placeholder="e.g. physical count, damaged, lost, found stock"></div>
+     <div class="field"><label>Date</label><input id="as_date" type="date" value="${todayStr()}"></div>
+     ${histHtml}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveStockAdjust('${pid}')">Save adjustment</button>`);
+  setTimeout(()=>{const n=$('#as_new'); if(n){n.focus();n.select();}},30);
+}
+/* live "change" hint as the owner types the new count */
+function asDelta(cur){ const nv=$('#as_new'), m=$('#as_deltamsg'); if(!nv||!m)return;
+  const v=(nv.value||'').trim();
+  if(v===''){ m.textContent='Enter the real quantity on the shelf.'; m.style.color='var(--muted2)'; return; }
+  const d=(+v||0)-cur;
+  if(Math.abs(d)<1e-9){ m.textContent='No change from current stock.'; m.style.color='var(--muted2)'; }
+  else { m.style.color='var(--muted2)'; m.innerHTML='Change: <b style="color:'+(d>0?'var(--green)':'var(--red)')+'">'+(d>0?'+':'−')+num(Math.abs(d))+'</b> — stock value moves at the current average cost.'; }
+}
+function saveStockAdjust(pid){
+  if(!requireOnline())return;
+  if(!isOwner())return toast('Only the owner can adjust stock',1);
+  const p=productById(pid); if(!p)return;
+  const cur=stockOf(pid);
+  const nv=$('#as_new')?.value;
+  if(nv===''||nv==null)return toast('Enter the new counted quantity',1);
+  const delta=(+nv||0)-cur;
+  if(Math.abs(delta)<1e-9)return toast('Same as the current stock — nothing to adjust',1);
+  const reason=($('#as_reason')?.value||'').trim();
+  if(!reason)return toast('Enter a reason for the adjustment',1);
+  const date=$('#as_date')?.value||todayStr();
+  if(!Array.isArray(DB.adjustments))DB.adjustments=[];
+  DB.counters.adj=(DB.counters.adj||0)+1;
+  DB.adjustments.push({id:uid(),ref:'ADJ-'+String(DB.counters.adj).padStart(4,'0'),date,productId:pid,qty:delta,reason,byId:session.id});
+  logAct('adjust','product',p.name,(delta>0?'+':'−')+num(Math.abs(delta))+' stock · '+reason);
+  save(); closeModal(); renderInventory(); toast('Stock adjusted: '+(delta>0?'+':'−')+num(Math.abs(delta)));
+}
+function deleteStockAdjust(id,pid){
+  if(!isOwner())return toast('Only the owner can remove an adjustment',1);
+  confirmBox('Remove adjustment?','This reverses the stock correction — the quantity recomputes from the remaining records.',()=>{
+    if(!requireOnline())return;
+    DB.adjustments=(DB.adjustments||[]).filter(a=>a.id!==id);
+    save(); closeModal(); renderInventory(); toast('Adjustment removed');
+  },'Remove');
 }
 const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
 
@@ -8918,12 +9049,15 @@ function pdfCprefrep(){ downloadReportPdf(cprefReportHtml(),'cprefPdfArea','card
    blank to = up to today). Opening is the net quantity (bought − sold) dated before
    `from`; purchased/sold are within the window; closing = opening + purchased − sold. */
 function inventoryMovement(from,to){
-  const map={}, ensure=pid=>map[pid]||(map[pid]={opening:0,purchased:0,sold:0});
+  const map={}, ensure=pid=>map[pid]||(map[pid]={opening:0,purchased:0,sold:0,adjusted:0});
   const inWin=d=>(!from||d>=from)&&(!to||d<=to);
   DB.purchases.forEach(p=>{ const d=p.date||''; purchaseItems(p).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
     if(from&&d<from) m.opening+=q; else if(inWin(d)) m.purchased+=q; }); });
   DB.sales.forEach(s=>{ const d=s.date||''; (s.items||[]).forEach(it=>{ const m=ensure(it.productId), q=+it.qty||0;
     if(from&&d<from) m.opening-=q; else if(inWin(d)) m.sold+=q; }); });
+  /* owner stock adjustments (+/-): before the range they roll into opening, inside it they show as Adjusted */
+  (DB.adjustments||[]).forEach(a=>{ const d=a.date||''; const m=ensure(a.productId), q=+a.qty||0;
+    if(from&&d<from) m.opening+=q; else if(inWin(d)) m.adjusted+=q; });
   return map;
 }
 /* unit rate of the most recent purchase line for a product (what it cost last time) */
@@ -8956,9 +9090,9 @@ views._after_invmove=()=>{ if(!canView('invmove'))return; const f=$('#imFrom'),t
 function clearInvMoveRange(){ if($('#imFrom'))$('#imFrom').value=''; if($('#imTo'))$('#imTo').value=''; renderInvMove(); }
 /* build movement rows from a computed movement map, applying show-all / search filters */
 function invMoveBuildRows(mv, all, q){
-  let rows=DB.products.map(p=>{ const m=mv[p.id]||{opening:0,purchased:0,sold:0};
-    return { p, opening:m.opening, purchased:m.purchased, sold:m.sold, closing:m.opening+m.purchased-m.sold }; });
-  if(!all) rows=rows.filter(r=> Math.abs(r.opening)>1e-9||Math.abs(r.purchased)>1e-9||Math.abs(r.sold)>1e-9||Math.abs(r.closing)>1e-9);
+  let rows=DB.products.map(p=>{ const m=mv[p.id]||{opening:0,purchased:0,sold:0,adjusted:0}; const adjusted=m.adjusted||0;
+    return { p, opening:m.opening, purchased:m.purchased, sold:m.sold, adjusted, closing:m.opening+m.purchased-m.sold+adjusted }; });
+  if(!all) rows=rows.filter(r=> Math.abs(r.opening)>1e-9||Math.abs(r.purchased)>1e-9||Math.abs(r.sold)>1e-9||Math.abs(r.adjusted)>1e-9||Math.abs(r.closing)>1e-9);
   if(q) rows=rows.filter(r=>[r.p.name,r.p.category].some(v=>(v||'').toLowerCase().includes(q)));
   rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
   return rows;
@@ -8976,9 +9110,10 @@ function invMoveDayList(from,to){
   const set=new Set();
   DB.purchases.forEach(p=>{ const d=p.date||''; if(d&&inWin(d))set.add(d); });
   DB.sales.forEach(s=>{ const d=s.date||''; if(d&&inWin(d))set.add(d); });
+  (DB.adjustments||[]).forEach(a=>{ const d=a.date||''; if(d&&inWin(d))set.add(d); });
   return [...set].sort().map(d=>{
     let rows=invMoveBuildRows(inventoryMovement(d,d), true, q);         // all products for the day…
-    if(!all) rows=rows.filter(r=> r.purchased>1e-9||r.sold>1e-9);       // …then keep only what actually moved
+    if(!all) rows=rows.filter(r=> r.purchased>1e-9||r.sold>1e-9||Math.abs(r.adjusted)>1e-9);  // …then keep only what actually moved
     return { date:d, rows };
   });
 }
@@ -9004,8 +9139,27 @@ function invMoveDetails(from,to){
   buys.sort(dDesc); sells.sort(dDesc);
   return {buys,sells};
 }
+/* individual owner stock adjustments within the range + product search */
+function invMoveAdjustList(from,to){
+  const q=($('#imSearch')?.value||'').trim().toLowerCase();
+  const inWin=d=>(!from||d>=from)&&(!to||d<=to);
+  const match=pid=>{ if(!q)return true; const pr=productById(pid); return pr&&[pr.name,pr.category].some(v=>(v||'').toLowerCase().includes(q)); };
+  const out=[];
+  (DB.adjustments||[]).forEach(a=>{ const d=a.date||''; if(!inWin(d)||!match(a.productId))return;
+    const pr=productById(a.productId);
+    out.push({id:a.id,date:d,name:pr?pr.name:'—',category:pr?pr.category||'':'',qty:+a.qty||0,reason:a.reason||'',by:userName(a.byId)}); });
+  out.sort(dDesc);
+  return out;
+}
 function invMoveDetailTablesHtml(from,to){
   const {buys,sells}=invMoveDetails(from,to);
+  const adjs=invMoveAdjustList(from,to);
+  const aQ=adjs.reduce((s,a)=>s+a.qty,0);
+  const adjChip=v=>`<span style="color:${v>0?'var(--green)':'var(--red)'};font-weight:700">${v>0?'+':'−'}${num(Math.abs(v))}</span>`;
+  const adjTbl=adjs.length?`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Date</th><th>Product</th><th class="num">Change</th><th>Reason</th><th>By</th></tr></thead>
+    <tbody>${adjs.map(a=>`<tr><td>${fmtDate(a.date)}</td><td><b>${esc(a.name)}</b></td><td class="num">${adjChip(a.qty)}</td><td>${esc(a.reason||'—')}</td><td>${esc(a.by||'—')}</td></tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="2">Total · ${adjs.length} adjustment${adjs.length===1?'':'s'}</td><td class="num">${adjChip(aQ)}</td><td colspan="2"></td></tr></tbody></table></div>`:'';
+  const adjPanel=adjs.length?`<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">⚖ Stock Adjustments — ${adjs.length} entr${adjs.length===1?'y':'ies'} · net ${aQ>=0?'+':'−'}${num(Math.abs(aQ))}</h4>${adjTbl}</div>`:'';
   const bQ=buys.reduce((s,r)=>s+r.qty,0), bA=buys.reduce((s,r)=>s+r.amt,0), bP=buys.reduce((s,r)=>s+r.pending,0);
   const sQ=sells.reduce((s,r)=>s+r.qty,0), sA=sells.reduce((s,r)=>s+r.amt,0), sP=sells.reduce((s,r)=>s+r.pending,0);
   const pendCell=v=>v>0.005?`<td class="num" style="color:var(--amber);font-weight:600">${money(v)}</td>`:`<td class="num" style="color:var(--muted2)">—</td>`;
@@ -9018,16 +9172,18 @@ function invMoveDetailTablesHtml(from,to){
     <tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="4">Total · ${sells.length} line${sells.length===1?'':'s'}</td><td class="num">${num(sQ)}</td><td class="num">—</td><td class="num">${money(sA)}</td><td class="num"${sP>0.005?' style="color:var(--amber)"':''}>${sP>0.005?money(sP):'—'}</td></tr></tbody></table></div>`
     :emptyBox('🧾','No sales','No sale lines in this range.');
   return `<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">📥 Purchase Details — ${num(bQ)} pcs · ${money(bA)}${bP>0.005?` · <span style="color:var(--amber)">${money(bP)} pending</span>`:''}</h4>${buyTbl}</div>
-    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}${sP>0.005?` · <span style="color:var(--amber)">${money(sP)} pending</span>`:''}</h4>${sellTbl}</div>`;
+    <div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🧾 Sales Details — ${num(sQ)} pcs · ${money(sA)}${sP>0.005?` · <span style="color:var(--amber)">${money(sP)} pending</span>`:''}</h4>${sellTbl}</div>
+    ${adjPanel}`;
 }
 function renderInvMove(){
   if(!canView('invmove'))return;
   const {rows,from,to}=invMoveRows();
-  const tO=rows.reduce((s,r)=>s+r.opening,0), tP=rows.reduce((s,r)=>s+r.purchased,0), tS=rows.reduce((s,r)=>s+r.sold,0), tC=rows.reduce((s,r)=>s+r.closing,0);
+  const tO=rows.reduce((s,r)=>s+r.opening,0), tP=rows.reduce((s,r)=>s+r.purchased,0), tS=rows.reduce((s,r)=>s+r.sold,0), tA=rows.reduce((s,r)=>s+(r.adjusted||0),0), tC=rows.reduce((s,r)=>s+r.closing,0);
   const cs=$('#imStats'); if(cs)cs.innerHTML=`
     <div class="stat blue"><span class="ic">📥</span><div class="label">Opening Units</div><div class="val">${num(tO)}</div><div class="foot">before ${from?fmtDate(from):'start'}</div></div>
     <div class="stat green"><span class="ic">🛒</span><div class="label">Purchased</div><div class="val">${num(tP)}</div></div>
     <div class="stat amber"><span class="ic">🧾</span><div class="label">Sold</div><div class="val">${num(tS)}</div></div>
+    ${tA?`<div class="stat red"><span class="ic">⚖</span><div class="label">Adjusted</div><div class="val">${tA>0?'+':'−'}${num(Math.abs(tA))}</div><div class="foot">owner correction</div></div>`:''}
     <div class="stat gold"><span class="ic">📦</span><div class="label">Closing Units</div><div class="val">${num(tC)}</div></div>`;
   const body=$('#imBody'); if(!body)return;
   if(!DB.products.length){ body.innerHTML=`<div class="panel">${emptyBox('📦','No products','Add products in Products first.')}</div>`; return; }
@@ -9036,7 +9192,7 @@ function renderInvMove(){
     const days=invMoveDayList(from,to);
     if(!days.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No movement','No stock movement on any date in this range/filter.')}</div>`; return; }
     body.innerHTML = days.map(day=>{
-      const dT=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
+      const dT=day.rows.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,a:a.a+(r.adjusted||0),c:a.c+r.closing}),{o:0,p:0,s:0,a:0,c:0});
       return `<div style="margin-top:18px">
         <div style="font-weight:800;font-size:15px;margin:6px 2px 8px;padding-bottom:6px;border-bottom:2px solid var(--line2)">📅 ${fmtDate(day.date)} <span style="color:var(--muted2);font-weight:600;font-size:12px">· ${day.rows.length} product${day.rows.length===1?'':'s'}</span></div>
         <div class="panel">${invMoveTableHtml(day.rows,dT)}</div>
@@ -9047,46 +9203,54 @@ function renderInvMove(){
   }
   body.innerHTML=`<div class="panel">
     <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
-    ${invMoveTableHtml(rows,{o:tO,p:tP,s:tS,c:tC})}
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
+    ${invMoveTableHtml(rows,{o:tO,p:tP,s:tS,a:tA,c:tC})}
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold ± adjustments) before the start date · Closing = Opening + Purchased − Sold ± Adjusted. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
     ${invMoveDetailTablesHtml(from,to)}`;
 }
 /* the Opening / Purchased / Sold / Closing table for a set of movement rows + its totals */
 function invMoveTableHtml(rows,t){
+  const adjCell=v=>v?`<span style="color:${v>0?'var(--green)':'var(--red)'}">${v>0?'+':'−'}${num(Math.abs(v))}</span>`:'—';
   const tr=rows.map(r=>`<tr>
       <td><b>${esc(r.p.name)}</b>${r.p.category?`<div style="color:var(--muted2);font-size:11.5px">${esc(r.p.category)}</div>`:''}</td>
       <td class="num">${num(r.opening)}</td>
       <td class="num"${r.purchased>0?' style="color:var(--green)"':''}>${r.purchased?num(r.purchased):'—'}</td>
       <td class="num"${r.sold>0?' style="color:var(--amber)"':''}>${r.sold?num(r.sold):'—'}</td>
+      <td class="num">${adjCell(r.adjusted||0)}</td>
       <td class="num" style="font-weight:700${r.closing<0?';color:var(--red)':''}">${num(r.closing)}</td>
     </tr>`).join('');
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(t.o)}</td><td class="num">${num(t.p)}</td><td class="num">${num(t.s)}</td><td class="num">${num(t.c)}</td></tr>`;
-  return `<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>`;
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td class="num">${num(t.o)}</td><td class="num">${num(t.p)}</td><td class="num">${num(t.s)}</td><td class="num">${adjCell(t.a||0)}</td><td class="num">${num(t.c)}</td></tr>`;
+  return `<div class="table-wrap"><table style="min-width:680px"><thead><tr><th>Product</th><th class="num">Opening</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Adjusted</th><th class="num">Closing</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>`;
 }
 function exportInvMoveExcel(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return toast('No movement to export',1);
   const daily=!!$('#imDaily')?.checked;
-  const out=[['Inventory Movement'+(daily?' (Day-wise)':'')],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Closing']];
-  const pushRows=rs=>{ rs.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.closing)]));
-    out.push(['Total','',num2(rs.reduce((s,r)=>s+r.opening,0)),num2(rs.reduce((s,r)=>s+r.purchased,0)),num2(rs.reduce((s,r)=>s+r.sold,0)),num2(rs.reduce((s,r)=>s+r.closing,0))]); };
+  const out=[['Inventory Movement'+(daily?' (Day-wise)':'')],['Range',invMoveRangeLabel(from,to)],[],['Product','Category','Opening','Purchased','Sold','Adjusted','Closing']];
+  const pushRows=rs=>{ rs.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.opening),num2(r.purchased),num2(r.sold),num2(r.adjusted||0),num2(r.closing)]));
+    out.push(['Total','',num2(rs.reduce((s,r)=>s+r.opening,0)),num2(rs.reduce((s,r)=>s+r.purchased,0)),num2(rs.reduce((s,r)=>s+r.sold,0)),num2(rs.reduce((s,r)=>s+(r.adjusted||0),0)),num2(rs.reduce((s,r)=>s+r.closing,0))]); };
   if(daily){
     out.length=0; out.push(['Inventory Movement (Day-wise)'],['Range',invMoveRangeLabel(from,to)]);
-    invMoveDayList(from,to).forEach(day=>{ out.push([],[fmtDate(day.date)],['Product','Category','Opening','Purchased','Sold','Closing']); pushRows(day.rows); });
+    invMoveDayList(from,to).forEach(day=>{ out.push([],[fmtDate(day.date)],['Product','Category','Opening','Purchased','Sold','Adjusted','Closing']); pushRows(day.rows); });
   } else { pushRows(rows); }
   const {buys,sells}=invMoveDetails(from,to);
+  const adjOut=[['Stock Adjustments'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Category','Change','Reason','By']];
+  invMoveAdjustList(from,to).forEach(a=>adjOut.push([a.date,a.name,a.category||'',(a.qty>0?'+':'')+num2(a.qty),a.reason||'',a.by||'']));
+  adjOut.push(['Total','','',num2(invMoveAdjustList(from,to).reduce((s,a)=>s+a.qty,0)),'','']);
   const buyOut=[['Purchase Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending']];
   buys.forEach(b=>buyOut.push([b.date,b.name,b.where||'',b.orderNo||'',num2(b.qty),num2(b.rate),num2(b.amt),num2(b.pending)]));
   buyOut.push(['Total','','','',num2(buys.reduce((s,b)=>s+b.qty,0)),'',num2(buys.reduce((s,b)=>s+b.amt,0)),num2(buys.reduce((s,b)=>s+b.pending,0))]);
   const sellOut=[['Sales Details'],['Range',invMoveRangeLabel(from,to)],[],['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending']];
   sells.forEach(s=>sellOut.push([s.date,s.name,s.where||'',s.inv||'',num2(s.qty),num2(s.rate),num2(s.amt),num2(s.pending)]));
   sellOut.push(['Total','','','',num2(sells.reduce((s,r)=>s+r.qty,0)),'',num2(sells.reduce((s,r)=>s+r.amt,0)),num2(sells.reduce((s,r)=>s+r.pending,0))]);
-  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}]);
+  const sheets=[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}];
+  if(invMoveAdjustList(from,to).length) sheets.push({name:'Stock Adjustments',rows:adjOut});
+  exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',sheets);
 }
 function invMoveReportHtml(){
   const {rows,from,to}=invMoveRows(); if(!rows.length)return '';
   const daily=!!$('#imDaily')?.checked;
-  const head=['Product','Opening','Purchased','Sold','Closing'];
-  const note='Opening = net stock (bought − sold) before the start date · Closing = Opening + Purchased − Sold. The closing of one range is the opening of the next, so the record is continuous.';
+  const head=['Product','Opening','Purchased','Sold','Adjusted','Closing'];
+  const pAdj=v=>v?((v>0?'+':'−')+num(Math.abs(v))):'—';
+  const note='Opening = net stock (bought − sold ± adjustments) before the start date · Closing = Opening + Purchased − Sold ± Adjusted. The closing of one range is the opening of the next, so the record is continuous.';
   const pdfTbl=(title,heads,numCols,lines,footLabel,footQty,footAmt,footPend)=>{
     const isN=i=>numCols.includes(i);
     const cell=(v,i,tag,ex)=>`<${tag} style="text-align:${isN(i)?'right':'left'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
@@ -9099,11 +9263,11 @@ function invMoveReportHtml(){
   };
   /* the Opening/Purchased/Sold/Closing table for a set of movement rows */
   const movTbl=mr=>{
-    const t=mr.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,c:a.c+r.closing}),{o:0,p:0,s:0,c:0});
+    const t=mr.reduce((a,r)=>({o:a.o+r.opening,p:a.p+r.purchased,s:a.s+r.sold,a:a.a+(r.adjusted||0),c:a.c+r.closing}),{o:0,p:0,s:0,a:0,c:0});
     const mC=(v,i,tag,ex)=>`<${tag} style="text-align:${i===0?'left':'right'};padding:5px 8px;border-bottom:1px solid #e3e3e3;font-size:10.5px;white-space:nowrap${ex||''}">${esc(String(v))}</${tag}>`;
     const th=head.map((h,i)=>mC(h,i,'th',';border-bottom:2px solid #222;font-weight:700')).join('');
-    const trs=mr.map(r=>'<tr>'+[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)].map((v,i)=>mC(v,i,'td')).join('')+'</tr>').join('');
-    const ft='<tr style="font-weight:800">'+['Total · '+mr.length+' product'+(mr.length===1?'':'s'),num(t.o),num(t.p),num(t.s),num(t.c)].map((v,i)=>mC(v,i,'td',';border-top:2px solid #222')).join('')+'</tr>';
+    const trs=mr.map(r=>'<tr>'+[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',pAdj(r.adjusted||0),num(r.closing)].map((v,i)=>mC(v,i,'td')).join('')+'</tr>').join('');
+    const ft='<tr style="font-weight:800">'+['Total · '+mr.length+' product'+(mr.length===1?'':'s'),num(t.o),num(t.p),num(t.s),pAdj(t.a),num(t.c)].map((v,i)=>mC(v,i,'td',';border-top:2px solid #222')).join('')+'</tr>';
     return `<table style="width:100%;border-collapse:collapse"><thead><tr>${th}</tr></thead><tbody>${trs}${ft}</tbody></table>`;
   };
   /* Purchase + Sales detail tables for a date window */
@@ -9112,12 +9276,17 @@ function invMoveReportHtml(){
     const buyLines=buys.map(b=>[fmtDate(b.date),b.name,b.where||'—',b.orderNo||'—',num(b.qty),money(b.rate),money(b.amt),b.pending>0.005?money(b.pending):'—']);
     const sellLines=sells.map(s=>[fmtDate(s.date),s.name,s.where||'—',s.inv||'—',num(s.qty),money(s.rate),money(s.amt),s.pending>0.005?money(s.pending):'—']);
     const bP=buys.reduce((s,b)=>s+b.pending,0), sP=sells.reduce((s,r)=>s+r.pending,0);
+    const adjs=invMoveAdjustList(f,t), aQ=adjs.reduce((s,a)=>s+a.qty,0);
+    const adjLines=adjs.map(a=>[fmtDate(a.date),a.name,(a.qty>0?'+':'−')+num(Math.abs(a.qty)),a.reason||'—',a.by||'—']);
     return pdfTbl('📥 Purchase Details — '+num(buys.reduce((s,b)=>s+b.qty,0))+' pcs · '+money(buys.reduce((s,b)=>s+b.amt,0))+(bP>0.005?' · '+money(bP)+' pending':''),
         ['Date','Product','Where Purchased','Order No','Qty','Price','Amount','Pending'],[4,5,6,7],buyLines,
         'Total · '+buys.length+' line'+(buys.length===1?'':'s'),num(buys.reduce((s,b)=>s+b.qty,0)),money(buys.reduce((s,b)=>s+b.amt,0)),bP>0.005?money(bP):'—')+
       pdfTbl('🧾 Sales Details — '+num(sells.reduce((s,r)=>s+r.qty,0))+' pcs · '+money(sells.reduce((s,r)=>s+r.amt,0))+(sP>0.005?' · '+money(sP)+' pending':''),
         ['Date','Product','Customer','Invoice','Qty','Price','Amount','Pending'],[4,5,6,7],sellLines,
-        'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—');
+        'Total · '+sells.length+' line'+(sells.length===1?'':'s'),num(sells.reduce((s,r)=>s+r.qty,0)),money(sells.reduce((s,r)=>s+r.amt,0)),sP>0.005?money(sP):'—')+
+      (adjs.length?pdfTbl('⚖ Stock Adjustments — '+adjs.length+' entr'+(adjs.length===1?'y':'ies')+' · net '+(aQ>=0?'+':'−')+num(Math.abs(aQ)),
+        ['Date','Product','Change','Reason','By'],[2],adjLines,
+        'Total · '+adjs.length+' adjustment'+(adjs.length===1?'':'s'),(aQ>=0?'+':'−')+num(Math.abs(aQ)),'',''):'');
   };
   if(daily){
     const sections=invMoveDayList(from,to).map(day=>
@@ -9129,10 +9298,10 @@ function invMoveReportHtml(){
       sub:'Range: '+invMoveRangeLabel(from,to)+' · day-wise',
       head:[], numCols:[], rows:[], extra:'<div style="color:#888;font-size:10px;margin-bottom:4px">'+note+'</div>'+sections});
   }
-  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',num(r.closing)]);
-  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),num(rows.reduce((s,r)=>s+r.closing,0))];
+  const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',pAdj(r.adjusted||0),num(r.closing)]);
+  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),pAdj(rows.reduce((s,r)=>s+(r.adjusted||0),0)),num(rows.reduce((s,r)=>s+r.closing,0))];
   return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
-    head, numCols:[1,2,3,4], rows:body, foot, extra:detailTbls(from,to), note});
+    head, numCols:[1,2,3,4,5], rows:body, foot, extra:detailTbls(from,to), note});
 }
 function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
 
