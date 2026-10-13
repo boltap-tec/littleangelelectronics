@@ -4945,29 +4945,41 @@ function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && !
 function redeemToggle(sel,other){ const o=$('#'+other); if(o)o.style.display=$('#'+sel).value==='__other'?'':'none'; }
 function redeemVal(sel,other){ const v=$('#'+sel).value; return v==='__other'?(+$('#'+other).value||0):(+v||0); }
 function adjustBalanceModal(id){
-  const c=cardById(id); if(!c)return; const avail=cardAvailable(c);
+  const c=cardById(id); if(!c)return;
+  const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
+  const lim=+c.creditLimit||0, bal=r2(lim-old-used), cur=S().currency;
+  const led=cardLastBalEdit(c), ds=daysSince(led);
   openModal('Edit Balance · '+esc(c.name),`
-    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Owner correction. Set the card's available balance to the correct amount — the difference is logged in the ledger & statement as an <b>EDITED</b> entry.</p>
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Set this card to match your bank app. Enter <b>Old statement due</b> + <b>Currently used</b> and the balance fills in — or type the <b>Balance limit</b> and the used amount is worked out. Blank old statement = 0. The change is logged as an <b>EDITED</b> ledger entry${led?` · last edited ${fmtDate(led)}${ds!=null?` (${ds<=0?'today':ds+' day'+(ds===1?'':'s')+' ago'})`:''}`:''}.</p>
     <div class="grid2">
-      <div class="field"><label>Current Available</label><input value="${money(avail)}" disabled></div>
-      <div class="field"><label>Set Available To (${S().currency}) *</label><input id="adj_target" type="number" step="any" value="${(+avail.toFixed(2))}"></div>
+      <div class="field"><label>Limit (${cur})</label><input id="e_lim_${id}" type="number" step="any" value="${r2(lim)}" oninput="cardGridCalc('${id}','bal','e')"></div>
+      <div class="field"><label>Old statement due</label><input id="e_old_${id}" type="number" step="any" value="${old?r2(old):''}" placeholder="0" oninput="cardGridCalc('${id}','bal','e')"></div>
+      <div class="field"><label>Currently used</label><input id="e_used_${id}" type="number" step="any" value="${r2(used)}" oninput="cardGridCalc('${id}','bal','e')"></div>
+      <div class="field"><label>Balance limit (available)</label><input id="e_bal_${id}" type="number" step="any" value="${r2(bal)}" style="font-weight:700;color:${bal<0?'var(--red)':'var(--green)'}" oninput="cardGridCalc('${id}','used','e')"></div>
     </div>
     <div class="field"><label>Date</label><input id="adj_date" type="date" value="${todayStr()}"></div>
     <div class="field"><label>Reason (optional)</label><input id="adj_note" placeholder="e.g. correcting opening balance"></div>`,
     `<button class="btn-sm btn-ghost" onclick="cardDetail('${id}')">Back</button>
      <button class="btn-sm" onclick="saveAdjust('${id}')">Save Edit</button>`);
-  setTimeout(()=>$('#adj_target')?.select?.(),30);
+  setTimeout(()=>$('#e_bal_'+id)?.select?.(),30);
 }
 function saveAdjust(id){
   if(!requireOnline())return;
-  const c=cardById(id); if(!c)return; const tv=$('#adj_target').value;
-  if(tv==='')return toast('Enter the target available balance',1);
-  const target=+tv, delta=Math.round((target-cardAvailable(c))*100)/100;
-  if(Math.abs(delta)<0.005)return toast('No change — balance already that amount',1);
-  if(!c.txns)c.txns=[];
-  c.txns.push({id:uid(),date:$('#adj_date').value||todayStr(),type:'adjust',amount:delta,note:('Balance edited'+($('#adj_note').value.trim()?' · '+$('#adj_note').value.trim():''))});
-  logAct('edit','card balance',c.name,`available set to ${money(target)} (${delta>=0?'+':''}${money(delta)})`);
-  save(); toast('Balance edited'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+  const c=cardById(id); if(!c)return;
+  const lim=+($('#e_lim_'+id)?.value)||0, old=+($('#e_old_'+id)?.value)||0, used=+($('#e_used_'+id)?.value)||0;
+  const targetOut=r2(old+used), date=$('#adj_date').value||todayStr(), note=($('#adj_note')?.value||'').trim();
+  let changed=false;
+  if(Math.abs((+c.creditLimit||0)-lim)>0.005){ c.creditLimit=lim; changed=true; }
+  const delta=r2(r2(cardOutstanding(c))-targetOut);   // +ve frees credit (raises available)
+  if(Math.abs(delta)>0.005){
+    if(!c.txns)c.txns=[];
+    c.txns.push({id:uid(),date,type:'adjust',amount:delta,note:'Balance updated · statement '+money(old)+' + used '+money(used)+(note?' · '+note:'')});
+    changed=true;
+  }
+  if(!changed)return toast('No change — values already match',1);
+  c.statementDue=old; c.lastBalEdit=date;
+  logAct('edit','card balance',c.name,'limit '+money(lim)+' · used '+money(targetOut)+' · available '+money(lim-targetOut)+(note?' · '+note:''));
+  save(); toast('Balance edited ✓'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 
 /* ---- bell reminders ---- */
@@ -5147,13 +5159,18 @@ function renderCards(){
     const rowsHtml=list.map(c=>{
       const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
       const lim=+c.creditLimit||0, bal=r2(lim-old-used), id=c.id;
+      const led=cardLastBalEdit(c), ds=daysSince(led);
+      const dateCell=led?fmtDate(led):'<span style="color:var(--muted2)">—</span>';
+      const daysCell=(ds==null)?'<span style="color:var(--muted2)">—</span>':(ds<=0?'today':ds+' day'+(ds===1?'':'s'));
       return `<tr data-id="${id}">
         <td>${esc(cardOwnerLabel(c))}</td>
-        <td><b>${esc(c.name)}</b>${c.number?`<div style="color:var(--muted2);font-size:11px">${esc(maskCard(c.number))}</div>`:''}</td>
+        <td><b>${esc(c.name)}</b>${c.number?`<div style="font-size:15px;font-weight:800;color:var(--text);letter-spacing:.6px;margin-top:3px">${esc(maskCard(c.number))}</div>`:''}${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}</td>
         <td class="num"><input class="gin" id="g_lim_${id}" type="number" step="any" value="${r2(lim)}" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_old_${id}" type="number" step="any" value="${old?r2(old):''}" placeholder="0" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_used_${id}" type="number" step="any" value="${r2(used)}" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin bal" id="g_bal_${id}" type="number" step="any" value="${r2(bal)}" style="color:${bal<0?'var(--red)':'var(--green)'};font-weight:700" oninput="cardGridCalc('${id}','used')"></td>
+        <td style="white-space:nowrap">${dateCell}</td>
+        <td class="num" style="white-space:nowrap;color:var(--muted)">${daysCell}</td>
       </tr>`;
     }).join('');
     host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}</style>
@@ -5165,8 +5182,8 @@ function renderCards(){
       </div></div>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
-      <div class="table-wrap"><table id="cardGridTbl" style="min-width:760px">
-        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th></tr></thead>
+      <div class="table-wrap"><table id="cardGridTbl" style="min-width:920px">
+        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th>Last edited</th><th class="num">Days ago</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
       <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>`;
     renderBell(); return;
@@ -5187,35 +5204,41 @@ function renderCards(){
 }
 /* ---- Grid balance editor ---- */
 function r2(n){ return Math.round((+n||0)*100)/100; }
-/* Two-way recompute for one grid row. target='bal' → recompute Balance from
-   Limit−Old−Used; target='used' → recompute Used from Limit−Old−Balance. */
-function cardGridCalc(id,target){
-  const lim=+($('#g_lim_'+id)?.value)||0, old=+($('#g_old_'+id)?.value)||0;
-  if(target==='used'){ const bal=+($('#g_bal_'+id)?.value)||0; const u=$('#g_used_'+id); if(u)u.value=r2(lim-old-bal); }
-  else { const used=+($('#g_used_'+id)?.value)||0; const b=$('#g_bal_'+id); if(b)b.value=r2(lim-old-used); }
-  const b=$('#g_bal_'+id); if(b){ b.style.color=(+b.value||0)<0?'var(--red)':'var(--green)'; }
+/* whole days between an ISO date and today (0 = today, 1 = yesterday, …) */
+function daysSince(d){ if(!d)return null; const a=new Date(d+'T00:00:00'), b=new Date(todayStr()+'T00:00:00'); return Math.round((b-a)/86400000); }
+/* when a card's balance was last edited — stored stamp, else the newest 'adjust' entry */
+function cardLastBalEdit(c){ if(c&&c.lastBalEdit)return c.lastBalEdit; const a=((c&&c.txns)||[]).filter(t=>t.type==='adjust').map(t=>t.date).filter(Boolean).sort(); return a.length?a[a.length-1]:null; }
+/* Two-way recompute for one row. pfx scopes the input ids ('g' grid, 'e' modal).
+   target='bal' → Balance = Limit−Old−Used; target='used' → Used = Limit−Old−Balance. */
+function cardGridCalc(id,target,pfx){ pfx=pfx||'g';
+  const lim=+($('#'+pfx+'_lim_'+id)?.value)||0, old=+($('#'+pfx+'_old_'+id)?.value)||0;
+  if(target==='used'){ const bal=+($('#'+pfx+'_bal_'+id)?.value)||0; const u=$('#'+pfx+'_used_'+id); if(u)u.value=r2(lim-old-bal); }
+  else { const used=+($('#'+pfx+'_used_'+id)?.value)||0; const b=$('#'+pfx+'_bal_'+id); if(b)b.value=r2(lim-old-used); }
+  const b=$('#'+pfx+'_bal_'+id); if(b){ b.style.color=(+b.value||0)<0?'var(--red)':'var(--green)'; }
 }
 /* Save every changed row: update the limit, then reconcile the outstanding to
    (Old statement due + Currently used) by logging an 'adjust' entry — the same
-   non-destructive correction used by ✎ Edit Balance, so the ledger stays intact. */
+   non-destructive correction used by ✎ Edit Balance, so the ledger stays intact.
+   Each changed card gets its own activity-log line. */
 function saveCardGrid(){
   if(!requireOnline())return;
   let changed=0;
   $$('#cardGridTbl tbody tr[data-id]').forEach(tr=>{
     const id=tr.dataset.id, c=cardById(id); if(!c)return;
     const lim=+($('#g_lim_'+id)?.value)||0, old=+($('#g_old_'+id)?.value)||0, used=+($('#g_used_'+id)?.value)||0;
-    const targetOut=r2(old+used);
-    if(Math.abs((+c.creditLimit||0)-lim)>0.005){ c.creditLimit=lim; changed++; }
+    const targetOut=r2(old+used); let rowChanged=false;
+    if(Math.abs((+c.creditLimit||0)-lim)>0.005){ c.creditLimit=lim; rowChanged=true; }
     const delta=r2(r2(cardOutstanding(c))-targetOut);   // +ve frees credit (raises available)
     if(Math.abs(delta)>0.005){
       if(!c.txns)c.txns=[];
       c.txns.push({id:uid(),date:todayStr(),type:'adjust',amount:delta,note:'Balance updated · statement '+money(old)+' + used '+money(used)});
-      changed++;
+      rowChanged=true;
     }
     c.statementDue=old;   // remember the statement/used split for next time
+    if(rowChanged){ c.lastBalEdit=todayStr(); changed++;
+      logAct('edit','card balance',c.name,'limit '+money(lim)+' · used '+money(targetOut)+' · available '+money(lim-targetOut)); }
   });
   if(!changed)return toast('No changes to save',1);
-  logAct('edit','card balances','grid',changed+' value(s) updated');
   save(); toast('Card balances updated ✓'); renderCards(); renderBell();
 }
 /* per-owner combined statement / ledger */
