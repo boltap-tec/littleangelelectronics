@@ -2203,6 +2203,7 @@ views.purchases=function(){
     <div class="row-actions"><button class="btn-sm btn-ghost" onclick="openBillSummary('purchase')" title="Date-wise summary with per-product consolidation — download as PDF">📊 Date Summary</button>
     <button class="btn-sm btn-ghost" onclick="openModeReport('purchase')" title="Purchases by payment mode & date — with notes & edit link">💳 Mode of Payment</button>
     <button class="btn-sm btn-ghost" onclick="exportPurchasesExcel()">⬇ Excel</button>
+    <button class="btn-sm btn-ghost" onclick="renderPurchases()" title="Refresh the purchase list">🔄 Refresh</button>
     <button class="btn-sm btn-ghost" onclick="purchaseGiftModal()">🎁 New Gift Card Purchase</button>
     <button class="btn-sm" onclick="newPurchase()">📦 New Product Purchase</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search supplier / product / order no / note / mode / card no / amount..." oninput="renderPurchases()"></div></div>
@@ -2521,7 +2522,7 @@ function savePurchase(id){
     data.orderNo = orderNo || (rec&&rec.orderNo) || ref || '';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing purchase <b>${esc(ref)}</b> needs admin approval. Send this change to the admin?`,()=>queueApproval('purchase','edit',id,ref,data),'Send');
     return confirmBox('Save changes?',`Update purchase <b>${esc(ref)}</b>? Linked cash & card entries will be recalculated.`,()=>{
-      commitPurchase(id,data); save();closeModal();renderPurchases();renderBell();toast('Purchase updated'+negMsg, negWarn.length?1:0);
+      commitPurchase(id,data); save();closeModal();renderPurchases();renderBuyStore();renderBell();toast('Purchase updated'+negMsg, negWarn.length?1:0);
       if(negWarn.length) setTimeout(()=>alertNegativeCards(),200); },'Save');
   }
   // NEW purchase (allowed for owner & worker)
@@ -2532,7 +2533,7 @@ function savePurchase(id){
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } }
     else if(s.giftId){ const g=giftById(s.giftId); if(g){ spendGift(g,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(g.name); } }
     else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,s.amount,s.commission,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); const l=lenderById(s.lenderId); charged.push('borrowed'+(l?' · '+l.name:'')); } });
-  save();closeModal();renderPurchases();renderBell();
+  save();closeModal();renderPurchases();renderBuyStore();renderBell();
   toast((charged.length?('Purchase saved · charged '+charged.join(', ')):'Purchase saved')+negMsg, negWarn.length?1:0);
   if(negWarn.length) setTimeout(()=>alertNegativeCards(),200);   // 🚨 immediate over-limit alert
 }
@@ -3771,6 +3772,7 @@ views.shop=function(){
   <div class="page-head"><div><h2>🛍️ Sell Store</h2><p>Browse products in stock, add to cart and sell. Purchase price &amp; live stock shown on each card.</p></div></div>
   <div class="toolbar">
     <div class="search"><span class="si">🔎</span><input id="shopSearch" placeholder="Search product / category…" oninput="renderShop()"></div>
+    <button class="btn-sm btn-ghost" onclick="renderShop()" title="Refresh — update stock &amp; prices">🔄 Refresh</button>
     <label class="chk"><input type="checkbox" id="shopOOS" onchange="renderShop()"> Show out of stock</label>
   </div>
   <div id="shopGrid"></div>
@@ -3846,6 +3848,7 @@ views.buystore=function(){
   <div class="page-head"><div><h2>🛒 Buy Store</h2><p>Pick the products you're restocking, set quantities, then checkout to set cost &amp; payment — exactly like a purchase. New products can be added at checkout.</p></div></div>
   <div class="toolbar">
     <div class="search"><span class="si">🔎</span><input id="buySearch" placeholder="Search product / category…" oninput="renderBuyStore()"></div>
+    <button class="btn-sm btn-ghost" onclick="renderBuyStore()" title="Refresh — update stock &amp; prices">🔄 Refresh</button>
     <button class="btn-sm btn-ghost" onclick="newPurchase('')">✨ Blank purchase</button>
   </div>
   <div id="buyGrid"></div>
@@ -3910,6 +3913,7 @@ views.sales=function(){
     <div class="row-actions"><button class="btn-sm btn-ghost" onclick="openBillSummary('sale')" title="Date-wise summary with per-product sales consolidation — download as PDF">📊 Date Summary</button>
     <button class="btn-sm btn-ghost" onclick="openModeReport('sale')" title="Sales by payment mode & date — with notes & edit link">💳 Mode of Payment</button>
     <button class="btn-sm btn-ghost" onclick="exportSalesExcel()">⬇ Excel</button>
+    <button class="btn-sm btn-ghost" onclick="renderSales()" title="Refresh the sales list">🔄 Refresh</button>
     <button class="btn-sm btn-gold" onclick="newSale()">＋ New Sale Bill</button></div></div>
   <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="saleSearch" placeholder="Search invoice / customer..." oninput="renderSales()"></div></div>
   <div id="saleList"></div>`;
@@ -4131,13 +4135,13 @@ function saveSale(id,print){
     data.billNo = base.billNo || (rec&&rec.billNo) || inv || '';
     if(!isOwner()) return confirmBox('Send for approval?',`Editing invoice <b>${esc(inv)}</b> needs admin approval. Send this change to the admin?${creditNote}`,()=>queueApproval('sale','edit',id,inv,data),'Send');
     return confirmBox('Save changes?',`Update invoice <b>${esc(inv)}</b>? Stock, profit & payments will recalculate.${creditNote}`,()=>{
-      commitSale(id,data); save();closeModal();renderSales();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>openSalePdf(id),120); },'Save');
+      commitSale(id,data); save();closeModal();renderSales();renderShop();toast('Sale updated'+(print?' · opening bill':'')); if(print)setTimeout(()=>openSalePdf(id),120); },'Save');
   }
   // NEW sale
   const commitNew=()=>{
     DB.counters.sale++; const inv=S().invoicePrefix+String(DB.counters.sale).padStart(4,'0'); const nid=uid();
     DB.sales.push({id:nid,invoiceNo:inv,byId:session.id,...base,billNo:base.billNo||inv,paid,payments:paid>0?[{id:uid(),date:base.date,amount:paid,method,...payMeta,ref:'Initial'}]:[]});
-    save();closeModal();renderSales();toast('Sale saved '+(print?'· opening bill':''));
+    save();closeModal();renderSales();renderShop();toast('Sale saved '+(print?'· opening bill':''));
     if(print)setTimeout(()=>openSalePdf(nid),120);
   };
   if(bal>0.01) return confirmBox('Credit sale — balance due',`Sold for <b>${money(t.total)}</b> but only <b>${money(paid)}</b> received now.<br>The balance <b style="color:var(--red)">${money(bal)}</b> will be tracked as credit in Payments.<br><br>Save this sale?`,commitNew,'Save Sale');
