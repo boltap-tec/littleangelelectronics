@@ -5174,18 +5174,18 @@ function renderCards(){
       </tr>`;
     }).join('');
     host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}</style>
-      <div class="panel" style="margin-bottom:12px"><div style="font-size:13px;color:var(--muted);line-height:1.65">
-        <b style="color:var(--text)">Quick balance update.</b> Type the numbers from your bank app — the rest fills in automatically:<br>
-        • Enter <b>Old statement due</b> + <b>Currently used</b> → <b>Balance limit</b> = Limit − Old due − Used.<br>
-        • Or type the <b>Balance limit</b> you see in the bank app → <b>Currently used</b> is worked out for you (Limit − Old due − Balance).<br>
-        • Leave <b>Old statement due</b> blank and it counts as <b>0</b>. Saving logs an <b>EDITED</b> entry in each card's ledger, so the history and reports stay correct.
-      </div></div>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
       <div class="table-wrap"><table id="cardGridTbl" style="min-width:920px">
         <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th>Last edited</th><th class="num">Days ago</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
-      <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>`;
+      <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>
+      <div style="margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.65;border-top:1px solid var(--line);padding-top:12px">
+        <b style="color:var(--text)">How it works.</b> Type the numbers from your bank app — the rest fills in automatically:<br>
+        • Enter <b>Old statement due</b> + <b>Currently used</b> → <b>Balance limit</b> = Limit − Old due − Used.<br>
+        • Or type the <b>Balance limit</b> you see in the bank app → <b>Currently used</b> is worked out for you (Limit − Old due − Balance).<br>
+        • Leave <b>Old statement due</b> blank and it counts as <b>0</b>. Saving logs an <b>EDITED</b> entry in each card's ledger, so the history and reports stay correct.
+      </div>`;
     renderBell(); return;
   }
   // group ACTIVE cards by owner; inactive cards go to a separate section at the bottom
