@@ -1123,7 +1123,7 @@ function mergeDB(base, local, remote, preferLocal){
   const out=_clone(local);
   const deleted=_mergeDeleted(local.deleted, remote.deleted);
   const isDead=id=> !!(deleted[id] && deleted[id].dead);
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders','holdings'].forEach(k=>{
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
@@ -1251,7 +1251,7 @@ function seed(){
     users:[
       {id:uid(),name:'Admin',username:'admin',phone:'9626262427',pin:'1234',password:'1234',role:'owner',perms:ALL_VIEWS.slice()}
     ],
-    products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[], activity:[], online:[], lenders:[],
+    products:[], purchases:[], sales:[], cards:[], giftcards:[], cash:[], activity:[], online:[], lenders:[], holdings:[],
     deleted:{},                       // tombstones: id -> {t:timestamp, dead:bool} so deletes sync & stay deleted
     counters:{purchase:0,sale:0,online:0},
     settings:{
@@ -1293,7 +1293,7 @@ function _maintainTombstones(){
   if(!DB.deleted) DB.deleted={};
   const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
   const now=Date.now();
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals','online','lenders'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','online','lenders','holdings'].forEach(k=>{
     const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
@@ -1361,7 +1361,7 @@ function migrate(){
   /* guarantee core structure — never leave the app without an admin login */
   const sd=seed();
   if(!DB.settings) DB.settings=sd.settings;
-  ['products','purchases','sales','cards'].forEach(k=>{ if(!Array.isArray(DB[k]))DB[k]=[]; });
+  ['products','purchases','sales','cards','holdings'].forEach(k=>{ if(!Array.isArray(DB[k]))DB[k]=[]; });
   if(!DB.counters) DB.counters={purchase:0,sale:0};
   if(!DB.deleted || typeof DB.deleted!=='object' || Array.isArray(DB.deleted)) DB.deleted={};
   if(!Array.isArray(DB.users) || !DB.users.length) DB.users=sd.users;
@@ -1703,6 +1703,18 @@ function parseRefs(v){ if(Array.isArray(v))v=v.join(','); const seen=new Set(),o
 function refsStr(p){ return (p&&Array.isArray(p.refs)?p.refs:[]).join(', '); }
 function stockOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s?s.qty:0; }
 function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; return s&&s.costQty>0? s.totalCost/s.costQty : lastKnownRate(pid); }
+/* ---- consignment / "held for others" overlay ----
+   DB.holdings records that some of a product's physical units actually belong to
+   another person temporarily (e.g. 1 of 30 units is Ahmed's). It is pure metadata:
+   it NEVER changes the stock engine quantity (the units are physically on the shelf
+   and remain sellable). It only lets every stock report show how many units — and
+   whose — are not really ours, so own stock value isn't overstated. */
+function holdingsOf(pid){ return (DB.holdings||[]).filter(h=>h.productId===pid); }
+function heldQtyOf(pid){ return holdingsOf(pid).reduce((a,h)=>a+(+h.qty||0),0); }
+/* "1 Ahmed, 2 Sara" — qty grouped per owner, for compact inline display */
+function heldOwnersStr(pid){ const by={}; holdingsOf(pid).forEach(h=>{ const o=(h.owner||'').trim()||'—'; by[o]=(by[o]||0)+(+h.qty||0); });
+  return Object.keys(by).map(o=>num(by[o])+' '+o).join(', '); }
+function allHoldOwners(){ return uniqSorted((DB.holdings||[]).map(h=>h.owner)); }
 /* average BUYING price for reference display — respects the Settings averaging window (falls back to moving-average) */
 function avgBuyPrice(pid,eng){
   const st=S(), unit=st.avgWindowUnit||'all', n=+st.avgWindowN||0;
@@ -5106,6 +5118,7 @@ views.cards=function(){
       <button data-cv="status" class="${_cardView==='status'?'active':''}" onclick="setCardView('status')">🟢 Status</button>
       <button data-cv="credit" class="${_cardView==='credit'?'active':''}" onclick="setCardView('credit')">💳 View credit</button>
       ${isOwner()?`<button data-cv="grid" class="${_cardView==='grid'?'active':''}" onclick="setCardView('grid')">⊞ Grid edit</button>`:''}
+      ${isOwner()?`<button data-cv="cashback" class="${_cardView==='cashback'?'active':''}" onclick="setCardView('cashback')">🎁 Cashback</button>`:''}
     </div>
     <div class="search"><span class="si">🔎</span><input id="cardSearch" placeholder="Search card name, owner, bank, number or ref..." oninput="renderCards()"></div>
   </div>
@@ -5188,6 +5201,42 @@ function renderCards(){
       </div>`;
     renderBell(); return;
   }
+  if(_cardView==='cashback'){
+    if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit cashback here.')}</div>`; renderBell(); return; }
+    const list=[...cards].sort((a,b)=> cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''));
+    const rowsHtml=list.map(c=>{
+      const id=c.id;
+      const our=+c.discountPercent||0;
+      const fol=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):our;
+      const cfgTotal=cardNameTotalCashback(c.name);
+      const total=(cfgTotal!=null)?cfgTotal:r2(our+fol);
+      const max=+c.maxDiscountMonthly||0;
+      return `<tr data-id="${id}">
+        <td><b>${esc(c.name)}</b>${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}</td>
+        <td>${esc(cardOwnerLabel(c))}</td>
+        <td>${c.number?`<div style="font-size:15px;font-weight:800;color:var(--text);letter-spacing:.6px">${esc(maskCard(c.number))}</div>`:'<span style="color:var(--muted2)">—</span>'}</td>
+        <td class="num"><input class="gin" id="cb_max_${id}" type="number" min="0" step="any" value="${max?r2(max):''}" placeholder="0 = no cap"></td>
+        <td class="num"><input class="gin" id="cb_total_${id}" type="number" min="0" step="any" value="${r2(total)}" oninput="cbGridCalc('${id}','total')"></td>
+        <td class="num"><input class="gin" id="cb_us_${id}" type="number" min="0" step="any" value="${r2(our)}" oninput="cbGridCalc('${id}','us')"></td>
+        <td class="num"><input class="gin" id="cb_fol_${id}" type="number" min="0" step="any" value="${r2(fol)}" oninput="cbGridCalc('${id}','fol')"></td>
+      </tr>`;
+    }).join('');
+    host.innerHTML=`<style>.gin{width:104px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}.gin.over{border-color:var(--red);color:var(--red)}#cbGridTbl td{vertical-align:middle}</style>
+      <div class="cat-head">🎁 Edit cashback <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
+        <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
+      <div class="table-wrap"><table id="cbGridTbl" style="min-width:920px">
+        <thead><tr><th>Card name</th><th>Holder</th><th>Card number</th><th class="num">Max cashback / month (${S().currency})</th><th class="num">Total %</th><th class="num">Our %</th><th class="num">Follower %</th></tr></thead>
+        <tbody>${rowsHtml}</tbody></table></div>
+      <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
+      <div style="margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.65;border-top:1px solid var(--line);padding-top:12px">
+        <b style="color:var(--text)">How it works.</b> The three percentages always balance — <b>Our % + Follower % = Total %</b>:<br>
+        • Edit the <b>Total %</b> or <b>Our %</b> → the <b>Follower %</b> fills in for you (Total − Our).<br>
+        • Edit the <b>Follower %</b> → the <b>Our %</b> is worked out (Total − Follower).<br>
+        • <b>Max cashback / month</b> is the monthly cap — leave it <b>0</b> for no cap.<br>
+        • <b>Total %</b> is shared by every card of the same name (saved to <b>Settings → Card Names</b>). Saving logs an edit for each changed card.
+      </div>`;
+    renderBell(); return;
+  }
   // group ACTIVE cards by owner; inactive cards go to a separate section at the bottom
   const groups={}; actInView.forEach(c=>{ const o=cardOwnerLabel(c); (groups[o]||(groups[o]=[])).push(c); });
   const owners=Object.keys(groups).sort((a,b)=>a==='My own'?-1:b==='My own'?1:a.localeCompare(b));
@@ -5240,6 +5289,40 @@ function saveCardGrid(){
   });
   if(!changed)return toast('No changes to save',1);
   save(); toast('Card balances updated ✓'); renderCards(); renderBell();
+}
+/* ---- Grid cashback editor ---- */
+/* Keep the three percentages balanced: Our + Follower = Total.
+   src='total'/'us' → recompute Follower = Total − Our; src='fol' → recompute Our = Total − Follower. */
+function cbGridCalc(id,src){
+  const T=$('#cb_total_'+id), U=$('#cb_us_'+id), F=$('#cb_fol_'+id); if(!T||!U||!F)return;
+  const total=+T.value||0;
+  if(src==='fol'){ const fol=+F.value||0; U.value=r2(Math.max(0,total-fol)); }
+  else { const us=+U.value||0; F.value=r2(Math.max(0,total-us)); }
+  const us=+U.value||0, over=us>total+0.0001;   // our share exceeded the total
+  U.classList.toggle('over',over); F.classList.toggle('over',over);
+}
+/* Save every changed cashback row: our%, follower%, monthly cap, and the name's shared Total%. */
+function saveCashbackGrid(){
+  if(!requireOnline())return;
+  let changed=0;
+  $$('#cbGridTbl tbody tr[data-id]').forEach(tr=>{
+    const id=tr.dataset.id, c=cardById(id); if(!c)return;
+    const total=Math.max(0,+($('#cb_total_'+id)?.value)||0);
+    const us=Math.max(0,+($('#cb_us_'+id)?.value)||0);
+    const fol=Math.max(0,+($('#cb_fol_'+id)?.value)||0);
+    const max=Math.max(0,+($('#cb_max_'+id)?.value)||0);
+    let rowChanged=false;
+    if(Math.abs((+c.discountPercent||0)-us)>0.0001){ c.discountPercent=us; rowChanged=true; }
+    const curFol=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):(+c.discountPercent||0);
+    if(Math.abs(curFol-fol)>0.0001){ c.borrowerCashbackPercent=fol; rowChanged=true; }
+    if(Math.abs((+c.maxDiscountMonthly||0)-max)>0.0001){ c.maxDiscountMonthly=max; rowChanged=true; }
+    const curTotal=cardNameTotalCashback(c.name);
+    if(curTotal==null || Math.abs(curTotal-total)>0.0001){ upsertCardNameTotal(c.name,total); rowChanged=true; }
+    if(rowChanged){ changed++;
+      logAct('edit','card cashback',c.name,`total ${total}% · our ${us}% · follower ${fol}% · cap ${max?money(max):'none'}`); }
+  });
+  if(!changed)return toast('No changes to save',1);
+  save(); toast('Cashback settings updated ✓'); renderCards(); renderBell();
 }
 /* per-owner combined statement / ledger */
 function ownerStatement(owner){
