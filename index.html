@@ -1138,8 +1138,13 @@ let _pushT=null;
 function cloudPush(){                  // debounced, concurrency-safe save of the whole DB
   if(!cloudInit()) return;
   clearTimeout(_pushT);
-  _pushT=setTimeout(()=>{ cloudSaveNow().catch(e=>console.warn('Cloud save failed:',e&&e.message||e)); },600);
+  _pushT=setTimeout(()=>{ _pushT=null; cloudSaveNow().catch(e=>console.warn('Cloud save failed:',e&&e.message||e)); },600);
 }
+/* Force any pending (debounced) cloud save out NOW — called when the app is about to be
+   hidden or closed. Without this, a record entered in the last moment (e.g. a gift card)
+   lives only in localStorage until the debounce fires; if the app closes first the push
+   never happens and the next boot's cloud pull wipes it. */
+function cloudFlush(){ if(_pushT){ clearTimeout(_pushT); _pushT=null; if(cloudInit()) cloudSaveNow().catch(()=>{}); } }
 async function cloudSaveNow(){
   if(!cloudInit()) return false;
   for(let attempt=0; attempt<5; attempt++){
@@ -1186,13 +1191,21 @@ async function cloudPull(){            // fetch cloud copy on boot — the CLOUD
     const cloud=data && data.data;
     const cloudHasData=cloud && Array.isArray(cloud.users) && cloud.users.length>0;
     if(cloudHasData){
-      DB=_clone(cloud);                 // ADOPT the cloud copy wholesale — never merge stale local data up
+      /* MERGE the cloud copy with what's on this device — don't adopt it wholesale.
+         The cloud is still the source of truth for EDITS (it wins same-record ties),
+         but records ADDED on this device that never finished syncing (e.g. a gift card
+         entered just before the app was closed, before the debounced push landed) would
+         be wiped by a blind adopt. A 3-way merge keeps those local-only additions, while
+         genuine deletions still win because they travel as tombstones that mergeDB always
+         honours — so nothing deleted is ever resurrected. */
+      const local=_clone(DB);
+      DB=mergeDB(baseline, local, cloud, false);   // cloud wins edit ties; tombstones still delete
       if(!DB.settings) DB.settings=seed().settings;
       migrate();
       cloudUpdatedAt=data.updated_at;
       _setBaseline();
       localStorage.setItem(KEY, JSON.stringify(DB));
-      if(JSON.stringify(DB)!==JSON.stringify(cloud)) cloudPush();   // only migrate() tweaks — safe to push back
+      if(JSON.stringify(DB)!==JSON.stringify(cloud)) cloudPush();   // push merged result (local additions + migrate tweaks)
       return true;
     }
     cloudPush();                        // cloud empty / not seeded → seed it from this device once
@@ -1213,12 +1226,17 @@ async function cloudRefresh(){         // a remote device changed the cloud → 
   const { data, error }=await sb.from('app_state').select('data,updated_at').eq('id',CLOUD_ROW_ID).maybeSingle();
   if(error || !data || !data.data) return;
   if(data.updated_at===cloudUpdatedAt) return;    // our own echo / nothing new
-  DB=_clone(data.data);                            // ADOPT the newer cloud copy wholesale
+  /* adopt the newer cloud copy, but MERGE so any record added on this device that
+     hasn't synced yet (its debounced push may still be pending) isn't wiped by a
+     remote change. Tombstones still carry real deletions, so nothing deleted returns. */
+  const local=_clone(DB);
+  DB=mergeDB(baseline, local, data.data, false);
   if(!DB.settings) DB.settings=seed().settings;
   migrate();
   cloudUpdatedAt=data.updated_at;
   _setBaseline();
   try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
+  if(JSON.stringify(DB)!==JSON.stringify(data.data)) cloudPush();   // push back anything we merged in
   reSync();
 }
 /* re-point the session at the merged user record and refresh the current screen */
@@ -1353,8 +1371,9 @@ if(typeof window!=='undefined'){
      updated_at is unchanged, so this is cheap. Throttled to avoid double-pulls. */
   let _fgPullAt=0;
   const _foregroundPull=()=>{ if(!isOnline())return; const now=Date.now(); if(now-_fgPullAt<1500)return; _fgPullAt=now; cloudRefresh().catch(()=>{}); };
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _foregroundPull(); });
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _foregroundPull(); else cloudFlush(); });
   window.addEventListener('focus', _foregroundPull);
+  window.addEventListener('pagehide', cloudFlush);   // app closing / navigating away → flush unsynced edits
 }
 /* migrate old records to include payment ledger */
 function migrate(){
@@ -3868,7 +3887,9 @@ function renderBuyStore(){
 function buyStoreCard(x){
   const p=x.p, inCart=_buyCart[p.id]||0;
   const img=p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="" onerror="this.remove()">`:`<div class="shop-icon">${iconSVGtile(p)}</div>`;
-  const badge=`<span class="shop-stock${x.qty<=0?' oos':''}">${num(x.qty)} in stock</span>`;
+  const badge=x.qty<0?`<span class="shop-stock oos" title="Oversold — true stock ${num(x.qty)}">Out of stock</span>`
+    :x.qty===0?`<span class="shop-stock oos">Out of stock</span>`
+    :`<span class="shop-stock">${num(x.qty)} in stock</span>`;
   const priceLab=x.last?'Last cost ':(x.cost?'Avg buy ':''), priceVal=x.last||x.cost;
   const ctrl = inCart>0
     ? `<div class="shop-step"><button onclick="buyStoreAdd('${p.id}',-1)">−</button><input type="number" inputmode="numeric" min="0" value="${inCart}" onchange="buyStoreSet('${p.id}',this.value)" onfocus="this.select()" title="Quantity to buy"><button onclick="buyStoreAdd('${p.id}',1)">＋</button></div>`
