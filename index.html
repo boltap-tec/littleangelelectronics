@@ -1711,9 +1711,9 @@ function avgCostOf(pid,eng){ eng=eng||computeEngine(); const s=eng.stock[pid]; r
    whose — are not really ours, so own stock value isn't overstated. */
 function holdingsOf(pid){ return (DB.holdings||[]).filter(h=>h.productId===pid); }
 function heldQtyOf(pid){ return holdingsOf(pid).reduce((a,h)=>a+(+h.qty||0),0); }
-/* "1 Ahmed, 2 Sara" — qty grouped per owner, for compact inline display */
+/* "Sara ×1, Ahmed ×2" — qty grouped per owner, for compact inline display */
 function heldOwnersStr(pid){ const by={}; holdingsOf(pid).forEach(h=>{ const o=(h.owner||'').trim()||'—'; by[o]=(by[o]||0)+(+h.qty||0); });
-  return Object.keys(by).map(o=>num(by[o])+' '+o).join(', '); }
+  return Object.keys(by).map(o=>o+' ×'+num(by[o])).join(', '); }
 function allHoldOwners(){ return uniqSorted((DB.holdings||[]).map(h=>h.owner)); }
 /* average BUYING price for reference display — respects the Settings averaging window (falls back to moving-average) */
 function avgBuyPrice(pid,eng){
@@ -6480,10 +6480,12 @@ function invCatTotalsHtml(catAgg,totUnits,totVal){
 }
 function invRow(x){
   const rf=refsStr(x.p);
-  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}<button class="mini-btn" onclick="editRefs('${x.p.id}')" title="Add or edit reference numbers">✎ Ref</button>${isOwner()?`<button class="mini-btn" onclick="adjustStockModal('${x.p.id}')" title="Owner: correct the available stock quantity">⚖ Adjust</button>`:''}`;
+  const held=x.held!==undefined?x.held:heldQtyOf(x.p.id);
+  const heldLine=held>0?`<div style="color:var(--amber);font-size:11px;font-weight:600;margin-top:2px" title="Units physically here but owned by someone else">🏷 ${num(held)} held — ${esc(heldOwnersStr(x.p.id))}${x.qty-held>=0?` · ${num(x.qty-held)} yours`:''}</div>`:'';
+  const acts=`${canView('purchases')?`<button class="mini-btn gold" onclick="newPurchase('','${x.p.id}')">＋ Buy</button>`:''}${canView('sales')?`<button class="mini-btn" onclick="newSale('','${x.p.id}')">Sell</button>`:''}<button class="mini-btn" onclick="editRefs('${x.p.id}')" title="Add or edit reference numbers">✎ Ref</button>${isOwner()?`<button class="mini-btn${held>0?' gold':''}" onclick="tagHoldModal('${x.p.id}')" title="Tag units held for another person (consignment)">🏷 Tag</button><button class="mini-btn" onclick="adjustStockModal('${x.p.id}')" title="Owner: correct the available stock quantity">⚖ Adjust</button>`:''}`;
   return `<tr>
     <td><div class="prodcell">${productThumbEdit(x.p)}<div><b class="rowlink" onclick="productHistory('${x.p.id}')" title="View purchase & sales history" style="color:${prodNameColor(x.p)}">${esc(x.p.name)}</b>${rf?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(rf)}</div>`:''}</div></div></td>
-    <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}</td>
+    <td class="num"><b>${num(x.qty)}</b> ${esc(x.p.unit||'')}${heldLine}</td>
     <td class="num">${num(x.bought)}</td><td class="num">${num(x.sold)}</td>
     <td class="num">${money(x.avg)}</td><td class="num">${money(x.val>0?x.val:0)}</td>
     <td>${x.qty<=0?'<span class="tag low">OUT</span>':x.qty<=S().lowStockLevel?'<span class="tag low">LOW</span>':'<span class="tag ok">OK</span>'}</td>
@@ -6559,6 +6561,60 @@ function deleteStockAdjust(id,pid){
     if(!requireOnline())return;
     DB.adjustments=(DB.adjustments||[]).filter(a=>a.id!==id);
     save(); closeModal(); renderInventory(); toast('Adjustment removed');
+  },'Remove');
+}
+/* ---- tag units "held for another person" (consignment) ----
+   Carves out N of a product's physical units as belonging to someone else. Stored in
+   DB.holdings; it does NOT touch the stock quantity — it only flags & notes those units
+   so every stock report shows them. Owner-only, like a stock adjustment. */
+function tagHoldModal(pid){
+  if(!isOwner())return toast('Only the owner can tag held stock',1);
+  const p=productById(pid); if(!p)return;
+  const cur=stockOf(pid), held=heldQtyOf(pid), own=cur-held;
+  const list=holdingsOf(pid).slice().sort(dDesc);
+  const listHtml=list.length?`<div style="margin-top:16px"><div style="font-weight:700;font-size:12.5px;color:var(--muted);margin-bottom:6px">Currently tagged</div>
+    <div class="table-wrap"><table class="im-det-t"><thead><tr><th>Held for</th><th class="num">Qty</th><th>Note</th><th>Since</th><th></th></tr></thead>
+    <tbody>${list.map(h=>`<tr><td><b>${esc(h.owner||'—')}</b></td><td class="num" style="color:var(--amber);font-weight:700">${num(+h.qty||0)}</td><td style="white-space:normal">${esc(h.note||'—')}</td><td>${h.date?fmtDate(h.date):'—'}</td><td class="num"><button class="mini-btn btn-red" onclick="deleteHold('${h.id}','${pid}')" title="Remove this tag (units become fully yours again)">✕</button></td></tr>`).join('')}</tbody></table></div></div>`:'';
+  openModal('🏷 Tag Held Stock — '+esc(p.name),
+    `<div style="background:rgba(127,127,127,.08);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">
+       Physical stock: <b style="font-size:16px">${num(cur)}</b> ${esc(p.unit||'')} &nbsp;·&nbsp; yours: <b style="color:var(--green)">${num(own)}</b> &nbsp;·&nbsp; held for others: <b style="color:var(--amber)">${num(held)}</b></div>
+     <p style="margin:0 0 12px;color:var(--muted);font-size:12.5px">Tag units that physically sit here but belong to another person. The stock count stays the same — this only flags & notes those units in your stock reports.</p>
+     <div class="grid2">
+       <div class="field"><label>Held for (person) *</label><input id="hd_owner" list="hd_owners" placeholder="e.g. Ahmed" autocomplete="off"><datalist id="hd_owners">${allHoldOwners().map(o=>`<option value="${esc(o)}">`).join('')}</datalist></div>
+       <div class="field"><label>Quantity *</label><input id="hd_qty" type="number" min="0" step="any" value="1"></div>
+     </div>
+     <div class="field"><label>Note</label><input id="hd_note" placeholder="e.g. return by 30 Nov, on approval, sample"></div>
+     <div class="field"><label>Date</label><input id="hd_date" type="date" value="${todayStr()}"></div>
+     ${listHtml}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" onclick="saveHold('${pid}')">Add tag</button>`);
+  setTimeout(()=>$('#hd_owner')?.focus(),30);
+}
+function saveHold(pid){
+  if(!requireOnline())return;
+  if(!isOwner())return toast('Only the owner can tag held stock',1);
+  const p=productById(pid); if(!p)return;
+  const owner=($('#hd_owner')?.value||'').trim();
+  if(!owner)return toast('Enter who the units are held for',1);
+  const qty=+($('#hd_qty')?.value||0);
+  if(!(qty>0))return toast('Enter a quantity greater than 0',1);
+  const note=($('#hd_note')?.value||'').trim();
+  const date=$('#hd_date')?.value||todayStr();
+  if(!Array.isArray(DB.holdings))DB.holdings=[];
+  DB.counters.hold=(DB.counters.hold||0)+1;
+  DB.holdings.push({id:uid(),ref:'HLD-'+String(DB.counters.hold).padStart(4,'0'),date,productId:pid,owner,qty,note,byId:session.id});
+  logAct('tag','product',p.name,num(qty)+' held for '+owner+(note?' · '+note:''));
+  const cur=stockOf(pid), held=heldQtyOf(pid);
+  save(); closeModal(); renderInventory();
+  toast('Tagged: '+num(qty)+' held for '+owner);
+  if(held>cur) setTimeout(()=>toast('⚠ Held ('+num(held)+') now exceeds physical stock ('+num(cur)+')',1),400);
+}
+function deleteHold(id,pid){
+  if(!isOwner())return toast('Only the owner can remove a tag',1);
+  confirmBox('Remove tag?','Those units go back to being fully yours. Physical stock is unchanged.',()=>{
+    if(!requireOnline())return;
+    DB.holdings=(DB.holdings||[]).filter(h=>h.id!==id);
+    save(); closeModal(); if(pid)tagHoldModal(pid); renderInventory(); toast('Tag removed');
   },'Remove');
 }
 const INV_HEAD=`<thead><tr><th>Product</th><th class="num">Balance (stock)</th><th class="num">Purchased</th><th class="num">Sold</th><th class="num">Avg Cost</th><th class="num">Stock Value</th><th>Status</th><th></th></tr></thead>`;
@@ -6881,18 +6937,20 @@ views._after_inventory=renderInventory;
 function renderInventory(){
   const eng=computeEngine();
   const q=($('#invSearch')?.value||'').toLowerCase();
-  let totVal=0,totUnits=0,low=0,out=0; const catAgg={};
+  let totVal=0,totUnits=0,low=0,out=0,totHeld=0,totHeldVal=0; const catAgg={};
   const data=DB.products.map(p=>{const qty=stockOf(p.id,eng),avg=avgCostOf(p.id,eng);const val=(qty>0?qty:0)*avg;
+    const held=heldQtyOf(p.id); if(held>0){ totHeld+=held; totHeldVal+=held*avg; }
     if(qty>0){totUnits+=qty;totVal+=val; const cat=(p.category||'').trim()||'Uncategorised'; const a=catAgg[cat]||(catAgg[cat]={items:0,pcs:0,val:0}); a.items++; a.pcs+=qty; a.val+=val;}
     if(qty<=0)out++; else if(qty<=S().lowStockLevel)low++;
-    return {p,qty,avg,val,bought:totalBought(p.id),sold:totalSold(p.id),last:lastBuyDate(p.id)};})
+    return {p,qty,avg,val,held,bought:totalBought(p.id),sold:totalSold(p.id),last:lastBuyDate(p.id)};})
     .filter(x=>x.p.name.toLowerCase().includes(q)||(x.p.category||'').toLowerCase().includes(q)||refsStr(x.p).toLowerCase().includes(q));
   const cc=$('#invCards'); if(cc)cc.innerHTML=`
     <div class="stat"><span class="ic">📦</span><div class="label">Inventory Value</div><div class="val">${money(totVal)}</div><div class="foot">${num(totUnits)} units</div></div>
     <div class="stat"><span class="ic">🔢</span><div class="label">Total Pieces</div><div class="val">${num(totUnits)}</div><div class="foot">all in-stock items</div></div>
     <div class="stat gold"><span class="ic">🏷️</span><div class="label">Products</div><div class="val">${DB.products.length}</div></div>
     <div class="stat red"><span class="ic">⚠️</span><div class="label">Low Stock</div><div class="val">${low}</div><div class="foot">≤ ${S().lowStockLevel} units</div></div>
-    <div class="stat"><span class="ic">🚫</span><div class="label">Out of Stock</div><div class="val">${out}</div></div>`;
+    <div class="stat"><span class="ic">🚫</span><div class="label">Out of Stock</div><div class="val">${out}</div></div>
+    ${totHeld>0?`<div class="stat amber"><span class="ic">🏷️</span><div class="label">Held for Others</div><div class="val">${num(totHeld)}</div><div class="foot">${money(totHeldVal)} · not your stock</div></div>`:''}`;
   const scBtn=$('#scToggleBtn'); if(scBtn){ scBtn.textContent=_invCheckMode?'✕ Exit Stock Check':'✓ Stock Check'; scBtn.classList.toggle('btn-gold',!_invCheckMode); scBtn.classList.toggle('btn-red',_invCheckMode); }
   const ct=$('#invCatTotals'); if(ct)ct.innerHTML=(_invShowCat&&!_invCheckMode)?invCatTotalsHtml(catAgg,totUnits,totVal):'';
   const host=$('#invList'); if(!host)return;
@@ -9257,6 +9315,25 @@ function invMoveAdjustList(from,to){
   out.sort(dDesc);
   return out;
 }
+/* current "held for others" tags (consignment) — a point-in-time snapshot, so it is
+   NOT bound by the report's date range; filtered only by the product search box */
+function invMoveHoldList(){
+  const q=($('#imSearch')?.value||'').trim().toLowerCase();
+  const match=pid=>{ if(!q)return true; const pr=productById(pid); return pr&&[pr.name,pr.category].some(v=>(v||'').toLowerCase().includes(q)); };
+  const out=[];
+  (DB.holdings||[]).forEach(h=>{ if(!match(h.productId))return; const pr=productById(h.productId);
+    out.push({id:h.id,date:h.date||'',name:pr?pr.name:'—',category:pr?pr.category||'':'',owner:h.owner||'—',qty:+h.qty||0,note:h.note||''}); });
+  out.sort((a,b)=>a.name.localeCompare(b.name)||a.owner.localeCompare(b.owner));
+  return out;
+}
+function invMoveHoldPanelHtml(){
+  const hs=invMoveHoldList(); if(!hs.length)return '';
+  const tQ=hs.reduce((s,h)=>s+h.qty,0);
+  const tbl=`<div class="table-wrap"><table class="im-det-t"><thead><tr><th>Product</th><th>Held for</th><th class="num">Qty</th><th>Note</th><th>Since</th></tr></thead>
+    <tbody>${hs.map(h=>`<tr><td><b>${esc(h.name)}</b></td><td>${esc(h.owner)}</td><td class="num" style="color:var(--amber);font-weight:700">${num(h.qty)}</td><td style="white-space:normal">${esc(h.note||'—')}</td><td>${h.date?fmtDate(h.date):'—'}</td></tr>`).join('')}
+    <tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${hs.length} tag${hs.length===1?'':'s'}</td><td></td><td class="num" style="color:var(--amber)">${num(tQ)}</td><td colspan="2"></td></tr></tbody></table></div>`;
+  return `<div class="panel" style="margin-top:14px"><h4 style="margin:2px 0 10px;font-size:13px;color:var(--muted)">🏷 Held for Others (Consignment) — ${hs.length} tag${hs.length===1?'':'s'} · ${num(tQ)} unit${tQ===1?'':'s'} <span style="font-weight:600;color:var(--muted2)">· current snapshot, not affected by the date range</span></h4>${tbl}</div>`;
+}
 function invMoveDetailTablesHtml(from,to){
   const {buys,sells}=invMoveDetails(from,to);
   const adjs=invMoveAdjustList(from,to);
@@ -9304,14 +9381,15 @@ function renderInvMove(){
         <div class="panel">${invMoveTableHtml(day.rows,dT)}</div>
         ${invMoveDetailTablesHtml(day.date,day.date)}
       </div>`;
-    }).join('');
+    }).join('')+invMoveHoldPanelHtml();
     return;
   }
   body.innerHTML=`<div class="panel">
     <div style="color:var(--muted2);font-size:12px;margin:0 2px 10px">Range: <b style="color:var(--text)">${invMoveRangeLabel(from,to)}</b></div>
     ${invMoveTableHtml(rows,{o:tO,p:tP,s:tS,a:tA,c:tC})}
     <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Opening = net stock (bought − sold ± adjustments) before the start date · Closing = Opening + Purchased − Sold ± Adjusted. The closing of one range is the opening of the next, so the record runs continuously.</div></div>
-    ${invMoveDetailTablesHtml(from,to)}`;
+    ${invMoveDetailTablesHtml(from,to)}
+    ${invMoveHoldPanelHtml()}`;
 }
 /* the Opening / Purchased / Sold / Closing table for a set of movement rows + its totals */
 function invMoveTableHtml(rows,t){
@@ -9349,6 +9427,11 @@ function exportInvMoveExcel(){
   sellOut.push(['Total','','','',num2(sells.reduce((s,r)=>s+r.qty,0)),'',num2(sells.reduce((s,r)=>s+r.amt,0)),num2(sells.reduce((s,r)=>s+r.pending,0))]);
   const sheets=[{name:'Inventory Movement',rows:out},{name:'Purchase Details',rows:buyOut},{name:'Sales Details',rows:sellOut}];
   if(invMoveAdjustList(from,to).length) sheets.push({name:'Stock Adjustments',rows:adjOut});
+  const holds=invMoveHoldList();
+  if(holds.length){ const holdOut=[['Held for Others (Consignment) — current snapshot'],[],['Product','Category','Held for','Qty','Note','Since']];
+    holds.forEach(h=>holdOut.push([h.name,h.category||'',h.owner,num2(h.qty),h.note||'',h.date||'']));
+    holdOut.push(['Total','','',num2(holds.reduce((s,h)=>s+h.qty,0)),'','']);
+    sheets.push({name:'Held for Others',rows:holdOut}); }
   exportExcel('inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.xlsx',sheets);
 }
 function invMoveReportHtml(){
@@ -9394,6 +9477,13 @@ function invMoveReportHtml(){
         ['Date','Product','Change','Reason','By'],[2],adjLines,
         'Total · '+adjs.length+' adjustment'+(adjs.length===1?'':'s'),(aQ>=0?'+':'−')+num(Math.abs(aQ)),'',''):'');
   };
+  /* current held-for-others snapshot (consignment) — not range-bound */
+  const holdPdf=()=>{ const hs=invMoveHoldList(); if(!hs.length)return '';
+    const tQ=hs.reduce((s,h)=>s+h.qty,0);
+    const lines=hs.map(h=>[h.name,h.owner,num(h.qty),h.note||'—',h.date?fmtDate(h.date):'—']);
+    return pdfTbl('🏷 Held for Others (Consignment) — '+hs.length+' tag'+(hs.length===1?'':'s')+' · '+num(tQ)+' unit'+(tQ===1?'':'s')+' · current snapshot',
+      ['Product','Held for','Qty','Note','Since'],[2],lines,
+      'Total · '+hs.length+' tag'+(hs.length===1?'':'s'),num(tQ),'',''); };
   if(daily){
     const sections=invMoveDayList(from,to).map(day=>
       `<div style="margin-top:22px;padding-top:12px;border-top:2px solid #111">
@@ -9402,12 +9492,12 @@ function invMoveReportHtml(){
     ).join('') || '<div style="margin-top:18px;color:#888;font-size:10.5px">No movement on any date in this range.</div>';
     return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',
       sub:'Range: '+invMoveRangeLabel(from,to)+' · day-wise',
-      head:[], numCols:[], rows:[], extra:'<div style="color:#888;font-size:10px;margin-bottom:4px">'+note+'</div>'+sections});
+      head:[], numCols:[], rows:[], extra:'<div style="color:#888;font-size:10px;margin-bottom:4px">'+note+'</div>'+sections+holdPdf()});
   }
   const body=rows.map(r=>[r.p.name,num(r.opening),r.purchased?num(r.purchased):'—',r.sold?num(r.sold):'—',pAdj(r.adjusted||0),num(r.closing)]);
   const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),num(rows.reduce((s,r)=>s+r.opening,0)),num(rows.reduce((s,r)=>s+r.purchased,0)),num(rows.reduce((s,r)=>s+r.sold,0)),pAdj(rows.reduce((s,r)=>s+(r.adjusted||0),0)),num(rows.reduce((s,r)=>s+r.closing,0))];
   return reportAreaHtml({areaId:'invMovePdfArea',width:1040,icon:'📦',title:'Inventory Movement',sub:'Range: '+invMoveRangeLabel(from,to)+' · '+rows.length+' product(s)',
-    head, numCols:[1,2,3,4,5], rows:body, foot, extra:detailTbls(from,to), note});
+    head, numCols:[1,2,3,4,5], rows:body, foot, extra:detailTbls(from,to)+holdPdf(), note});
 }
 function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveReportHtml(),'invMovePdfArea','inventory_movement_'+(from||'start')+'_'+(to||todayStr())+'.pdf'); }
 
@@ -9415,8 +9505,8 @@ function pdfInvMove(){ const {from,to}=invMoveRows(); downloadReportPdf(invMoveR
 function invTodayRows(){
   const eng=computeEngine(), q=($('#itSearch')?.value||'').trim().toLowerCase();
   const inStockOnly=($('#itFilter')?.value||'instock')==='instock';
-  let rows=DB.products.map(p=>{ const stock=stockOf(p.id,eng), last=lastBoughtCost(p.id);
-    return { p, last, stock, value:(stock>0?stock:0)*last }; });
+  let rows=DB.products.map(p=>{ const stock=stockOf(p.id,eng), last=lastBoughtCost(p.id), held=heldQtyOf(p.id);
+    return { p, last, stock, held, value:(stock>0?stock:0)*last }; });
   if(inStockOnly) rows=rows.filter(r=>r.stock>1e-9);
   if(q) rows=rows.filter(r=>[r.p.name,r.p.category].some(v=>(v||'').toLowerCase().includes(q)));
   rows.sort((a,b)=>a.p.name.localeCompare(b.p.name));
@@ -9442,39 +9532,45 @@ views._after_invtoday=()=>{ if(canView('invtoday'))renderInvToday(); };
 function renderInvToday(){
   if(!canView('invtoday'))return;
   const rows=invTodayRows();
-  const tUnits=rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0), tVal=rows.reduce((s,r)=>s+r.value,0);
+  const tUnits=rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0), tVal=rows.reduce((s,r)=>s+r.value,0), tHeld=rows.reduce((s,r)=>s+(r.held>0?r.held:0),0);
   const cs=$('#itStats'); if(cs)cs.innerHTML=`
     <div class="stat blue"><span class="ic">📋</span><div class="label">Products</div><div class="val">${num(rows.length)}</div></div>
     <div class="stat green"><span class="ic">📦</span><div class="label">Units in Stock</div><div class="val">${num(tUnits)}</div></div>
-    <div class="stat gold"><span class="ic">💰</span><div class="label">Stock Value</div><div class="val">${money(tVal)}</div><div class="foot">at last bought cost</div></div>`;
+    <div class="stat gold"><span class="ic">💰</span><div class="label">Stock Value</div><div class="val">${money(tVal)}</div><div class="foot">at last bought cost</div></div>
+    ${tHeld>0?`<div class="stat amber"><span class="ic">🏷️</span><div class="label">Held for Others</div><div class="val">${num(tHeld)}</div><div class="foot">not your stock</div></div>`:''}`;
   const body=$('#itBody'); if(!body)return;
   if(!DB.products.length){ body.innerHTML=`<div class="panel">${emptyBox('📋','No products','Add products in Products first.')}</div>`; return; }
   if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('🔎','No matches','No products match — try “All products” or clear the search.')}</div>`; return; }
+  const anyHeld=tHeld>0;
+  const heldCell=r=>r.held>0?`<td class="num" style="color:var(--amber);font-weight:600" title="${esc(heldOwnersStr(r.p.id))}">${num(r.held)}</td>`:`<td class="num" style="color:var(--muted2)">—</td>`;
   const tr=rows.map(r=>`<tr>
       <td><b>${esc(r.p.name)}</b>${r.p.category?`<div style="color:var(--muted2);font-size:11.5px">${esc(r.p.category)}</div>`:''}</td>
       <td class="num">${r.last>0?money(r.last):'—'}</td>
       <td class="num" style="font-weight:700${r.stock<=0?';color:var(--muted2)':(r.stock<=(+S().lowStockLevel||0)?';color:var(--amber)':'')}">${num(r.stock)}</td>
+      ${anyHeld?heldCell(r):''}
       <td class="num">${r.value>0?money(r.value):'—'}</td>
     </tr>`).join('');
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td></td><td class="num">${num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0))}</td><td class="num">${money(rows.reduce((s,r)=>s+r.value,0))}</td></tr>`;
-  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Product</th><th class="num">Last Bought Cost</th><th class="num">Stock Available</th><th class="num">Stock Value</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Last Bought Cost = unit price on the most recent purchase of each product · Stock Value = stock × last bought cost · low stock shown in amber.</div></div>`;
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} product${rows.length===1?'':'s'}</td><td></td><td class="num">${num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0))}</td>${anyHeld?`<td class="num" style="color:var(--amber)">${num(tHeld)}</td>`:''}<td class="num">${money(rows.reduce((s,r)=>s+r.value,0))}</td></tr>`;
+  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Product</th><th class="num">Last Bought Cost</th><th class="num">Stock Available</th>${anyHeld?'<th class="num">Held for Others</th>':''}<th class="num">Stock Value</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Last Bought Cost = unit price on the most recent purchase of each product · Stock Value = stock × last bought cost · low stock shown in amber.${anyHeld?' <b style="color:var(--amber)">Held for Others</b> = units physically here but owned by another person (hover to see whose).':''}</div></div>`;
 }
 function exportInvTodayExcel(){
   const rows=invTodayRows(); if(!rows.length)return toast('No products to export',1);
-  const out=[['Product','Category','Last Bought Cost','Stock Available','Stock Value']];
-  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.last),num2(r.stock),num2(r.value)]));
-  out.push(['Total','','',num2(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),num2(rows.reduce((s,r)=>s+r.value,0))]);
+  const out=[['Product','Category','Last Bought Cost','Stock Available','Held for Others','Held for (whom)','Stock Value']];
+  rows.forEach(r=>out.push([r.p.name,r.p.category||'',num2(r.last),num2(r.stock),num2(r.held||0),r.held>0?heldOwnersStr(r.p.id):'',num2(r.value)]));
+  out.push(['Total','','',num2(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),num2(rows.reduce((s,r)=>s+(r.held>0?r.held:0),0)),'',num2(rows.reduce((s,r)=>s+r.value,0))]);
   exportExcel('today_inventory_'+todayStr()+'.xlsx',[{name:"Today's Inventory",rows:out}]);
 }
 function invTodayReportHtml(){
   const rows=invTodayRows(); if(!rows.length)return '';
-  const head=['Product','Last Bought Cost','Stock Available','Stock Value'];
-  const body=rows.map(r=>[r.p.name,r.last>0?money(r.last):'—',num(r.stock),r.value>0?money(r.value):'—']);
-  const foot=['Total · '+rows.length+' product'+(rows.length===1?'':'s'),'',num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),money(rows.reduce((s,r)=>s+r.value,0))];
+  const anyHeld=rows.some(r=>r.held>0);
+  const head=anyHeld?['Product','Last Bought Cost','Stock Available','Held for Others','Stock Value']:['Product','Last Bought Cost','Stock Available','Stock Value'];
+  const body=rows.map(r=>anyHeld?[r.p.name,r.last>0?money(r.last):'—',num(r.stock),r.held>0?heldOwnersStr(r.p.id):'—',r.value>0?money(r.value):'—']:[r.p.name,r.last>0?money(r.last):'—',num(r.stock),r.value>0?money(r.value):'—']);
+  const tHeld=rows.reduce((s,r)=>s+(r.held>0?r.held:0),0);
+  const foot=anyHeld?['Total · '+rows.length+' product'+(rows.length===1?'':'s'),'',num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),num(tHeld)+' held',money(rows.reduce((s,r)=>s+r.value,0))]:['Total · '+rows.length+' product'+(rows.length===1?'':'s'),'',num(rows.reduce((s,r)=>s+(r.stock>0?r.stock:0),0)),money(rows.reduce((s,r)=>s+r.value,0))];
   return reportAreaHtml({areaId:'invTodayPdfArea',width:680,icon:'📋',title:"Today's Inventory",sub:'As of '+fmtDate(todayStr())+' · '+rows.length+' product(s)',
-    head, numCols:[1,2,3], rows:body, foot,
-    note:'Last Bought Cost = unit price on the most recent purchase · Stock Value = stock × last bought cost.'});
+    head, numCols:anyHeld?[1,2,4]:[1,2,3], rows:body, foot,
+    note:'Last Bought Cost = unit price on the most recent purchase · Stock Value = stock × last bought cost.'+(anyHeld?' Held for Others = units physically here but owned by another person.':'')});
 }
 function pdfInvToday(){ downloadReportPdf(invTodayReportHtml(),'invTodayPdfArea','today_inventory_'+todayStr()+'.pdf'); }
 
