@@ -5172,8 +5172,8 @@ function renderCards(){
   }
   if(_cardView==='grid'){
     if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit card balances here.')}</div>`; renderBell(); return; }
-    const list=[...cards].sort((a,b)=> cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''));
-    const rowsHtml=list.map(c=>{
+    const list=[...cards].sort((a,b)=> (a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)));
+    const rowsHtml=gridGroupedRows(list,8,c=>{
       const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
       const lim=+c.creditLimit||0, bal=r2(lim-old-used), id=c.id;
       const led=cardLastBalEdit(c), ds=daysSince(led);
@@ -5189,8 +5189,8 @@ function renderCards(){
         <td style="white-space:nowrap">${dateCell}</td>
         <td class="num" style="white-space:nowrap;color:var(--muted)">${daysCell}</td>
       </tr>`;
-    }).join('');
-    host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}</style>
+    });
+    host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}#cardGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
       <div class="table-wrap"><table id="cardGridTbl" style="min-width:920px">
@@ -5207,8 +5207,8 @@ function renderCards(){
   }
   if(_cardView==='cashback'){
     if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit cashback here.')}</div>`; renderBell(); return; }
-    const list=[...cards].sort((a,b)=> cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''));
-    const rowsHtml=list.map(c=>{
+    const list=[...cards].sort((a,b)=> (a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)));
+    const rowsHtml=gridGroupedRows(list,7,c=>{
       const id=c.id;
       const our=+c.discountPercent||0;
       const fol=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):our;
@@ -5224,8 +5224,8 @@ function renderCards(){
         <td class="num"><input class="gin" id="cb_us_${id}" type="number" min="0" step="any" value="${r2(our)}" oninput="cbGridCalc('${id}','us')"></td>
         <td class="num"><input class="gin" id="cb_fol_${id}" type="number" min="0" step="any" value="${r2(fol)}" oninput="cbGridCalc('${id}','fol')"></td>
       </tr>`;
-    }).join('');
-    host.innerHTML=`<style>.gin{width:104px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}.gin.over{border-color:var(--red);color:var(--red)}#cbGridTbl td{vertical-align:middle}</style>
+    });
+    host.innerHTML=`<style>.gin{width:104px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}.gin.over{border-color:var(--red);color:var(--red)}#cbGridTbl td{vertical-align:middle}#cbGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">🎁 Edit cashback <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
       <div class="table-wrap"><table id="cbGridTbl" style="min-width:920px">
@@ -5257,6 +5257,16 @@ function renderCards(){
 }
 /* ---- Grid balance editor ---- */
 function r2(n){ return Math.round((+n||0)*100)/100; }
+/* Emit grouped table rows: a header row per distinct card name, then that name's rows.
+   `list` must already be sorted by name; rowFn(c) returns the <tr> for one card. */
+function gridGroupedRows(list,colspan,rowFn){
+  const cnt={}; list.forEach(c=>{ const nm=(c.name||'').trim()||'—'; cnt[nm]=(cnt[nm]||0)+1; });
+  let html='',cur=null;
+  list.forEach(c=>{ const nm=(c.name||'').trim()||'—';
+    if(nm!==cur){ cur=nm; html+=`<tr class="grp"><td colspan="${colspan}"><b>${esc(nm)}</b> <span style="color:var(--muted2);font-weight:600">· ${cnt[nm]} card${cnt[nm]===1?'':'s'}</span></td></tr>`; }
+    html+=rowFn(c); });
+  return html;
+}
 /* whole days between an ISO date and today (0 = today, 1 = yesterday, …) */
 function daysSince(d){ if(!d)return null; const a=new Date(d+'T00:00:00'), b=new Date(todayStr()+'T00:00:00'); return Math.round((b-a)/86400000); }
 /* when a card's balance was last edited — stored stamp, else the newest 'adjust' entry */
