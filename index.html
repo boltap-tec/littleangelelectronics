@@ -1019,11 +1019,11 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',washare:'WhatsApp Share',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Report screens an admin can grant to a worker (otherwise owner-only). Stored in a
    worker's perms just like any other screen; granted workers see the report but any
    owner-only profit columns inside it stay hidden. */
-const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cashbackrep','cprefrep','invmove','invtoday'];
+const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cashbackrep','cprefrep','invmove','invtoday','washare'];
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -1055,7 +1055,8 @@ const NAV_GROUPS=[
     {v:'cashbackrep',ic:'🎁', lab:'Cashback Report'},
     {v:'cprefrep',   ic:'⭐', lab:'Card Preference'},
     {v:'invmove',    ic:'📦', lab:'Inventory Movement'},
-    {v:'invtoday',   ic:'📋', lab:"Today's Inventory"} ]},
+    {v:'invtoday',   ic:'📋', lab:"Today's Inventory"},
+    {v:'washare',    ic:'📲', lab:'WhatsApp Share'} ]},
   {tag:'Management', ic:'🛠️', color:'#f472b6', owner:true, items:[
     {v:'approvals', ic:'📝', lab:'Approvals', owner:true, badge:'apprBadge'},
     {v:'activity',  ic:'🧾', lab:'Activity Log', owner:true},
@@ -5535,9 +5536,9 @@ function cardDetail(id){
   const rows=txns.length? txns.map(t=>`<tr>
       <td>${fmtDate(t.date)}</td>
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
-      <td>${esc(t.note||'')}</td>
       ${txnAmtCell(t)}
       ${txnCbCell(t)}
+      <td>${t.srcPurchaseId?`<span class="rowlink" onclick="purchaseDetail('${t.srcPurchaseId}')" title="Open this purchase">${esc(t.note||'Purchase')}</span>`:esc(t.note||'')}</td>
       <td class="num" style="white-space:nowrap">${t.srcReturnId?`<span style="color:var(--muted2);font-size:11px" title="From a purchase return — undo it in Purchases">from return</span>`:`${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button>`}</td></tr>`).join('')
     : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(c.name),`
@@ -5564,7 +5565,7 @@ function cardDetail(id){
         <button class="btn-sm btn-gold" onclick="cardDetailPdf('${c.id}')">📄 PDF</button>
       </div>
     </div>
-    <div class="table-wrap"><table style="min-width:520px"><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th><th class="num">Cashback</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+    <div class="table-wrap"><table style="min-width:520px"><thead><tr><th>Date</th><th>Type</th><th class="num">Amount</th><th class="num">Cashback</th><th>Note</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
     `<button class="btn-sm btn-red" onclick="delCard('${c.id}')">Delete Card</button>
      <button class="btn-sm btn-ghost" onclick="editCard('${c.id}')">Edit</button>
      <button class="btn-sm" onclick="closeModal()">Close</button>`);
@@ -7835,6 +7836,115 @@ function exportDaybookExcel(){
   const inv=[invHead];
   dates.forEach(d=>day[d].sales.forEach(s=>{const bal=s.total-(s.paid||0); const r=[d,s.invoiceNo,s.customer||'Walk-in',s.items.length,(s.payment||'').toUpperCase(),num2(s.total),num2(s.paid),num2(bal)]; if(owner)r.push(num2(netOf(s)-(eng.saleCost[s.id]||0))); inv.push(r);}));
   exportExcel('daily_summary_'+todayStr()+'.xlsx',[{name:'Daily Totals',rows},{name:'Invoices',rows:inv}]);
+}
+
+/* =========================================================
+   WHATSAPP SHARE — ready-to-send daily messages
+   Six independent messages (stock, today's purchase, sales,
+   card deposit, gift-card purchase, gift-card usage), each with
+   its own Copy / Share button so they can be sent one at a time.
+   The text is plain WhatsApp-style (product name may already carry
+   a country flag; colour & qty on the next line, like the group's
+   usual "Total stock available in store" message).
+   ========================================================= */
+const WA_CATS=[
+  {k:'stock',   ic:'📦', lab:'Stock Available',            fn:()=>waStockMsg(),      dated:false},
+  {k:'purch',   ic:'📥', lab:"Today's Purchase",           fn:()=>waPurchaseMsg(),   dated:true},
+  {k:'sales',   ic:'🧾', lab:"Today's Sales",              fn:()=>waSalesMsg(),      dated:true},
+  {k:'deposit', ic:'💳', lab:"Today's Card Deposit",       fn:()=>waCardDepositMsg(),dated:true},
+  {k:'giftbuy', ic:'🎁', lab:"Today's Gift Card Purchase", fn:()=>waGiftBuyMsg(),    dated:true},
+  {k:'giftuse', ic:'🎟️', lab:"Today's Gift Card Usage",    fn:()=>waGiftUseMsg(),    dated:true}
+];
+function waDateVal(){ return $('#waDate')?.value || todayStr(); }
+/* one product block: "NAME 🇦🇪\ncolour - qty"  (or "NAME - qty" when no colour) */
+function waProdBlock(p,qty){ const nm=((p&&p.name)||'Unknown').trim(), col=(p&&p.color?String(p.color).trim():'');
+  return col ? `${nm}\n${col} - ${num(qty)}` : `${nm} - ${num(qty)}`; }
+/* roll a list of item rows up to {productId: totalQty} */
+function waAggItems(rows){ const by={}; rows.forEach(it=>{ const id=it&&it.productId; if(id==null)return; by[id]=(by[id]||0)+(+it.qty||0); }); return by; }
+function waProdLines(by){ return Object.keys(by).filter(id=>by[id]>0.0001)
+    .map(id=>({p:productById(id),q:by[id]}))
+    .sort((a,b)=>((a.p&&a.p.name)||'').localeCompare((b.p&&b.p.name)||''))
+    .map(x=>waProdBlock(x.p,x.q)); }
+
+function waStockMsg(){
+  const eng=computeEngine();
+  const by={}; DB.products.forEach(p=>{ const q=stockOf(p.id,eng); if(q>0.0001)by[p.id]=q; });
+  const lines=waProdLines(by);
+  return 'Total stock available in store\n\n' + (lines.length?lines.join('\n\n'):'(No stock available)');
+}
+function waPurchaseMsg(){
+  const d=waDateVal(), rows=[]; DB.purchases.forEach(p=>{ if(p.date===d)purchaseItems(p).forEach(it=>rows.push(it)); });
+  const by=waAggItems(rows), lines=waProdLines(by), head=`Today's Purchase — ${fmtDate(d)}`;
+  if(!lines.length)return head+'\n\n(No purchases today)';
+  const totQty=Object.keys(by).reduce((a,id)=>a+by[id],0);
+  return head+'\n\n'+lines.join('\n\n')+`\n\nTotal items: ${num(totQty)}`;
+}
+function waSalesMsg(){
+  const d=waDateVal(), rows=[]; DB.sales.forEach(s=>{ if(s.date===d)(s.items||[]).forEach(it=>rows.push(it)); });
+  const by=waAggItems(rows), lines=waProdLines(by), head=`Today's Sales — ${fmtDate(d)}`;
+  if(!lines.length)return head+'\n\n(No sales today)';
+  const totQty=Object.keys(by).reduce((a,id)=>a+by[id],0);
+  return head+'\n\n'+lines.join('\n\n')+`\n\nTotal items: ${num(totQty)}`;
+}
+function waCardDepositMsg(){
+  const d=waDateVal(), cur=S().currency, rows=[];
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.date===d&&t.type==='deposit')rows.push({name:c.name,amt:+t.amount||0,note:t.note||''}); }));
+  const head=`Today's Card Deposit — ${fmtDate(d)}`;
+  if(!rows.length)return head+'\n\n(No card deposits today)';
+  const tot=rows.reduce((a,r)=>a+r.amt,0);
+  return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal: ${cur} ${num(tot)}`;
+}
+function waGiftBuyMsg(){
+  const d=waDateVal(), cur=S().currency, rows=[];
+  (DB.giftcards||[]).forEach(g=>(g.txns||[]).forEach(t=>{ if(t.date===d&&t.type==='load')rows.push({name:g.name,amt:+t.amount||0}); }));
+  const head=`Today's Gift Card Purchase — ${fmtDate(d)}`;
+  if(!rows.length)return head+'\n\n(No gift card purchases today)';
+  const tot=rows.reduce((a,r)=>a+r.amt,0);
+  return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}`).join('\n')+`\n\nTotal loaded: ${cur} ${num(tot)}`;
+}
+function waGiftUseMsg(){
+  const d=waDateVal(), cur=S().currency, rows=[];
+  (DB.giftcards||[]).forEach(g=>(g.txns||[]).forEach(t=>{ if(t.date===d&&t.type==='spend')rows.push({name:g.name,amt:+t.amount||0,note:t.note||''}); }));
+  const head=`Today's Gift Card Usage — ${fmtDate(d)}`;
+  if(!rows.length)return head+'\n\n(No gift card usage today)';
+  const tot=rows.reduce((a,r)=>a+r.amt,0);
+  return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal used: ${cur} ${num(tot)}`;
+}
+function waMsgEl(k){ return $('#waMsg_'+k); }
+async function waCopy(k){
+  const el=waMsgEl(k); if(!el)return; const text=el.value;
+  try{ await navigator.clipboard.writeText(text); toast('Copied — paste into WhatsApp'); }
+  catch(e){ try{ el.focus(); el.select(); document.execCommand('copy'); window.getSelection&&window.getSelection().removeAllRanges(); toast('Copied — paste into WhatsApp'); }
+    catch(_){ toast('Select the text and copy manually',1); } }
+}
+async function waShare(k){
+  const el=waMsgEl(k); if(!el)return; const text=el.value;
+  if(navigator.share){ try{ await navigator.share({text}); return; }catch(e){ if(e&&e.name==='AbortError')return; } }
+  window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank');   // desktop fallback: opens WhatsApp with the message prefilled
+}
+views.washare=function(){
+  if(!canView('washare'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>WhatsApp Share is restricted to the owner (or a worker granted this report).</p></div>`;
+  return `
+  <div class="page-head"><div><h2>📲 WhatsApp Share</h2><p>Ready-to-send messages — copy or share each one separately to your WhatsApp group. Pick a date for the daily messages; you can also tweak any message before sending.</p></div>
+    <div class="row-actions">
+      <label class="mini-btn" style="display:flex;align-items:center;gap:7px;cursor:default">📅 Date <input id="waDate" type="date" value="${todayStr()}" oninput="renderWaShare()" style="border:0;background:transparent;color:inherit;font:inherit"></label>
+    </div></div>
+  <div id="waBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px"></div>`;
+};
+views._after_washare=renderWaShare;
+function renderWaShare(){
+  const host=$('#waBody'); if(!host)return;
+  host.innerHTML=WA_CATS.map(c=>{
+    const msg=c.fn(), rows=Math.min(22,Math.max(6,msg.split('\n').length+1));
+    return `<div class="panel" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">${c.ic}</span><b style="font-size:14.5px">${c.lab}</b>${c.dated?'':`<span class="tag ok" style="margin-left:auto">live</span>`}</div>
+      <textarea id="waMsg_${c.k}" rows="${rows}" spellcheck="false" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px;resize:vertical">${esc(msg)}</textarea>
+      <div style="display:flex;gap:8px">
+        <button class="btn-sm btn-ghost" style="flex:1" onclick="waCopy('${c.k}')">📋 Copy</button>
+        <button class="btn-sm btn-green" style="flex:1" onclick="waShare('${c.k}')">📲 Share</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 /* ---- printable "Daily Account" statement for ONE date (PDF) ---- */
 function daySummaryHtml(dstr){
