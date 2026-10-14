@@ -518,6 +518,17 @@ body.light .tag.other{background:#fdf0de;color:#9a5a12;border-color:#efcd9f}
 .mini-btn.gold{color:#f5cf7a;border-color:#7a5b1e}
 .mini-btn.green{color:#7ee2a8;border-color:#1f5136}
 .mini-btn:hover{background:var(--panel)}
+/* clickable masked card number → opens the card's usage */
+.cardnum-link{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:3px 10px 3px 8px;border-radius:999px;
+  font-weight:800;letter-spacing:.6px;color:var(--text);line-height:1;
+  background:linear-gradient(135deg,rgba(236,72,153,.10),rgba(99,102,241,.10));
+  border:1px solid var(--line2);transition:transform .12s ease,box-shadow .12s ease,border-color .12s ease,background .12s ease}
+.cardnum-link::before{content:"💳";font-size:12px;filter:saturate(1.1)}
+.cardnum-link::after{content:"›";font-weight:900;color:var(--brand);opacity:.6;transition:transform .12s ease,opacity .12s ease}
+.cardnum-link:hover{transform:translateY(-1px);border-color:var(--brand);box-shadow:0 4px 14px rgba(236,72,153,.22);
+  background:linear-gradient(135deg,rgba(236,72,153,.18),rgba(99,102,241,.16))}
+.cardnum-link:hover::after{opacity:1;transform:translateX(2px)}
+.cardnum-link:active{transform:translateY(0)}
 .empty{padding:40px 20px;text-align:center;color:var(--muted2)}
 .empty .big{font-size:34px;margin-bottom:8px;opacity:.7}
 
@@ -1003,7 +1014,7 @@ const KEY='lae_db_v1';
    The cloud remembers the highest version that has written to it (settings.appVersion);
    any device older than that is put in read-only mode (see versionBlocked) so a stale
    or outdated build can never push leftover records into everyone's shared data. */
-const APP_VERSION = 20261014;
+const APP_VERSION = 20261015;
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
@@ -4623,6 +4634,10 @@ function upsertCardNameTotal(name,total){ name=(name||'').trim(); if(!name)retur
   if(m) m.totalCashback=total; else arr.push({name,bank:($('#c_bank')?.value||'').trim(),totalCashback:total}); }
 function cardById(id){ return (DB.cards||[]).find(c=>c.id===id); }
 function maskCard(n){ n=(n||'').replace(/\s+/g,''); if(!n)return '•••• •••• •••• ••••'; return '•••• •••• •••• '+n.slice(-4).padStart(4,'•'); }
+/* clickable masked number → opens the card's usage (cardDetail). `full` shows all 16 dots, else the compact last-4 form. */
+function cardNumLink(c,full){ if(!c)return ''; const txt=full?maskCard(c.number):('•••• '+((c.number||'').replace(/\D/g,'').slice(-4).padStart(4,'•')));
+  if(!c.number)return `<span style="color:var(--muted2)">${txt}</span>`;
+  return `<span class="cardnum-link" role="button" tabindex="0" title="View usage & history" onclick="event.stopPropagation();cardDetail('${c.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cardDetail('${c.id}')}">${esc(txt)}</span>`; }
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function ym(d){ return (d||'').slice(0,7); }
 /* outstanding = opening + purchases − (payments+recharges) */
@@ -5280,7 +5295,7 @@ function renderCards(){
       <div class="table-wrap"><table style="min-width:640px">
       <thead><tr><th>Card</th><th class="num">Available</th><th class="num">Used / Limit</th><th class="num">Outstanding</th><th>Due date</th><th></th></tr></thead>
       <tbody>${rows.map(r=>{ const warn=r.out>0.005&&r.dl<=3; return `<tr>
-        <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.owner?` · <b style="color:var(--text)">👤 ${esc(r.c.owner)}</b>`:''}</div>${refsStr(r.c)?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(refsStr(r.c))}</div>`:''}</td>
+        <td><b>${esc(r.c.name)}</b><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px">${cardNumLink(r.c)}${r.c.owner?`<b style="color:var(--text);font-size:11.5px">👤 ${esc(r.c.owner)}</b>`:''}</div>${refsStr(r.c)?`<div style="color:var(--muted2);font-size:11.5px">ref ${esc(refsStr(r.c))}</div>`:''}</td>
         <td class="num" style="color:${r.av<0?'var(--red)':'var(--green)'};font-weight:700">${money(r.av)}</td>
         <td class="num"><div>${money(r.out)} / ${money(r.lim)}</div><div class="bar" style="margin-top:4px"><i style="width:${r.use}%"></i></div></td>
         <td class="num">${money(r.out)}</td>
@@ -5299,7 +5314,7 @@ function renderCards(){
   if(_cardView==='grid'){
     if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit card balances here.')}</div>`; renderBell(); return; }
     const list=[...cards].sort((a,b)=> (a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)));
-    const rowsHtml=gridGroupedRows(list,8,c=>{
+    const rowsHtml=gridGroupedRows(list,9,c=>{
       const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
       const lim=+c.creditLimit||0, bal=r2(lim-old-used), id=c.id;
       const led=cardLastBalEdit(c), ds=daysSince(led);
@@ -5307,20 +5322,21 @@ function renderCards(){
       const daysCell=(ds==null)?'<span style="color:var(--muted2)">—</span>':(ds<=0?'today':ds+' day'+(ds===1?'':'s'));
       return `<tr data-id="${id}">
         <td>${esc(cardOwnerLabel(c))}</td>
-        <td><b>${esc(c.name)}</b>${c.number?`<div style="font-size:15px;font-weight:800;color:var(--text);letter-spacing:.6px;margin-top:3px">${esc(maskCard(c.number))}</div>`:''}${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}</td>
+        <td><b>${esc(c.name)}</b>${c.number?`<div style="margin-top:4px">${cardNumLink(c)}</div>`:''}${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}</td>
         <td class="num"><input class="gin" id="g_lim_${id}" type="number" step="any" value="${r2(lim)}" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_old_${id}" type="number" step="any" value="${old?r2(old):''}" placeholder="0" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_used_${id}" type="number" step="any" value="${r2(used)}" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin bal" id="g_bal_${id}" type="number" step="any" value="${r2(bal)}" style="color:${bal<0?'var(--red)':'var(--green)'};font-weight:700" oninput="cardGridCalc('${id}','used')"></td>
         <td style="white-space:nowrap">${dateCell}</td>
         <td class="num" style="white-space:nowrap;color:var(--muted)">${daysCell}</td>
+        <td class="num" style="white-space:nowrap"><button class="mini-btn gold" title="Apply this row's figures and stamp it as checked today — click even if nothing changed to reset Days ago" onclick="cardGridRowUpdate('${id}')">🔄 Check &amp; update</button></td>
       </tr>`;
     });
     host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}#cardGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
-      <div class="table-wrap"><table id="cardGridTbl" style="min-width:920px">
-        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th>Last edited</th><th class="num">Days ago</th></tr></thead>
+      <div class="table-wrap"><table id="cardGridTbl" style="min-width:1060px">
+        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th>Last edited</th><th class="num">Days ago</th><th class="num">Check</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
       <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>
       <div style="margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.65;border-top:1px solid var(--line);padding-top:12px">
@@ -5344,7 +5360,7 @@ function renderCards(){
       return `<tr data-id="${id}">
         <td><b>${esc(c.name)}</b>${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}</td>
         <td>${esc(cardOwnerLabel(c))}</td>
-        <td>${c.number?`<div style="font-size:15px;font-weight:800;color:var(--text);letter-spacing:.6px">${esc(maskCard(c.number))}</div>`:'<span style="color:var(--muted2)">—</span>'}</td>
+        <td>${c.number?cardNumLink(c):'<span style="color:var(--muted2)">—</span>'}</td>
         <td class="num"><input class="gin" id="cb_max_${id}" type="number" min="0" step="any" value="${max?r2(max):''}" placeholder="0 = no cap"></td>
         <td class="num"><input class="gin" id="cb_total_${id}" type="number" min="0" step="any" value="${r2(total)}" oninput="cbGridCalc('${id}','total')"></td>
         <td class="num"><input class="gin" id="cb_us_${id}" type="number" min="0" step="any" value="${r2(our)}" oninput="cbGridCalc('${id}','us')"></td>
@@ -5429,6 +5445,26 @@ function saveCardGrid(){
   });
   if(!changed)return toast('No changes to save',1);
   save(); toast('Card balances updated ✓'); renderCards(); renderBell();
+}
+/* Per-row "🔄 Check & update": apply just this row's figures (if any changed),
+   then always stamp the balance as verified today so the Last edited / Days ago
+   columns reset — even when nothing changed (you checked the bank app, it matched). */
+function cardGridRowUpdate(id){
+  if(!requireOnline())return;
+  const c=cardById(id); if(!c)return;
+  const lim=+($('#g_lim_'+id)?.value)||0, old=+($('#g_old_'+id)?.value)||0, used=+($('#g_used_'+id)?.value)||0;
+  const targetOut=r2(old+used); let changed=false;
+  if(Math.abs((+c.creditLimit||0)-lim)>0.005){ c.creditLimit=lim; changed=true; }
+  const delta=r2(r2(cardOutstanding(c))-targetOut);   // +ve frees credit (raises available)
+  if(Math.abs(delta)>0.005){
+    if(!c.txns)c.txns=[];
+    c.txns.push({id:uid(),date:todayStr(),type:'adjust',amount:delta,note:'Balance updated · statement '+money(old)+' + used '+money(used)});
+    changed=true;
+  }
+  c.statementDue=old;
+  c.lastBalEdit=todayStr();   // mark as checked today regardless of whether figures moved
+  logAct('edit','card balance',c.name,(changed?'updated':'checked, no change')+' · limit '+money(lim)+' · used '+money(targetOut)+' · available '+money(lim-targetOut));
+  save(); toast(changed?'Updated ✓':'Checked today ✓'); renderCards(); renderBell();
 }
 /* ---- Grid cashback editor ---- */
 /* Keep the three percentages balanced: Our + Follower = Total.
