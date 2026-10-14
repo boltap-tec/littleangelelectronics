@@ -5964,12 +5964,12 @@ function giftHistoryHtml(q){
   let load=0,spend=0,adj=0;
   const rows=all.map(t=>{ const amt=+t.amount||0; if(t.type==='load')load+=amt; else if(t.type==='spend')spend+=amt; else if(t.type==='adjust')adj+=amt;
     const signed=t.type==='spend'?`<span style="color:var(--red)">− ${money(amt)}</span>`:(t.type==='adjust'?`${amt<0?'− ':'+ '}${money(Math.abs(amt))}`:`<span style="color:var(--green)">+ ${money(amt)}</span>`);
-    return `<tr><td>${fmtDate(t.date)}</td><td><b class="rowlink" onclick="giftDetail('${t.giftId}')">${esc(t.giftName||'—')}</b></td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td style="white-space:normal">${esc(t.note||'')}</td><td class="num">${signed}</td><td>${esc(userName(t.byId||''))}</td>${giftPayModeCell(t)}</tr>`; }).join('');
+    return `<tr><td>${fmtDate(t.date)}</td><td><b class="rowlink" onclick="giftDetail('${t.giftId}')">${esc(t.giftName||'—')}</b></td><td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td><td style="white-space:normal">${esc(t.note||'')}</td><td class="num">${signed}</td><td>${esc(userName(t.byId||''))}</td>${giftPayModeCell(t)}<td class="num" style="white-space:nowrap">${t.type==='load'?`<button class="mini-btn" title="View / print bill" onclick="giftRechargeDetail('${t.giftId}','${t.id}')">🧾 Bill</button>`:''}</td></tr>`; }).join('');
   return `<div class="panel" style="margin-bottom:14px;padding:12px 14px">
     <div class="cat-head" style="margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span>📜 Overall gift-card history <span class="cc">${all.length} entr${all.length===1?'y':'ies'}</span></span><button class="btn-sm btn-ghost" onclick="buildGiftHistoryPdf()">📄 PDF</button></div>
-    <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Gift Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>By</th><th>Payment mode</th></tr></thead>
+    <div class="table-wrap"><table style="min-width:780px"><thead><tr><th>Date</th><th>Gift Card</th><th>Type</th><th>Note</th><th class="num">Amount</th><th>By</th><th>Payment mode</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td class="num">${money(load-spend+adj)}</td><td></td><td></td></tr></tfoot>
+      <tfoot><tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="4">TOTAL — loaded ${money(load)} · spent ${money(spend)}${adj?` · adjust ${money(adj)}`:''}</td><td class="num">${money(load-spend+adj)}</td><td></td><td></td><td></td></tr></tfoot>
     </table></div></div>`;
 }
 /* ---- Overall gift-card history → printable HTML → PDF (newest first) ---- */
@@ -6280,6 +6280,137 @@ function revertGiftRecharge(gid,txnId){
   g.txns=(g.txns||[]).filter(t=>t.id!==txnId);
 }
 
+/* ======== gift-card recharge shown as a purchase-style bill (view · bill · PDF · share · edit) ======== */
+function giftRechargeTxn(gid,txnId){ const g=giftById(gid); const t=g&&(g.txns||[]).find(x=>x.id===txnId&&x.type==='load'); return t?{g,t}:null; }
+/* readable label for one recharge payment leg (card / gift card / borrowed · lender / cash) */
+function giftLegLabel(p){ if(!p)return 'Unspecified'; const info=payMethodInfo(p.method);
+  if(p.method==='card'&&p.cardId){ const c=cardById(p.cardId); return c?cardLabel(c):'(removed card)'; }
+  if(info.savedGift&&p.giftId){ const gp=giftById(p.giftId); return gp?gp.name:'(removed gift card)'; }
+  if(p.method==='cardborrow'&&p.lenderId){ const l=lenderById(p.lenderId); const lc=l?lenderCardById(l,p.lenderCardId):null; return 'Borrowed'+(l?' · '+l.name:'')+(lc?' · '+lenderCardLabel(lc):''); }
+  if(p.method==='cash')return 'Cash';
+  return info.label||'—'; }
+/* on-screen bill view — mirrors purchaseDetail / saleDetail */
+function giftRechargeDetail(gid,txnId){
+  const r=giftRechargeTxn(gid,txnId); if(!r)return toast('Recharge not found',1); const {g,t}=r;
+  const amt=+t.amount||0, pays=giftPayList(t);
+  const paid=pays.reduce((a,p)=>a+(+p.amount||0),0), untracked=Math.round((amt-paid)*100)/100;
+  const payTbl=pays.length?`<div class="table-wrap"><table style="min-width:360px"><thead><tr><th>Method</th><th>Card / Gift / Lender</th><th class="num">Amount</th></tr></thead>
+    <tbody>${pays.map(p=>`<tr><td>${(payMethodInfo(p.method).label||p.method||'cash').toUpperCase()}</td><td>${esc(giftLegLabel(p))}${(+p.deductPct>0)?` · ${(+p.deductPct)}% cash disc.`:''}</td><td class="num">${money(+p.amount||0)}</td></tr>`).join('')}</tbody></table></div>`:'<div style="color:var(--muted2);font-size:12.5px">Payment mode not recorded.</div>';
+  openModal('Gift-Card Recharge — '+esc(g.name),`
+    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px">
+      ${miniStat('Date',fmtDate(t.date))}
+      ${miniStat('Bill No',esc(t.orderNo||'—'))}
+      ${miniStat('Where purchased',esc(t.supplier||'—'))}
+      ${miniStat('Balance loaded',money(amt))}
+      ${miniStat('Payment mode',esc(giftPayModeText(t)))}
+    </div>
+    <div class="table-wrap"><table style="min-width:420px"><thead><tr><th>Gift Card</th><th class="num">Balance received</th></tr></thead>
+      <tbody><tr><td>🎁 ${esc(g.name)}${t.buyNote?`<div style="color:var(--muted2);font-size:11.5px">${esc(t.buyNote)}</div>`:''}</td><td class="num">${money(amt)}</td></tr></tbody></table></div>
+    <div class="totbox" style="margin-top:12px">
+      <div class="totrow"><span>Balance loaded</span><span>${money(amt)}</span></div>
+      <div class="totrow"><span>Paid</span><span>${money(paid)}</span></div>
+      ${Math.abs(untracked)>0.01?`<div class="totrow" style="color:var(--amber)"><span>${untracked>0?'Untracked (already owned / gifted)':'Overpaid'}</span><span>${money(Math.abs(untracked))}</span></div>`:''}
+    </div>
+    <h4 style="margin:16px 0 8px;font-size:13px;color:var(--muted)">💳 Payment</h4>${payTbl}`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Close</button>
+     <button class="btn-sm" onclick="openGiftRechargeBill('${gid}','${txnId}')">🧾 Bill</button>
+     <button class="btn-sm" onclick="pdfGiftRecharge('${gid}','${txnId}')">📄 PDF</button>
+     <button class="btn-sm" onclick="shareGiftRecharge('${gid}','${txnId}')">📤 Share</button>
+     <button class="btn-sm btn-gold" onclick="closeModal();editGiftRecharge('${gid}','${txnId}')">Edit</button>`);
+}
+/* branded, printable A4 bill — same look as the sales invoice */
+function giftRechargeBillHtml(g,t){
+  const st=S(); const amt=+t.amount||0, pays=giftPayList(t);
+  const logo=st.showLogo?(st.logoUrl?`<img src="${esc(st.logoUrl)}" style="height:60px;object-fit:contain">`:logoMark(60)):'';
+  const paid=pays.reduce((a,p)=>a+(+p.amount||0),0);
+  const payRows=pays.length?pays.map((p,i)=>`<tr>
+      <td style="padding:9px 10px;border-bottom:1px solid #eee">${i+1}</td>
+      <td style="padding:9px 10px;border-bottom:1px solid #eee">${esc(payMethodInfo(p.method).label||p.method||'Cash')}</td>
+      <td style="padding:9px 10px;border-bottom:1px solid #eee">${esc(giftLegLabel(p))}${(+p.deductPct>0)?` · ${(+p.deductPct)}% cash disc.`:''}</td>
+      <td style="padding:9px 10px;border-bottom:1px solid #eee;text-align:right">${st.currency} ${num(+p.amount||0)}</td></tr>`).join('')
+    :`<tr><td colspan="4" style="padding:9px 10px;color:#888">Payment mode not recorded.</td></tr>`;
+  return `
+  <div id="giftBillArea" style="max-width:760px;margin:0 auto;padding:34px;font-family:Segoe UI,Arial,sans-serif">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #be185d;padding-bottom:16px">
+      <div style="display:flex;gap:14px;align-items:flex-start">${logo}
+        <div><div style="font-size:17px;font-weight:800;color:#111;line-height:1.25;max-width:360px">${esc(st.company)}</div>
+          ${st.tagline?`<div style="color:#555;font-size:12.5px">${esc(st.tagline)}</div>`:''}
+          <div style="color:#777;font-size:12px;margin-top:3px;max-width:360px">${esc(st.address)}</div>
+          <div style="color:#777;font-size:12px">${st.showPhone&&st.phone?'📞 '+esc(st.phone):''}${st.showEmail&&st.email?' · ✉ '+esc(st.email):''}</div>
+          ${st.showTrn&&st.trn?`<div style="color:#111;font-size:12.5px;margin-top:2px"><b>TRN:</b> ${esc(st.trn)}</div>`:''}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:23px;font-weight:800;color:#be185d;letter-spacing:1px">GIFT-CARD RECHARGE</div>
+        <div style="margin-top:6px;font-size:13px"><b>${esc(t.orderNo||'—')}</b></div>
+        <div style="color:#666;font-size:12.5px">Date: ${fmtDate(t.date)}</div>
+        <div style="color:#666;font-size:12.5px">Payment: ${esc(giftPayModeText(t))}</div>
+      </div>
+    </div>
+    <div style="margin:18px 0 6px"><div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px">Purchased from</div>
+      <div style="font-weight:700;color:#111;font-size:15px">${esc(t.supplier||'—')}</div></div>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px">
+      <thead><tr style="background:#fce7f0;color:#7a1e4b">
+        <th style="padding:10px;text-align:left;width:34px">#</th><th style="padding:10px;text-align:left">Gift Card</th>
+        <th style="padding:10px;text-align:right">Balance received</th></tr></thead>
+      <tbody><tr><td style="padding:10px;border-bottom:1px solid #eee">1</td>
+        <td style="padding:10px;border-bottom:1px solid #eee">${esc(g.name)}${t.buyNote?`<br><span style="color:#888;font-size:11px">${esc(t.buyNote)}</span>`:''}</td>
+        <td style="padding:10px;border-bottom:1px solid #eee;text-align:right">${st.currency} ${num(amt)}</td></tr></tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <table style="font-size:13.5px;min-width:270px">
+        <tr style="border-top:2px solid #be185d"><td style="padding:9px 10px;font-weight:800;font-size:16px">BALANCE LOADED</td><td style="padding:9px 10px;text-align:right;font-weight:800;font-size:16px;color:#be185d">${st.currency} ${num(amt)}</td></tr>
+        <tr><td style="padding:4px 10px;color:#666">Paid</td><td style="padding:4px 10px;text-align:right">${st.currency} ${num(paid)}</td></tr>
+      </table>
+    </div>
+    <div style="margin-top:16px"><div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">Payment</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead><tr style="background:#faf4f7;color:#7a1e4b"><th style="padding:8px 10px;text-align:left;width:34px">#</th><th style="padding:8px 10px;text-align:left">Method</th><th style="padding:8px 10px;text-align:left">Card / Gift / Lender</th><th style="padding:8px 10px;text-align:right">Amount</th></tr></thead>
+        <tbody>${payRows}</tbody></table>
+    </div>
+    <div style="margin-top:26px;display:flex;justify-content:space-between;align-items:flex-end">
+      <div style="color:#be185d;font-weight:700;font-size:14px">${esc(st.footer||'')}</div>
+      <div style="text-align:center;color:#999;font-size:12px">
+        <div style="height:74px;display:flex;align-items:flex-end;justify-content:center;gap:12px">
+          ${st.sealUrl?`<img src="${esc(st.sealUrl)}" style="max-height:74px;max-width:120px;object-fit:contain">`:''}
+          ${st.signUrl?`<img src="${esc(st.signUrl)}" style="max-height:58px;max-width:150px;object-fit:contain">`:''}
+        </div>
+        <div style="width:180px;border-top:1px solid #999;padding-top:5px;margin:4px auto 0">Authorized Signature &amp; Seal</div>
+      </div>
+    </div>
+  </div>`;
+}
+async function buildGiftRechargePdf(gid,txnId){
+  const r=giftRechargeTxn(gid,txnId); if(!r){ toast('Recharge not found',1); return null; }
+  if(typeof html2canvas==='undefined' || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not loaded — connect to the internet once to cache it',1); return null; }
+  const holder=document.createElement('div');
+  holder.style.cssText='position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1';
+  holder.innerHTML=giftRechargeBillHtml(r.g,r.t);
+  document.body.appendChild(holder);
+  try{
+    const canvas=await html2canvas(holder.querySelector('#giftBillArea'),{scale:2,backgroundColor:'#fff',useCORS:true,logging:false});
+    const img=canvas.toDataURL('image/jpeg',0.95); const {jsPDF}=window.jspdf; const pdf=new jsPDF('p','mm','a4');
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight(), imgH=canvas.height*pw/canvas.width;
+    if(imgH<=ph){ pdf.addImage(img,'JPEG',0,0,pw,imgH); } else { let left=imgH,pos=0; while(left>0){ pdf.addImage(img,'JPEG',0,pos,pw,imgH); left-=ph; if(left>0){pdf.addPage();pos-=ph;} } }
+    const safe=((r.g.name||'giftcard')+'_'+(r.t.orderNo||r.t.date||'recharge')).replace(/[^\w.-]+/g,'_').slice(0,40);
+    return {blob:pdf.output('blob'), filename:safe+'.pdf', g:r.g, t:r.t};
+  }catch(e){ toast('Could not build the PDF',1); return null; }
+  finally{ document.body.removeChild(holder); }
+}
+async function openGiftRechargeBill(gid,txnId){ toast('Preparing PDF…',0); const r=await buildGiftRechargePdf(gid,txnId); if(!r)return;
+  const url=URL.createObjectURL(r.blob); const w=window.open(url,'_blank');
+  if(!w){ const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove(); toast('Popup blocked — bill saved as PDF ('+r.filename+')',0); } else toast('Bill opened as PDF');
+  setTimeout(()=>URL.revokeObjectURL(url),60000); }
+async function pdfGiftRecharge(gid,txnId){ toast('Preparing PDF…',0); const r=await buildGiftRechargePdf(gid,txnId); if(!r)return;
+  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF ready — '+r.filename); }
+async function shareGiftRecharge(gid,txnId){ toast('Preparing PDF…',0); const r=await buildGiftRechargePdf(gid,txnId); if(!r)return;
+  const cap=`Gift-card recharge — ${r.g.name}\n${money(+r.t.amount||0)} loaded${r.t.supplier?' · from '+r.t.supplier:''}${r.t.orderNo?' · Bill '+r.t.orderNo:''}\n${fmtDate(r.t.date)}`;
+  const file=new File([r.blob], r.filename, {type:'application/pdf'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file], title:'Gift-Card Recharge', text:cap}); return; } catch(e){ if(e&&e.name==='AbortError')return; } }
+  const url=URL.createObjectURL(r.blob); const a=document.createElement('a'); a.href=url; a.download=r.filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000); toast('PDF saved — share it from your files',0); }
+
 /* ---- gift card detail + payment/usage history ---- */
 function giftDetail(id){
   const g=giftById(id); if(!g)return; const bal=giftBalance(g);
@@ -6295,7 +6426,7 @@ function giftDetail(id){
       <td>${esc(t.note||'')}</td>
       ${txnAmtCell(t)}
       ${giftPayModeCell(t)}
-      <td class="num" style="white-space:nowrap">${!linked?`${editBtn} <button class="mini-btn red" title="Delete entry" onclick="delGiftTxn('${g.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`; }).join('')
+      <td class="num" style="white-space:nowrap">${t.type==='load'?`<button class="mini-btn" title="View / print bill" onclick="giftRechargeDetail('${g.id}','${t.id}')">🧾</button> `:''}${!linked?`${editBtn} <button class="mini-btn red" title="Delete entry" onclick="delGiftTxn('${g.id}','${t.id}')">✕</button>`:'<span style="color:var(--muted2);font-size:11px">auto</span>'}</td></tr>`; }).join('')
     : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
   openModal(esc(g.name),`
     <div style="max-width:360px;margin:0 auto 18px">${giftVisual(g)}</div>
