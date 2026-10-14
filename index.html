@@ -1127,6 +1127,23 @@ function mergeDB(base, local, remote, preferLocal){
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
+  /* Card lenders carry their HISTORY (txns) and cards as arrays NESTED inside the
+     lender record. The atomic merge above picks one whole lender when both sides
+     edited it — which would silently drop a day's swipes/repayments entered on the
+     other device/tab. Union those sub-arrays by id instead (same rule purchases &
+     sales get as top-level records); deletions still win via tombstones. */
+  { const baseL=_byId(base.lenders), localL=_byId(local.lenders), remoteL=_byId(remote.lenders);
+    out.lenders=(out.lenders||[]).map(l=>{
+      if(!l || l.id==null) return l;
+      const ll=localL[l.id], rl=remoteL[l.id];
+      if(!(ll && rl)) return l;                       // only one side had it → nothing to reconcile
+      const bl=baseL[l.id]||{};
+      const m=_clone(l);
+      m.txns =_mergeColl(bl.txns||[],  ll.txns||[],  rl.txns||[],  preferLocal).filter(x=> !(x && x.id!=null && isDead(x.id)));
+      m.cards=_mergeColl(bl.cards||[], ll.cards||[], rl.cards||[], preferLocal).filter(x=> !(x && x.id!=null && isDead(x.id)));
+      return m;
+    });
+  }
   out.deleted=deleted;
   out.counters=out.counters||{}; const lc=local.counters||{}, rc=remote.counters||{};
   new Set([...Object.keys(lc),...Object.keys(rc)]).forEach(k=>{ out.counters[k]=Math.max(+lc[k]||0,+rc[k]||0); });
@@ -1147,7 +1164,15 @@ const _CANON_COLLS=['users','products','purchases','sales','cards','giftcards','
 function _canonDB(db){
   if(!db || typeof db!=='object') return JSON.stringify(db);
   const sortKeys=v=>{
-    if(Array.isArray(v)) return v.map(sortKeys);
+    if(Array.isArray(v)){
+      let a=v.map(sortKeys);
+      /* Arrays of id-bearing records (e.g. a lender's nested txns/cards, now union-merged
+         so their order can differ per device) are order-insensitive — sort by id for the
+         compare only, so a mere reorder never looks like a content change (no push loop). */
+      if(a.length && a.every(x=>x && typeof x==='object' && x.id!=null))
+        a=a.slice().sort((x,y)=>{ const xi=String(x.id), yi=String(y.id); return xi<yi?-1:xi>yi?1:0; });
+      return a;
+    }
     if(v && typeof v==='object'){ const o={}; Object.keys(v).sort().forEach(k=>o[k]=sortKeys(v[k])); return o; }
     return v;
   };
@@ -1352,6 +1377,15 @@ function _maintainTombstones(){
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
   });
+  /* Lender history (txns) and cards live NESTED inside each lender, so the loop above
+     can't see them. Track their ids too — otherwise a deleted swipe/repayment or card
+     has no tombstone and would come back on the next device's merge. */
+  { const mark=(wasArr,curArr)=>{ const was=_byId(wasArr), cur=_byId(curArr);
+      Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
+      Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; }); };
+    const curL=_byId(DB.lenders||[]), wasL=_byId(b.lenders||[]);
+    Object.keys(curL).forEach(id=>{ const c=curL[id], w=wasL[id]; mark(w&&w.txns, c.txns); mark(w&&w.cards, c.cards); });
+  }
 }
 /* ---------- online-only mode: editing requires a live cloud connection ----------
    The cloud is the single source of truth, so a change made offline would just be
