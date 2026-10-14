@@ -4806,6 +4806,8 @@ function cardBatchTxnModal(type,ids){
   if(cards.length===1){ cardTxnModal(cards[0].id,type); return; }
   _batchType=type;
   const pay=(type==='payment'||type==='deposit');
+  /* deposit / recharge default to the latest purchase-entry date (like the New Purchase form), not today */
+  const defDate=(type==='deposit'||type==='recharge')?lastEntryDate(DB.purchases):todayStr();
   const titles={payment:'Record Card Payments',deposit:'Card Deposits',recharge:'Card Recharges'};
   const hints={payment:'Amount paid to each bank — frees up each card’s available limit.',deposit:'Cash deposited into each card to pay down what you owe — taken from your cash box.',recharge:'Top up / load funds onto each card.'};
   const rows=cards.map(c=>{ const out=cardOutstanding(c), av=cardAvailable(c), pre=(pay&&out>0.005)?(+out.toFixed(2)):'';
@@ -4819,7 +4821,7 @@ function cardBatchTxnModal(type,ids){
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">${hints[type]||''} Leave an amount blank to skip that card.</p>
     ${rows}
     <div class="grid2">
-      <div class="field"><label>Date</label><input id="bt_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Date</label><input id="bt_date" type="date" value="${defDate}"></div>
       <div class="field"><label>Note (optional)</label><input id="bt_note" placeholder="applies to all cards"></div>
     </div>
     ${type==='deposit'?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
@@ -5520,6 +5522,8 @@ function cardTxnModal(id,type,txnId){
   const titles={payment:'Record Card Payment',deposit:'Card Deposit',recharge:'Card Recharge',discount:'Record Cashback',purchase:'Manual Charge',oldpay:'Record Old Payment',oldbal:'Add Old Credit Balance'};
   const hints={payment:'Amount you paid the bank — frees up your available limit.',deposit:'Cash deposited into the card to pay down what you owe — frees up the available limit. Taken from your cash box.',recharge:'Top up / load funds onto the card.',discount:'Cashback earned (counts toward the monthly cap). Tracked separately — it does NOT change the outstanding balance or available limit.',purchase:'A spend not linked to a purchase entry.',oldpay:'A past payment you already made — logged in this card\'s history for your records only. It does NOT change the outstanding balance or available limit, and is not deducted from your cash box.',oldbal:'Last month\'s carried-over balance that is still owed on this card. It adds to the outstanding so you can pay it now with ＋ Payment — the two entries balance each other out.'};
   const dueDate=cardDueDate(c);
+  /* deposit / recharge default to the latest purchase-entry date (like the New Purchase form), not today */
+  const defDate=(type==='deposit'||type==='recharge')?lastEntryDate(DB.purchases):todayStr();
   openModal((edit?'Edit ':'')+(titles[type]||'Card entry'),`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${hints[type]||''}</p>
     ${(type==='payment'||type==='deposit')?`<div class="totbox" style="margin-bottom:12px"><div class="totrow" style="font-weight:800"><span>Amount due (outstanding)</span><span style="color:${out>0.005?'var(--amber)':'var(--green)'}">${money(Math.max(0,out))}</span></div><div class="totrow"><span>Due date</span><span>${fmtDate(isoDate(dueDate))}</span></div></div>`:''}
@@ -5531,7 +5535,7 @@ function cardTxnModal(id,type,txnId){
     </div>
     <div class="grid2">
       <div class="field"><label>Amount (${S().currency}) *</label><input id="ct_amt" type="number" min="0" step="any" placeholder="0.00" value="${edit?preAmt:((type==='payment'||type==='deposit')&&out>0.005?(+out.toFixed(2)):'')}" oninput="ctCalcAfter()"></div>
-      <div class="field"><label>Date</label><input id="ct_date" type="date" value="${edit?esc(edit.date||todayStr()):todayStr()}"></div>
+      <div class="field"><label>Date</label><input id="ct_date" type="date" value="${edit?esc(edit.date||todayStr()):defDate}"></div>
     </div>
     <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no." value="${edit?esc(edit.note||''):''}"></div>
     ${type==='deposit'?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
