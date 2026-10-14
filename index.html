@@ -996,6 +996,11 @@ input.cardpick{padding:9px;font-size:13.5px;border-radius:9px;background:var(--b
    ========================================================= */
 
 const KEY='lae_db_v1';
+/* App build version (YYYYMMDD). BUMP THIS on every release that changes index.html.
+   The cloud remembers the highest version that has written to it (settings.appVersion);
+   any device older than that is put in read-only mode (see versionBlocked) so a stale
+   or outdated build can never push leftover records into everyone's shared data. */
+const APP_VERSION = 20261014;
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
@@ -1148,6 +1153,10 @@ function mergeDB(base, local, remote, preferLocal){
   out.counters=out.counters||{}; const lc=local.counters||{}, rc=remote.counters||{};
   new Set([...Object.keys(lc),...Object.keys(rc)]).forEach(k=>{ out.counters[k]=Math.max(+lc[k]||0,+rc[k]||0); });
   out.settings=_mergeObj(base.settings, local.settings, remote.settings, preferLocal);
+  /* appVersion only ever rises: take the highest any side has seen, so a merge with a
+     stale device can never lower the bar that keeps old builds read-only. */
+  { const mx=Math.max(+((base.settings||{}).appVersion)||0, +((local.settings||{}).appVersion)||0, +((remote.settings||{}).appVersion)||0);
+    if(mx>0){ out.settings=out.settings||{}; out.settings.appVersion=mx; } }
   return out;
 }
 
@@ -1266,6 +1275,7 @@ async function cloudPull(){            // fetch cloud copy on boot — the CLOUD
       cloudUpdatedAt=data.updated_at;
       _setBaseline();
       localStorage.setItem(KEY, JSON.stringify(DB));
+      try{ updateOnlineUI(); }catch(e){}   // reflect read-only state if the cloud now requires a newer build
       if(!_sameDB(DB,cloud)) cloudPush();   // push merged result (local additions + migrate tweaks) — order-independent so a reorder never triggers an echo
       return true;
     }
@@ -1297,6 +1307,7 @@ async function cloudRefresh(){         // a remote device changed the cloud → 
   cloudUpdatedAt=data.updated_at;
   _setBaseline();
   try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
+  try{ updateOnlineUI(); }catch(e){}   // a newer build may have just raised the bar → go read-only live
   if(!_sameDB(DB,data.data)) cloudPush();   // push back anything we merged in — order-independent so a mere reorder never echoes (stops the two-tab refresh loop)
   if(!_sameDB(local,DB)) reSync();          // only re-render the screen when the content actually changed — a content-neutral remote write won't disturb this tab
 }
@@ -1397,7 +1408,17 @@ function offlineBlocked(){ return cloudConfigured() && !isOnline(); }           
 /* toast + banner when a write is attempted offline */
 function notifyOffline(){ try{ toast('📴 You are offline — changes are disabled until you reconnect',1); }catch(e){} updateOnlineUI(); }
 /* gate to put at the TOP of a user action so it never mutates or shows a false "saved" */
-function requireOnline(){ if(offlineBlocked()){ notifyOffline(); return false; } return true; }
+/* ---------- app-version guard: stop an out-of-date device poisoning shared data ----------
+   cloudAppVersion() is the highest build that has written to the cloud. If this device's
+   APP_VERSION is lower, it is STALE: writing is disabled (read-only) until it updates, so
+   an old build can't re-inject leftover records or ignore newer delete rules. Reading is
+   never blocked. The bar can only ever rise to a real deployed build, so a current device
+   is never locked out — only strictly-older ones are. */
+function cloudAppVersion(){ return +((DB.settings&&DB.settings.appVersion)||0); }
+function versionStale(){ return cloudAppVersion() > APP_VERSION; }
+function versionBlocked(){ return versionStale(); }
+function notifyStaleVersion(){ try{ toast('⬆ This app is out of date — editing is disabled. Please install the latest version.',1); }catch(e){} updateOnlineUI(); }
+function requireOnline(){ if(offlineBlocked()){ notifyOffline(); return false; } if(versionBlocked()){ notifyStaleVersion(); return false; } return true; }
 /* drop any in-memory change and restore exactly what is persisted (safety net).
    If the persisted copy can't be read, we leave memory as-is (never wipe to empty). */
 function _revertToPersisted(){
@@ -1409,7 +1430,10 @@ function _revertToPersisted(){
 }
 function save(){
   if(offlineBlocked()){ _revertToPersisted(); notifyOffline(); return false; }   // never persist an offline edit
+  if(versionBlocked()){ _revertToPersisted(); notifyStaleVersion(); return false; }   // stale build → read-only, don't poison the cloud
   (DB.giftcards||[]).forEach(syncGiftActive);   // fully-spent gift cards auto-retire
+  if(!DB.settings) DB.settings=seed().settings;
+  if((+DB.settings.appVersion||0) < APP_VERSION) DB.settings.appVersion=APP_VERSION;   // record that this (current) build touched the cloud → older ones go read-only
   _maintainTombstones(); localStorage.setItem(KEY,JSON.stringify(DB)); cloudPush(); return true;
 }
 /* Gift cards are single-use: once the balance hits zero they auto-retire
@@ -1421,11 +1445,15 @@ function syncGiftActive(g){ if(!g)return; if(giftIsProduct(g))return;   // gift-
   else if(g._autoRetired){ g.status='active'; delete g._autoRetired; } }
 /* show / hide the offline banner and reflect the current connection state */
 function updateOnlineUI(){
-  const blocked=offlineBlocked(); let bar=document.getElementById('offlineBar');
-  if(!blocked){ if(bar)bar.remove(); return; }
+  const stale=versionBlocked(), blocked=offlineBlocked(); let bar=document.getElementById('offlineBar');
+  if(!blocked && !stale){ if(bar)bar.remove(); return; }
   if(!bar){ bar=document.createElement('div'); bar.id='offlineBar'; document.body.appendChild(bar); }
-  const noReach = (navigator.onLine!==false) && !cloudInit();   // network is up but the cloud SDK never loaded
   bar.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:center;gap:12px;background:#7a2b2b;color:#ffe3e3;font-weight:700;font-size:13px;text-align:center;padding:10px 14px;box-shadow:0 -2px 12px rgba(0,0,0,.28)';
+  if(stale){   // out-of-date build takes priority — it must stay read-only until updated
+    bar.innerHTML = `⬆ This app is out of date — editing is disabled to protect shared data. Please install the latest version, then reload. <button onclick="location.reload()" style="background:#ffe3e3;color:#7a2b2b;border:0;border-radius:8px;padding:5px 12px;font-weight:800;cursor:pointer">Reload</button>`;
+    return;
+  }
+  const noReach = (navigator.onLine!==false) && !cloudInit();   // network is up but the cloud SDK never loaded
   bar.innerHTML = noReach
     ? `⚠ Connection restored but sync isn’t active — reload to enable editing. <button onclick="location.reload()" style="background:#ffe3e3;color:#7a2b2b;border:0;border-radius:8px;padding:5px 12px;font-weight:800;cursor:pointer">Reload</button>`
     : `📴 Offline — you can view data, but changes are disabled until you reconnect.`;
@@ -10064,6 +10092,9 @@ views.settings=function(){
       <label class="btn-sm btn-ghost" style="cursor:pointer">⬆ Import Backup<input type="file" accept="application/json" style="display:none" onchange="importData(this)"></label>
       ${owner?`<button class="btn-sm btn-red" onclick="resetAll()">Reset All Data</button>`:''}
     </div>
+    ${owner?`<div class="note" style="margin-top:14px">Loaded the sample dataset by mistake? <b>Remove demo data</b> deletes only the 10 built-in demo products/purchases/sales (fixed sample ids) and leaves every real record untouched.
+      <div style="margin-top:8px"><button class="btn-sm btn-ghost" onclick="removeDemoData()">🧹 Remove demo data…</button></div></div>`:''}
+    <div style="margin-top:12px;color:var(--muted2);font-size:11.5px">This device's app version: <b>${APP_VERSION}</b> · Cloud requires: <b>${cloudAppVersion()||APP_VERSION}</b>${versionBlocked()?` <span style="color:var(--red);font-weight:800">— OUT OF DATE, editing disabled. Install the latest APK.</span>`:` <span style="color:var(--green)">✓ up to date</span>`}<br>Keep every device on the same latest version — an out-of-date device is automatically blocked from editing so it can't re-introduce old data.</div>
   </div>
   <!-- ===== DEV-ONLY: remove this whole panel before going live ===== -->
   ${owner?`<div class="panel" style="border-color:var(--red)">
@@ -10522,6 +10553,63 @@ function importData(input){
   }catch(e){toast('Invalid backup file',1);}};
   r.readAsText(f); input.value='';
 }
+/* ===== One-time cleanup: remove the built-in SAMPLE/DEMO dataset =====
+   The demo (demo/demo-data.json) uses fixed, hand-written ids — products d1..d10,
+   purchases db1..db10, sales ds1..ds10. Real records created in the app get random
+   uid()s, so matching strictly by these ids can NEVER hit a real record (even a real
+   product that happens to share a demo name). Demo purchases/sales are always removed;
+   a demo PRODUCT is only removed if no REAL purchase/sale/adjustment still points at it
+   (e.g. if you attached real stock to a demo product, the product is kept). */
+const DEMO_IDS={
+  products:['d1','d2','d3','d4','d5','d6','d7','d8','d9','d10'],
+  purchases:['db1','db2','db3','db4','db5','db6','db7','db8','db9','db10'],
+  sales:['ds1','ds2','ds3','ds4','ds5','ds6','ds7','ds8','ds9','ds10']
+};
+function demoScan(){
+  const pSet=new Set(DEMO_IDS.products), buySet=new Set(DEMO_IDS.purchases), sellSet=new Set(DEMO_IDS.sales);
+  const purch=(DB.purchases||[]).filter(p=>buySet.has(p.id));
+  const sales=(DB.sales||[]).filter(s=>sellSet.has(s.id));
+  /* demo products still referenced by a NON-demo purchase/sale/adjustment → keep them */
+  const refByReal=new Set();
+  (DB.purchases||[]).forEach(p=>{ if(buySet.has(p.id))return; purchaseItems(p).forEach(it=>{ if(pSet.has(it.productId)) refByReal.add(it.productId); }); });
+  (DB.sales||[]).forEach(s=>{ if(sellSet.has(s.id))return; (s.items||[]).forEach(it=>{ if(pSet.has(it.productId)) refByReal.add(it.productId); }); });
+  (DB.adjustments||[]).forEach(a=>{ if(pSet.has(a.productId)) refByReal.add(a.productId); });
+  const prodRemove=(DB.products||[]).filter(p=>pSet.has(p.id) && !refByReal.has(p.id));
+  const prodKeep  =(DB.products||[]).filter(p=>pSet.has(p.id) &&  refByReal.has(p.id));
+  return {purch,sales,prodRemove,prodKeep};
+}
+function removeDemoData(){
+  if(!isOwner())return;
+  if(!requireOnline())return;
+  const s=demoScan();
+  if(!s.purch.length && !s.sales.length && !s.prodRemove.length && !s.prodKeep.length){
+    toast('No demo data found — nothing to remove'); return; }
+  const li=(arr,f)=>arr.length?('<ul style="margin:4px 0 10px;padding-left:18px">'+arr.map(f).join('')+'</ul>'):'<div style="color:var(--muted2);margin:2px 0 10px">— none —</div>';
+  const keepNote=s.prodKeep.length?`<div class="note" style="margin:10px 0 0;background:var(--redsoft);border-color:#7a2b2b;color:#ffcf9b">⚠ Kept (real transactions are attached to these demo products — rename or handle them yourself):${li(s.prodKeep,p=>`<li>${esc(p.name)}</li>`)}</div>`:'';
+  openModal('🧹 Remove demo data',`
+    <p style="margin:0 0 10px;color:var(--muted);font-size:13.5px;line-height:1.6">This removes the built-in sample dataset only. Your real products, purchases and sales are left untouched. The change syncs to the cloud so the demo won't come back.</p>
+    <div style="font-size:13px">
+      <b>Demo products to delete (${s.prodRemove.length})</b>${li(s.prodRemove,p=>`<li>${esc(p.name)}</li>`)}
+      <b>Demo purchases to delete (${s.purch.length})</b>${li(s.purch,p=>`<li>${esc(p.ref||p.id)} · ${esc(p.date||'')}</li>`)}
+      <b>Demo sales to delete (${s.sales.length})</b>${li(s.sales,x=>`<li>${esc(x.invoiceNo||x.id)} · ${esc(x.date||'')}</li>`)}
+      ${keepNote}
+    </div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-red" onclick="removeDemoDataConfirm()">Delete demo data</button>`);
+}
+function removeDemoDataConfirm(){
+  if(!isOwner())return;
+  if(!requireOnline())return;
+  const s=demoScan();
+  const buyIds=new Set(s.purch.map(x=>x.id)), sellIds=new Set(s.sales.map(x=>x.id)), prodIds=new Set(s.prodRemove.map(x=>x.id));
+  DB.purchases=(DB.purchases||[]).filter(p=>!buyIds.has(p.id));
+  DB.sales    =(DB.sales||[]).filter(x=>!sellIds.has(x.id));
+  DB.products =(DB.products||[]).filter(p=>!prodIds.has(p.id));
+  const n=buyIds.size+sellIds.size+prodIds.size;
+  if(!save()) return;                 // offline guard already toasts
+  closeModal(); toast(`Removed ${n} demo record${n===1?'':'s'}`); go('settings');
+}
+
 /* Reset All Data — password-gated (same password as the developer clear). */
 function resetAll(){
   if(!isOwner())return;
