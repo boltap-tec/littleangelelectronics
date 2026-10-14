@@ -1123,7 +1123,7 @@ function mergeDB(base, local, remote, preferLocal){
   const out=_clone(local);
   const deleted=_mergeDeleted(local.deleted, remote.deleted);
   const isDead=id=> !!(deleted[id] && deleted[id].dead);
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders','holdings'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders','holdings','returns','adjustments'].forEach(k=>{
     out[k]=_mergeColl(base[k]||[], local[k]||[], remote[k]||[], preferLocal)
              .filter(x=> !(x && x.id!=null && isDead(x.id)));   // tombstoned records stay deleted everywhere
   });
@@ -1143,7 +1143,7 @@ function mergeDB(base, local, remote, preferLocal){
    realtime ping-pong that re-renders both screens constantly. Compare canonically
    (collections sorted by id, object keys sorted) so we only push back on a REAL
    content difference, never a reorder. */
-const _CANON_COLLS=['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders','holdings'];
+const _CANON_COLLS=['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders','holdings','returns','adjustments'];
 function _canonDB(db){
   if(!db || typeof db!=='object') return JSON.stringify(db);
   const sortKeys=v=>{
@@ -1152,12 +1152,19 @@ function _canonDB(db){
     return v;
   };
   const norm={};
-  Object.keys(db).forEach(k=>{
+  /* Union the db's own keys with the known collections, and sort each collection
+     by id, so (a) an ABSENT collection and an EMPTY one compare equal — mergeDB
+     always emits all 12, a hand-seeded/older copy may not — and (b) a pure reorder
+     is invisible. Empty collections drop out below (JSON.stringify omits []→"[]"
+     only if present; we keep them identical on both sides via this union). */
+  const keys=new Set([...Object.keys(db), ..._CANON_COLLS]);
+  keys.forEach(k=>{
     let v=db[k];
-    if(_CANON_COLLS.includes(k) && Array.isArray(v)){
+    if(_CANON_COLLS.includes(k)){
+      v=Array.isArray(v)?v:[];
       v=v.slice().sort((a,b)=>{ const ai=String((a&&a.id)!=null?a.id:''), bi=String((b&&b.id)!=null?b.id:''); return ai<bi?-1:ai>bi?1:0; });
     }
-    norm[k]=v;
+    if(v!==undefined) norm[k]=v;
   });
   return JSON.stringify(sortKeys(norm));
 }
@@ -1340,7 +1347,7 @@ function _maintainTombstones(){
   if(!DB.deleted) DB.deleted={};
   const b=baseline; if(!b) return;               // nothing synced yet → nothing could have been deleted
   const now=Date.now();
-  ['users','products','purchases','sales','cards','giftcards','cash','approvals','online','lenders','holdings'].forEach(k=>{
+  ['users','products','purchases','sales','cards','giftcards','cash','approvals','online','lenders','holdings','returns','adjustments'].forEach(k=>{
     const cur=_byId(DB[k]||[]), was=_byId(b[k]||[]);
     Object.keys(was).forEach(id=>{ if(!cur[id]){ const d=DB.deleted[id]; if(!d||!d.dead) DB.deleted[id]={t:now,dead:true}; } });
     Object.keys(cur).forEach(id=>{ const d=DB.deleted[id]; if(d&&d.dead) DB.deleted[id]={t:now,dead:false}; });
