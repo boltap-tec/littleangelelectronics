@@ -6107,10 +6107,12 @@ function _openGiftBuyModal({preId, edit, labelOnly}){
     : 'Change the amount loaded or how it was paid for. Saving re-applies the payment to the chosen cards / cash / gift cards.';
   openModal(edit?'Edit Gift-Card Recharge':'Buy / Recharge Gift Card',`
     <p style="margin:0 0 14px;color:var(--muted);font-size:13px">${edit?editHelp:'Load balance onto a gift card. The <b>amount</b> is the balance you receive; pay for it below — a cash discount means you pay less than the balance (that\'s your margin).'}</p>
-    <div class="grid2">
-      <div class="field"><label>Gift Card *</label><select id="g_product" class="srch">${prods.map(g=>`<option value="${g.id}" ${g.id===preId?'selected':''}>${esc(g.name)} · bal ${money(giftBalance(g))}</option>`).join('')}</select>
-        <button type="button" class="mini-btn" style="margin-top:6px" onclick="newGiftFromBuy()">＋ New gift card</button></div>
-      <div class="field"><label>Date</label><input id="g_date" type="date" value="${edit?esc(edit.date||todayStr()):todayStr()}"></div>
+    <div class="field"><label>Gift Card *</label><select id="g_product" class="srch">${prods.map(g=>`<option value="${g.id}" ${g.id===preId?'selected':''}>${esc(g.name)} · bal ${money(giftBalance(g))}</option>`).join('')}</select>
+      <button type="button" class="mini-btn" style="margin-top:6px" onclick="newGiftFromBuy()">＋ New gift card</button></div>
+    <div class="grid3">
+      <div class="field"><label>Date *</label><input id="g_date" type="date" value="${edit?esc(edit.date||todayStr()):lastEntryDate(DB.purchases)}"></div>
+      <div class="field"><label>Where purchased</label><input id="g_sup" list="dl_gsup" value="${edit?esc(edit.supplier||''):''}" placeholder="e.g. Carrefour Deira">${dataList('dl_gsup',allSuppliers())}</div>
+      <div class="field"><label>Bill No.</label><input id="g_orderno" value="${edit?esc(edit.orderNo||''):''}" placeholder="supplier bill / order no — auto if blank"></div>
     </div>
     <div class="field"><label>Amount / balance received (${S().currency}) *</label><input id="g_amt" type="number" min="0" step="any" placeholder="face value loaded onto the card" value="${edit?(+edit.amount||''):''}" oninput="giftBuyCalc()"></div>
     <div class="li-hint" id="g_availhint" style="margin-top:5px"></div>
@@ -6211,11 +6213,14 @@ function giftBuyCalc(){
     <div class="totrow grand"><span>${Math.abs(rem)<0.01?'Fully paid':(rem>0?'Untracked (already owned / gifted)':'Overpaid')}</span>
       <span style="color:${Math.abs(rem)<0.01?'var(--green)':(rem>0?'var(--amber)':'var(--red)')}">${money(Math.abs(rem))}</span></div>`;
 }
+/* display note for a recharge row: Recharge · <where purchased> · Bill <no> · <free note> */
+function giftRechargeNote(sup,ord,note){ return ['Recharge',(sup||'').trim(),(ord||'').trim()?'Bill '+(ord||'').trim():'',(note||'').trim()].filter(Boolean).join(' · '); }
 function saveGiftPurchase(){
   if(!requireOnline())return;
   const gid=$('#g_product')?.value; const g=gid?giftById(gid):null; if(!g)return toast('Pick a gift card',1);
   const amt=+$('#g_amt').value; if(!(amt>0))return toast('Enter the amount / balance received',1);
   const date=$('#g_date').value||todayStr(), note=$('#g_note').value.trim();
+  const supplier=($('#g_sup')?.value||'').trim(), orderNo=($('#g_orderno')?.value||'').trim();
   const splits=giftBuySplits.filter(s=>+s.amount>0);
   // LABEL-ONLY edit of a legacy recharge: just record how it was paid (for the Payment-mode column). No money moves — the original payment already happened.
   const editLbl=_giftBuyEdit;
@@ -6223,7 +6228,7 @@ function saveGiftPurchase(){
     if(!splits.length)return toast('Add at least one payment method to record the mode',1);
     const t=(g.txns||[]).find(x=>x.id===editLbl.txnId); if(!t)return toast('Recharge not found',1);
     const paysClean=splits.map(s=>({method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',ref:s.ref||'',deductPct:s.deductPct||'',lenderId:s.lenderId||'',lenderCardId:s.lenderCardId||'',commission:s.commission||'',amount:+s.amount||0}));
-    t.amount=amt; t.date=date; t.note='Recharge'+(note?' · '+note:''); t.buyNote=note; t.pays=paysClean; t.labelOnlyPay=true;
+    t.amount=amt; t.date=date; t.note=giftRechargeNote(supplier,orderNo,note); t.buyNote=note; t.supplier=supplier; t.orderNo=orderNo; t.pays=paysClean; t.labelOnlyPay=true;
     logAct('edit','gift card',g.name,`recharge payment mode recorded (${money(amt)})`);
     save(); closeModal(); if($('.nav-item.active')?.dataset.view==='giftcards')renderGiftCards(); renderBell();
     return toast('Payment mode updated');
@@ -6253,7 +6258,7 @@ function saveGiftPurchase(){
   const loadId=uid();
   // remember HOW it was paid (for the payment-mode column + future edits)
   const paysClean=splits.map(s=>({method:s.method,cardId:s.cardId||'',giftId:s.giftId||'',ref:s.ref||'',deductPct:s.deductPct||'',lenderId:s.lenderId||'',lenderCardId:s.lenderCardId||'',commission:s.commission||'',amount:+s.amount||0}));
-  g.txns.push({id:loadId,date,type:'load',amount:amt,note:'Recharge'+(note?' · '+note:''),byId:session.id,buyNote:note,pays:paysClean});
+  g.txns.push({id:loadId,date,type:'load',amount:amt,note:giftRechargeNote(supplier,orderNo,note),byId:session.id,buyNote:note,supplier,orderNo,pays:paysClean});
   const payLink='giftload:'+loadId, cashLink=payLink, lbl=g.name;   // unique per recharge → legs can be re-synced on edit/delete
   const charged=[];
   splits.forEach(s=>{ const a=+s.amount||0; if(a<=0)return; const info=payMethodInfo(s.method);
