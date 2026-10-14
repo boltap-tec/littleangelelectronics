@@ -7925,7 +7925,8 @@ const WA_CATS=[
   {k:'sales',   ic:'🧾', lab:"Today's Sales",              fn:()=>waSalesMsg(),      dated:true},
   {k:'deposit', ic:'💳', lab:"Today's Card Deposit",       fn:()=>waCardDepositMsg(),dated:true},
   {k:'giftbuy', ic:'🎁', lab:"Today's Gift Card Purchase", fn:()=>waGiftBuyMsg(),    dated:true},
-  {k:'giftuse', ic:'🎟️', lab:"Today's Gift Card Usage",    fn:()=>waGiftUseMsg(),    dated:true}
+  {k:'giftuse', ic:'🎟️', lab:"Today's Gift Card Usage",    fn:()=>waGiftUseMsg(),    dated:true},
+  {k:'cardsdue',ic:'⏰', lab:'Cards Due Today',            fn:()=>waCardsDueMsg(),   dated:false}
 ];
 function waDateVal(){ return $('#waDate')?.value || todayStr(); }
 /* one product block: "NAME 🇦🇪\ncolour - qty"  (or "NAME - qty" when no colour) */
@@ -7985,6 +7986,23 @@ function waGiftUseMsg(){
   if(!rows.length)return head+'\n\n(No gift card usage today)';
   const tot=rows.reduce((a,r)=>a+r.amt,0);
   return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal used: ${cur} ${num(tot)}`;
+}
+/* credit cards whose BILLED amount is due today or already overdue (always relative to the
+   real today, not the date picker — a due date is about today's reality). Soonest/most-overdue
+   first, with the amount due and how many days overdue. */
+function waCardsDueMsg(){
+  const cur=S().currency, today=todayStr();
+  const rows=(DB.cards||[]).filter(c=>(c.status||'active')!=='inactive')
+    .map(c=>({c,i:cardDueInfo(c)}))
+    .filter(x=>x.i.billedDue>0.005 && x.i.payDleft<=0)
+    .sort((a,b)=>a.i.payDleft-b.i.payDleft);
+  const head=`Credit Cards Due — ${fmtDate(today)}`;
+  if(!rows.length)return head+'\n\n(No cards due today)';
+  let tot=0;
+  const lines=rows.map(x=>{ const amt=x.i.billedDue; tot+=amt; const dl=x.i.payDleft, od=Math.abs(dl);
+    const when=dl===0?'due today':`${od} day${od===1?'':'s'} overdue`;
+    return `${x.c.name} - ${cur} ${num(amt)} (${when})`; });
+  return head+'\n\n'+lines.join('\n')+`\n\nTotal due: ${cur} ${num(tot)}`;
 }
 function waMsgEl(k){ return $('#waMsg_'+k); }
 async function waCopy(k){
