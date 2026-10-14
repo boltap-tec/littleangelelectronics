@@ -1134,6 +1134,35 @@ function mergeDB(base, local, remote, preferLocal){
   return out;
 }
 
+/* Order-independent comparison of two DB snapshots. mergeDB rebuilds every record
+   collection in the LOCAL tab's key order, so a freshly merged copy is usually
+   byte-different from the cloud copy even when the content is identical (only the
+   array order moved). A plain JSON.stringify compare then wrongly concludes "we
+   merged in local-only changes" and pushes back — and with two tabs open on the
+   same device each tab keeps re-ordering to its own order and pushing, an endless
+   realtime ping-pong that re-renders both screens constantly. Compare canonically
+   (collections sorted by id, object keys sorted) so we only push back on a REAL
+   content difference, never a reorder. */
+const _CANON_COLLS=['users','products','purchases','sales','cards','giftcards','cash','approvals','activity','online','lenders','holdings'];
+function _canonDB(db){
+  if(!db || typeof db!=='object') return JSON.stringify(db);
+  const sortKeys=v=>{
+    if(Array.isArray(v)) return v.map(sortKeys);
+    if(v && typeof v==='object'){ const o={}; Object.keys(v).sort().forEach(k=>o[k]=sortKeys(v[k])); return o; }
+    return v;
+  };
+  const norm={};
+  Object.keys(db).forEach(k=>{
+    let v=db[k];
+    if(_CANON_COLLS.includes(k) && Array.isArray(v)){
+      v=v.slice().sort((a,b)=>{ const ai=String((a&&a.id)!=null?a.id:''), bi=String((b&&b.id)!=null?b.id:''); return ai<bi?-1:ai>bi?1:0; });
+    }
+    norm[k]=v;
+  });
+  return JSON.stringify(sortKeys(norm));
+}
+function _sameDB(a,b){ return _canonDB(a)===_canonDB(b); }
+
 let _pushT=null;
 function cloudPush(){                  // debounced, concurrency-safe save of the whole DB
   if(!cloudInit()) return;
@@ -1205,7 +1234,7 @@ async function cloudPull(){            // fetch cloud copy on boot — the CLOUD
       cloudUpdatedAt=data.updated_at;
       _setBaseline();
       localStorage.setItem(KEY, JSON.stringify(DB));
-      if(JSON.stringify(DB)!==JSON.stringify(cloud)) cloudPush();   // push merged result (local additions + migrate tweaks)
+      if(!_sameDB(DB,cloud)) cloudPush();   // push merged result (local additions + migrate tweaks) — order-independent so a reorder never triggers an echo
       return true;
     }
     cloudPush();                        // cloud empty / not seeded → seed it from this device once
@@ -1236,8 +1265,8 @@ async function cloudRefresh(){         // a remote device changed the cloud → 
   cloudUpdatedAt=data.updated_at;
   _setBaseline();
   try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
-  if(JSON.stringify(DB)!==JSON.stringify(data.data)) cloudPush();   // push back anything we merged in
-  reSync();
+  if(!_sameDB(DB,data.data)) cloudPush();   // push back anything we merged in — order-independent so a mere reorder never echoes (stops the two-tab refresh loop)
+  if(!_sameDB(local,DB)) reSync();          // only re-render the screen when the content actually changed — a content-neutral remote write won't disturb this tab
 }
 /* re-point the session at the merged user record and refresh the current screen */
 function reSync(){
