@@ -7976,15 +7976,16 @@ function waGiftUseMsg(){
   const tot=rows.reduce((a,r)=>a+r.amt,0);
   return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal used: ${cur} ${num(tot)}`;
 }
-/* a payment-reminder roster: every active card whose payment date falls within the next
+/* a payment-reminder roster: every active card whose payment DATE falls within the next
    WA_DUE_DAYS days (today included), grouped under each date. Owner + card/bank name only —
-   no amounts. Always relative to the real today. */
+   no amounts, and included whether or not anything is currently due on the card. Date-based,
+   always relative to the real today. */
 const WA_DUE_DAYS=3;   // today + the next 2 days
 function waCardsDueMsg(){
   const base=new Date(); base.setHours(0,0,0,0);
   const groups={};   // dleft -> Set of "Owner - Card"
   (DB.cards||[]).filter(c=>(c.status||'active')!=='inactive').forEach(c=>{
-    const dl=cardDueInfo(c).payDleft; if(dl<0||dl>WA_DUE_DAYS-1)return;
+    const dl=daysUntil(cardDueDate(c)); if(dl<0||dl>WA_DUE_DAYS-1)return;
     const owner=(c.owner||'').trim(), name=(c.name||'').trim();
     (groups[dl]||(groups[dl]=new Set())).add(owner?`${owner} - ${name}`:name);
   });
