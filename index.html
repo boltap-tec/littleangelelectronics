@@ -4742,6 +4742,28 @@ function stmtForDue(c, due){
 function cardStatementDate(c){ return stmtForDue(c, cardDueDate(c)); }
 /* whole days from a card's statement date to its due date (the grace window). */
 function cardStmtGap(c, due, stmt){ due=due||cardDueDate(c); stmt=stmt||stmtForDue(c,due); return Math.round((due-stmt)/86400000); }
+/* parse a 'YYYY-MM-DD' stored date into a LOCAL midnight Date (matches monthDay/isoDate). */
+function dateFromStr(s){ const p=(s||'').split('-'); return p.length===3 ? new Date(+p[0], +p[1]-1, +p[2]) : new Date(s); }
+/* the statement CLOSE date (ms) that bills a transaction dated dateStr:
+   the earliest statement date on/after that date. A charge on the statement date
+   itself belongs to that statement; charges after it roll to the next one. */
+function cardStmtCloseForDate(c, dateStr){
+  const d=dateFromStr(dateStr); if(isNaN(d)) return null;
+  const day=(c&&+c.paymentDay)||1, cands=[];
+  for(let k=-2;k<=3;k++){ cands.push(stmtForDue(c, monthDay(d.getFullYear(), d.getMonth()+k, day)).getTime()); }
+  const uniq=[...new Set(cands)].sort((a,b)=>a-b);
+  const close=uniq.find(ms=>ms>=d.getTime());
+  return close!=null ? close : uniq[uniq.length-1];
+}
+/* {start,close} ms bounds of the statement period that closes on closeMs
+   (start = day after the previous statement close; null if unknown). */
+function cardStmtRange(c, closeMs){
+  const close=new Date(closeMs), day=(c&&+c.paymentDay)||1, cands=[];
+  for(let k=-2;k<=1;k++){ cands.push(stmtForDue(c, monthDay(close.getFullYear(), close.getMonth()+k, day)).getTime()); }
+  const uniq=[...new Set(cands)].sort((a,b)=>a-b);
+  const idx=uniq.indexOf(closeMs), prev=idx>0?uniq[idx-1]:null;
+  return { start: prev!=null ? prev+86400000 : null, close: closeMs };
+}
 /* the two statement cutoffs that frame TODAY's billing position:
    • S0 = the most recent statement already generated (latest statement date ≤ today);
    • S1 = the statement one cycle before S0.
@@ -5533,14 +5555,50 @@ function cardDetail(id){
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, info=cardDueInfo(c);
   const _cbcfg=cardCashbackCfg(c), discUsed=cardCashbackUsed(c,todayStr()), cap=_cbcfg.cap;
   const txns=[...(c.txns||[])].sort(dDesc);
-  const rows=txns.length? txns.map(t=>`<tr>
+  const txnRow=t=>`<tr>
       <td>${fmtDate(t.date)}</td>
       <td><span class="tag ${t.type}">${txnLabel(t.type)}</span></td>
       ${txnAmtCell(t)}
       ${txnCbCell(t)}
       <td>${t.srcPurchaseId?`<span class="rowlink" onclick="purchaseDetail('${t.srcPurchaseId}')" title="Open this purchase">${esc(t.note||'Purchase')}</span>`:esc(t.note||'')}</td>
-      <td class="num" style="white-space:nowrap">${t.srcReturnId?`<span style="color:var(--muted2);font-size:11px" title="From a purchase return — undo it in Purchases">from return</span>`:`${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button>`}</td></tr>`).join('')
-    : `<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
+      <td class="num" style="white-space:nowrap">${t.srcReturnId?`<span style="color:var(--muted2);font-size:11px" title="From a purchase return — undo it in Purchases">from return</span>`:`${!t.srcPurchaseId?`<button class="mini-btn" title="Edit entry" onclick="cardTxnModal('${c.id}','${t.type}','${t.id}')">✎</button> `:''}<button class="mini-btn red" title="Delete entry" onclick="delCardTxn('${c.id}','${t.id}')">✕</button>`}</td></tr>`;
+  /* group the history into statement periods, newest first, with a consolidated band
+     above each period: total charges vs payments (adjustments excluded), plus cashback. */
+  let rows;
+  if(!txns.length){
+    rows=`<tr><td colspan="6" style="text-align:center;color:var(--muted2);padding:20px">No transactions yet</td></tr>`;
+  }else{
+    const groups=[]; let g=null;
+    txns.forEach(t=>{ const key=cardStmtCloseForDate(c,t.date);
+      if(!g || g.key!==key){ g={key, items:[]}; groups.push(g); } g.items.push(t); });
+    rows=groups.map(grp=>{
+      let charges=0, payments=0, cash=0;
+      grp.items.forEach(t=>{
+        if(t.type==='discount'){ cash+=(+t.amount||0); return; }   // shown separately
+        if(t.type==='adjust') return;                               // excluded from totals
+        const amt=Math.abs(+t.amount||0);
+        if(t.type==='purchase'||t.type==='spend'||t.type==='oldbal') charges+=amt; else payments+=amt;
+      });
+      const net=payments-charges;
+      const rng=grp.key!=null?cardStmtRange(c,grp.key):{start:null,close:null};
+      const period=grp.key==null?'Undated'
+        :(rng.start!=null?`${fmtDate(isoDate(new Date(rng.start)))} – ${fmtDate(isoDate(new Date(grp.key)))}`
+                         :`up to ${fmtDate(isoDate(new Date(grp.key)))}`);
+      const band=`<tr><td colspan="6" style="padding:0">
+        <div style="display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;background:var(--bg);border-top:2px solid var(--line);padding:9px 10px">
+          <span style="font-weight:800;font-size:12.5px;white-space:nowrap">🧾 Statement</span>
+          <span style="color:var(--muted);font-size:12px;white-space:nowrap">${period}</span>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;justify-content:flex-end">
+            <span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Charges <b style="color:var(--red)">${money(charges)}</b></span>
+            <span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Payments <b style="color:var(--green)">${money(payments)}</b></span>
+            ${cash>0.005?`<span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Cashback <b style="color:var(--gold2)">⟳ ${money(cash)}</b></span>`:''}
+            <span style="font-size:12.5px;color:var(--muted);white-space:nowrap">Net <b style="color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':'−'}${money(Math.abs(net))}</b></span>
+            <span style="font-size:11px;color:var(--muted2);white-space:nowrap">${grp.items.length} txn${grp.items.length===1?'':'s'}</span>
+          </span>
+        </div></td></tr>`;
+      return band+grp.items.map(txnRow).join('');
+    }).join('');
+  }
   openModal(esc(c.name),`
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
     <div class="grid3" style="margin-bottom:16px">
