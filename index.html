@@ -5895,7 +5895,7 @@ function giftIsProduct(g){ return !!(g && g.kind==='product'); }
 function giftProducts(){ return (DB.giftcards||[]).filter(giftIsProduct); }
 function activeGiftProducts(){ return giftProducts().filter(giftActive); }
 /* payment pickers everywhere use gift-card PRODUCTS only (legacy numbered cards are archived) */
-function activeGiftCards(){ return activeGiftProducts(); }
+function activeGiftCards(){ return activeGiftProducts().slice().sort((a,b)=>giftBalance(b)-giftBalance(a)); }
 function giftLabel(g){ if(!g)return ''; if(giftIsProduct(g))return g.name||'Gift card';
   const l4=(g.number||'').replace(/\D/g,'').slice(-4); const p=[g.name]; if(g.store)p.push(g.store); if(l4)p.push('••'+l4); return p.join(' · '); }
 function allGiftStores(){ return uniqSorted([...GIFT_STORES,...(DB.giftcards||[]).map(g=>g.store)]); }
@@ -5958,6 +5958,16 @@ function giftPayModeCell(t){ if(!t||t.type!=='load')return '<td style="color:var
   if(ps.length===1)return `<td>${payMethodTag(ps[0].method)}</td>`;
   const title=ps.map(p=>payMethodInfo(p.method).label+' '+money(+p.amount||0)).join(' · ');
   return `<td><span class="tag split" title="${esc(title)}">SPLIT</span><div style="font-size:10.5px;color:var(--muted2)">${esc(ps.map(p=>payMethodInfo(p.method).label).join(' + '))}</div></td>`; }
+/* readable label for ONE recharge payment leg (card ••last4 / gift card / borrowed · lender / cash) */
+function giftPayLegLabel(p){ if(!p)return 'Unspecified'; const info=payMethodInfo(p.method);
+  if(p.method==='card'&&p.cardId){ const c=cardById(p.cardId); return c?(c.name+(bsLast4(c)?' ••'+bsLast4(c):'')):'(removed card)'; }
+  if(info.savedGift&&p.giftId){ const gp=giftById(p.giftId); return gp?gp.name:'(removed gift card)'; }
+  if(p.method==='cardborrow'&&p.lenderId){ const l=lenderById(p.lenderId); const lc=l?lenderCardById(l,p.lenderCardId):null; return 'Borrowed'+(l?' · '+l.name:'')+(lc?' · '+lenderCardLabel(lc):''); }
+  if(p.method==='cash')return 'Cash';
+  return info.label; }
+/* what a spend was for — the trailing descriptor of the note (supplier / purpose) */
+function giftSpendPurpose(note){ const s=(note||'').trim(); if(!s)return 'Unspecified';
+  const parts=s.split('·').map(x=>x.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:'Unspecified'; }
 function giftHistoryHtml(q){
   const all=giftAllTxns().filter(t=>!q||[(t.giftName||''),(t.note||'')].some(v=>v.toLowerCase().includes(q)));
   if(!all.length)return `<div class="panel" style="margin-bottom:14px;padding:12px 14px"><div class="cat-head" style="margin:0 0 6px">📜 Overall gift-card history</div><div class="li-hint">No transactions yet.</div></div>`;
@@ -6461,27 +6471,64 @@ function giftStatementModal(id){
 function giftStatementData(g,from,to){
   const rows=[...(g.txns||[])].sort((x,y)=> x.date<y.date?-1:(x.date>y.date?1:0)); // oldest first (stable)
   let run=+g.openingBalance||0, opening=run, loaded=0, spent=0, adj=0;
-  const out=[];
+  const out=[], bySource={}, byPurpose={};
+  const bump=(map,key,amt)=>{ const e=map[key]||(map[key]={label:key,amount:0,count:0}); e.amount+=amt; e.count++; };
   rows.forEach(t=>{ const a=+t.amount||0, delta=(t.type==='spend')?-a:a;
     if(from && t.date<from){ run+=delta; opening=run; return; }   // fold pre-period into opening balance
     if(to && t.date>to) return;                                   // ignore anything after the period
     run+=delta;
-    if(t.type==='load')loaded+=a; else if(t.type==='spend')spent+=a; else adj+=a;
-    out.push({date:t.date,type:t.type,note:t.note,delta,run});
+    if(t.type==='load'){ loaded+=a;
+      const ps=giftPayList(t);
+      if(ps.length) ps.forEach(p=>bump(bySource,giftPayLegLabel(p),+p.amount||0));
+      else bump(bySource,'Unspecified source',a);
+    } else if(t.type==='spend'){ spent+=a; bump(byPurpose,giftSpendPurpose(t.note),a); }
+    else adj+=a;
+    out.push({date:t.date,type:t.type,note:t.note,delta,run,pays:(t.type==='load'?giftPayList(t):null)});
   });
   out.reverse();  // newest first for display
-  return {opening,closing:opening+out.reduce((s,r)=>s+r.delta,0),loaded,spent,adj,rows:out};
+  const byAmt=(x,y)=>y.amount-x.amount;
+  return {opening,closing:opening+out.reduce((s,r)=>s+r.delta,0),loaded,spent,adj,rows:out,
+    bySource:Object.values(bySource).sort(byAmt), byPurpose:Object.values(byPurpose).sort(byAmt)};
 }
 function giftStatementHtml(g,from,to){
   const d=giftStatementData(g,from,to);
   const period=(from||to)?`${from?fmtDate(from):'Start'} — ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
-  const cell='padding:7px 9px;border:1px solid #e6e6e6', rt='text-align:right';
-  const body=d.rows.map(r=>`<tr>
-      <td style="${cell}">${fmtDate(r.date)}</td>
-      <td style="${cell}">${esc(txnLabel(r.type))}${r.note?' · '+esc(r.note):''}</td>
+  const cell='padding:7px 9px;border:1px solid #e6e6e6', c2='padding:6px 9px;border:1px solid #eee', rt='text-align:right';
+  const net=d.loaded-d.spent;
+  // KPI card
+  const stat=(label,val,color,foot)=>`<div style="flex:1;min-width:120px;border:1px solid #eee;border-top:3px solid ${color};border-radius:9px;padding:11px 13px;background:#fff">
+    <div style="font-size:10px;color:#9a9a9a;text-transform:uppercase;letter-spacing:.05em;font-weight:700">${label}</div>
+    <div style="font-size:19px;font-weight:800;color:${color};margin-top:4px">${val}</div>
+    ${foot?`<div style="font-size:10.5px;color:#aaa;margin-top:2px">${foot}</div>`:''}</div>`;
+  // transaction rows — loads also show HOW they were paid
+  const body=d.rows.map(r=>{
+    let desc=`<span style="font-weight:600">${esc(txnLabel(r.type))}</span>${r.note?' · '+esc(r.note):''}`;
+    if(r.type==='load'&&r.pays&&r.pays.length)
+      desc+=`<div style="font-size:10.5px;color:#8a8a8a;margin-top:2px">💳 via ${esc(r.pays.map(p=>giftPayLegLabel(p)+(r.pays.length>1?' '+money(+p.amount||0):'')).join(' + '))}</div>`;
+    return `<tr>
+      <td style="${cell};white-space:nowrap">${fmtDate(r.date)}</td>
+      <td style="${cell}">${desc}</td>
       <td style="${cell};${rt};color:#1e7a46">${r.delta>0?money(r.delta):''}</td>
       <td style="${cell};${rt};color:#c0392b">${r.delta<0?money(-r.delta):''}</td>
-      <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`).join('');
+      <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`; }).join('');
+  // consolidation: recharge by payment source
+  const srcRows=d.bySource.map(s=>{ const pct=d.loaded>0?(s.amount/d.loaded*100):0;
+    return `<tr><td style="${c2}">${esc(s.label)}</td>
+      <td style="${c2};${rt};color:#999">${s.count}</td>
+      <td style="${c2};${rt};font-weight:700;color:#1e7a46">${money(s.amount)}</td>
+      <td style="${c2};${rt};color:#999">${pct.toFixed(0)}%</td></tr>`; }).join('')
+    || `<tr><td style="${c2};text-align:center;color:#aaa" colspan="4">No recharges in this period</td></tr>`;
+  // consolidation: spend by purpose
+  const purRows=d.byPurpose.map(s=>{ const pct=d.spent>0?(s.amount/d.spent*100):0;
+    return `<tr><td style="${c2}">${esc(s.label)}</td>
+      <td style="${c2};${rt};color:#999">${s.count}</td>
+      <td style="${c2};${rt};font-weight:700;color:#c0392b">${money(s.amount)}</td>
+      <td style="${c2};${rt};color:#999">${pct.toFixed(0)}%</td></tr>`; }).join('')
+    || `<tr><td style="${c2};text-align:center;color:#aaa" colspan="4">No spends in this period</td></tr>`;
+  const bandL='font-size:12px;font-weight:800;color:#7a1e4b;background:#fce7f0;padding:7px 11px;border-radius:7px 7px 0 0';
+  const bandR='font-size:12px;font-weight:800;color:#8a3b1e;background:#fdeee4;padding:7px 11px;border-radius:7px 7px 0 0';
+  const conHead=`<thead><tr style="background:#fafafa;color:#888;font-size:10.5px">
+    <th style="${c2};text-align:left">Name</th><th style="${c2};${rt}">Entries</th><th style="${c2};${rt}">Amount</th><th style="${c2};${rt}">Share</th></tr></thead>`;
   return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #be185d;padding-bottom:12px;margin-bottom:14px">
       <div><div style="font-size:19px;font-weight:800">${esc(S().company||'')}</div>
@@ -6490,22 +6537,46 @@ function giftStatementHtml(g,from,to){
       <div style="text-align:right"><div style="font-size:22px;font-weight:800;color:#be185d">GIFT-CARD STATEMENT</div>
         <div style="font-size:12px;color:#555">Generated ${fmtDate(todayStr())}</div></div>
     </div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:14px">
       <div><div style="font-size:11px;color:#888">GIFT CARD</div><div style="font-size:17px;font-weight:800">${esc(g.name||'')}</div></div>
       <div style="text-align:right"><div style="font-size:11px;color:#888">PERIOD</div><div style="font-size:14px;font-weight:700">${period}</div></div>
     </div>
+    <div style="display:flex;gap:10px;margin-bottom:18px">
+      ${stat('Recharged',money(d.loaded),'#1e7a46',`${d.bySource.length} source${d.bySource.length===1?'':'s'}`)}
+      ${stat('Spent',money(d.spent),'#c0392b',`${d.byPurpose.length} categor${d.byPurpose.length===1?'y':'ies'}`)}
+      ${stat('Net flow',(net>=0?'+ ':'− ')+money(Math.abs(net)),net>=0?'#1e7a46':'#c0392b','recharge − spend')}
+      ${stat('Closing balance',money(d.closing),'#be185d','available')}
+    </div>
     <table style="width:100%;border-collapse:collapse;font-size:12.5px">
       <thead><tr style="background:#fce7f0;color:#7a1e4b">
-        <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description</th>
+        <th style="${cell};text-align:left">Date</th><th style="${cell};text-align:left">Description &amp; mode of payment</th>
         <th style="${cell};${rt}">Recharge +</th><th style="${cell};${rt}">Spend −</th><th style="${cell};${rt}">Balance</th></tr></thead>
       <tbody>${body||`<tr><td style="${cell};text-align:center;color:#888" colspan="5">No entries in this period</td></tr>`}
         <tr style="background:#faf7f0"><td style="${cell}" colspan="4"><b>Opening balance ${from?'(before '+fmtDate(from)+')':''}</b></td><td style="${cell};${rt}"><b>${money(d.opening)}</b></td></tr>
       </tbody>
     </table>
-    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+    <div style="font-size:13px;font-weight:800;color:#be185d;margin:22px 0 9px">Consolidation</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:300px">
+        <div style="${bandL}">💳 Recharge by payment source</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px">${conHead}
+          <tbody>${srcRows}
+            <tr style="background:#f4faf6;font-weight:800"><td style="${c2}">Total recharged</td><td style="${c2};${rt}">${d.bySource.reduce((a,s)=>a+s.count,0)}</td><td style="${c2};${rt};color:#1e7a46">${money(d.loaded)}</td><td style="${c2};${rt}">${d.loaded>0?'100%':'—'}</td></tr>
+          </tbody></table>
+      </div>
+      <div style="flex:1;min-width:300px">
+        <div style="${bandR}">🛍️ Spend by purpose</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px">${conHead}
+          <tbody>${purRows}
+            <tr style="background:#fdf3ef;font-weight:800"><td style="${c2}">Total spent</td><td style="${c2};${rt}">${d.byPurpose.reduce((a,s)=>a+s.count,0)}</td><td style="${c2};${rt};color:#c0392b">${money(d.spent)}</td><td style="${c2};${rt}">${d.spent>0?'100%':'—'}</td></tr>
+          </tbody></table>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:18px">
       <table style="border-collapse:collapse;font-size:13px;min-width:330px">
-        <tr><td style="padding:5px 10px;color:#555">Recharged (period)</td><td style="padding:5px 10px;text-align:right;color:#1e7a46">${money(d.loaded)}</td></tr>
-        <tr><td style="padding:5px 10px;color:#555">Spent (period)</td><td style="padding:5px 10px;text-align:right;color:#c0392b">${money(d.spent)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#555">Opening balance</td><td style="padding:5px 10px;text-align:right">${money(d.opening)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#555">Recharged (period)</td><td style="padding:5px 10px;text-align:right;color:#1e7a46">+ ${money(d.loaded)}</td></tr>
+        <tr><td style="padding:5px 10px;color:#555">Spent (period)</td><td style="padding:5px 10px;text-align:right;color:#c0392b">− ${money(d.spent)}</td></tr>
         ${d.adj?`<tr><td style="padding:5px 10px;color:#555">Adjustments (period)</td><td style="padding:5px 10px;text-align:right">${money(d.adj)}</td></tr>`:''}
         <tr style="border-top:2px solid #be185d"><td style="padding:8px 10px;font-weight:800;font-size:15px">Closing balance</td><td style="padding:8px 10px;text-align:right;font-weight:800;font-size:15px">${money(d.closing)}</td></tr>
       </table>
