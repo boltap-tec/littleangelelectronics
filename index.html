@@ -7913,7 +7913,7 @@ const WA_CATS=[
   {k:'deposit', ic:'💳', lab:"Today's Card Deposit",       fn:()=>waCardDepositMsg(),dated:true},
   {k:'giftbuy', ic:'🎁', lab:"Today's Gift Card Purchase", fn:()=>waGiftBuyMsg(),    dated:true},
   {k:'giftuse', ic:'🎟️', lab:"Today's Gift Card Usage",    fn:()=>waGiftUseMsg(),    dated:true},
-  {k:'cardsdue',ic:'⏰', lab:'Cards Due Today',            fn:()=>waCardsDueMsg(),   dated:false}
+  {k:'cardsdue',ic:'⏰', lab:'Card Payments Due (3 days)', fn:()=>waCardsDueMsg(),   dated:false}
 ];
 function waDateVal(){ return $('#waDate')?.value || todayStr(); }
 /* one product block: "NAME 🇦🇪\ncolour - qty"  (or "NAME - qty" when no colour) */
@@ -7976,22 +7976,25 @@ function waGiftUseMsg(){
   const tot=rows.reduce((a,r)=>a+r.amt,0);
   return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal used: ${cur} ${num(tot)}`;
 }
-/* credit cards whose BILLED amount is due today or already overdue (always relative to the
-   real today, not the date picker — a due date is about today's reality). Soonest/most-overdue
-   first, with the amount due and how many days overdue. */
+/* a payment-reminder roster: every active card whose payment date falls within the next
+   WA_DUE_DAYS days (today included), grouped under each date. Owner + card/bank name only —
+   no amounts. Always relative to the real today. */
+const WA_DUE_DAYS=3;   // today + the next 2 days
 function waCardsDueMsg(){
-  const cur=S().currency, today=todayStr();
-  const rows=(DB.cards||[]).filter(c=>(c.status||'active')!=='inactive')
-    .map(c=>({c,i:cardDueInfo(c)}))
-    .filter(x=>x.i.billedDue>0.005 && x.i.payDleft<=0)
-    .sort((a,b)=>a.i.payDleft-b.i.payDleft);
-  const head=`Credit Cards Due — ${fmtDate(today)}`;
-  if(!rows.length)return head+'\n\n(No cards due today)';
-  let tot=0;
-  const lines=rows.map(x=>{ const amt=x.i.billedDue; tot+=amt; const dl=x.i.payDleft, od=Math.abs(dl);
-    const when=dl===0?'due today':`${od} day${od===1?'':'s'} overdue`;
-    return `${x.c.name} - ${cur} ${num(amt)} (${when})`; });
-  return head+'\n\n'+lines.join('\n')+`\n\nTotal due: ${cur} ${num(tot)}`;
+  const base=new Date(); base.setHours(0,0,0,0);
+  const groups={};   // dleft -> Set of "Owner - Card"
+  (DB.cards||[]).filter(c=>(c.status||'active')!=='inactive').forEach(c=>{
+    const dl=cardDueInfo(c).payDleft; if(dl<0||dl>WA_DUE_DAYS-1)return;
+    const owner=(c.owner||'').trim(), name=(c.name||'').trim();
+    (groups[dl]||(groups[dl]=new Set())).add(owner?`${owner} - ${name}`:name);
+  });
+  const head=`Card Payments Due — next ${WA_DUE_DAYS} days`;
+  const keys=Object.keys(groups).map(Number).sort((a,b)=>a-b);
+  if(!keys.length)return head+`\n\n(No card payments due in the next ${WA_DUE_DAYS} days)`;
+  const dateLabel=dl=>{ const d=new Date(base); d.setDate(d.getDate()+dl); const ds=fmtDate(isoDate(d));
+    return dl===0?`Today (${ds})`:dl===1?`Tomorrow (${ds})`:ds; };
+  const blocks=keys.map(dl=>`📅 ${dateLabel(dl)}\n`+[...groups[dl]].sort((a,b)=>a.localeCompare(b)).join('\n'));
+  return head+'\n\n'+blocks.join('\n\n');
 }
 function waMsgEl(k){ return $('#waMsg_'+k); }
 async function waCopy(k){
