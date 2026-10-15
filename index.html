@@ -7992,7 +7992,8 @@ function waCardsDueMsg(){
   const head=`Card Payments Due — next ${WA_DUE_DAYS} days`;
   const keys=Object.keys(groups).map(Number).sort((a,b)=>a-b);
   if(!keys.length)return head+`\n\n(No card payments due in the next ${WA_DUE_DAYS} days)`;
-  const dateLabel=dl=>{ const d=new Date(base); d.setDate(d.getDate()+dl); const ds=fmtDate(isoDate(d));
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dateLabel=dl=>{ const d=new Date(base); d.setDate(d.getDate()+dl); const ds=`${d.getDate()} ${MON[d.getMonth()]}`;
     return dl===0?`Today (${ds})`:dl===1?`Tomorrow (${ds})`:ds; };
   const blocks=keys.map(dl=>`📅 ${dateLabel(dl)}\n`+[...groups[dl]].sort((a,b)=>a.localeCompare(b)).join('\n'));
   return head+'\n\n'+blocks.join('\n\n');
