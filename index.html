@@ -5407,11 +5407,14 @@ function renderCards(){
   }
   if(_cardView==='grid'){
     if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit card balances here.')}</div>`; renderBell(); return; }
-    const byHolder=_gridGroup==='holder';
-    const list=[...cards].sort((a,b)=> byHolder
-      ? (cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
-      : ((a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b))));
-    const rowsHtml=gridGroupedRows(list,9,c=>{
+    const sortMode=_gridGroup;   // 'holder' | 'name' | 'edited'
+    const byHolder=sortMode==='holder';
+    const list=(sortMode==='edited')
+      ? [...cards].sort((a,b)=> (cardLastBalEdit(a)||'').localeCompare(cardLastBalEdit(b)||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
+      : [...cards].sort((a,b)=> byHolder
+          ? (cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
+          : ((a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b))));
+    const gridRowFn=c=>{
       const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
       const lim=+c.creditLimit||0, bal=r2(lim-old-used), id=c.id;
       const led=cardLastBalEdit(c), ds=daysSince(led);
@@ -5419,7 +5422,7 @@ function renderCards(){
       const daysCell=(ds==null)?'<span style="color:var(--muted2)">—</span>':(ds<=0?'today':ds+' day'+(ds===1?'':'s'));
       return `<tr data-id="${id}">
         <td>${esc(cardOwnerLabel(c))}</td>
-        <td><b>${esc(c.name)}</b>${c.number?`<div style="margin-top:4px">${cardNumLink(c)}</div>`:''}${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}</td>
+        <td><b>${esc(c.name)}</b>${c.number?`<div style="margin-top:4px">${cardNumLink(c)}</div>`:''}${c.bank?`<div style="color:var(--muted2);font-size:11px">${esc(c.bank)}</div>`:''}<div style="margin-top:4px"><span class="rowlink" style="font-size:11px" onclick="editCard('${id}','grid')" title="Open this card's full details to edit">✎ Edit card details</span></div></td>
         <td class="num"><input class="gin" id="g_lim_${id}" type="number" step="any" value="${r2(lim)}" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_old_${id}" type="number" step="any" value="${old?r2(old):''}" placeholder="0" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_used_${id}" type="number" step="any" value="${r2(used)}" oninput="cardGridCalc('${id}','bal')"></td>
@@ -5428,13 +5431,15 @@ function renderCards(){
         <td style="white-space:nowrap">${dateCell}</td>
         <td class="num" style="white-space:nowrap;color:var(--muted)">${daysCell}</td>
       </tr>`;
-    },_gridGroup);
+    };
+    const rowsHtml=(sortMode==='edited') ? list.map(gridRowFn).join('') : gridGroupedRows(list,9,gridRowFn,_gridGroup);
     host.innerHTML=`<style>#cardGridTbl .gin{width:92px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}#cardGridTbl .gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}#cardGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">
-          <span style="color:var(--muted);font-size:12px">Group by</span>
-          <button class="mini-btn${byHolder?' gold':''}" onclick="setGridGroup('holder')">👤 Holder</button>
-          <button class="mini-btn${byHolder?'':' gold'}" onclick="setGridGroup('name')">💳 Card name</button>
+          <span style="color:var(--muted);font-size:12px">Order by</span>
+          <button class="mini-btn${sortMode==='holder'?' gold':''}" onclick="setGridGroup('holder')">👤 Holder</button>
+          <button class="mini-btn${sortMode==='name'?' gold':''}" onclick="setGridGroup('name')">💳 Card name</button>
+          <button class="mini-btn${sortMode==='edited'?' gold':''}" onclick="setGridGroup('edited')" title="Oldest / never-checked cards first">🕒 Last edited</button>
         </span>
         <button class="btn-sm btn-green" onclick="exportCardGridExcel()" title="Export these balances to Excel">⬇ Excel</button>
         <button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>
@@ -5525,9 +5530,11 @@ function gridVisibleCards(){
 function exportCardGridExcel(){
   if(!isOwner())return toast('Owner only',1);
   const byHolder=_gridGroup==='holder';
-  const list=gridVisibleCards().sort((a,b)=> byHolder
-    ? (cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
-    : ((a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b))));
+  const list=(_gridGroup==='edited')
+    ? gridVisibleCards().sort((a,b)=> (cardLastBalEdit(a)||'').localeCompare(cardLastBalEdit(b)||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
+    : gridVisibleCards().sort((a,b)=> byHolder
+        ? (cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
+        : ((a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b))));
   if(!list.length)return toast('No cards to export',1);
   const rows=[['Holder','Card name','Bank','Card number','Limit','Old statement due','Currently used','Balance limit','Last edited']];
   list.forEach(c=>{
@@ -5864,7 +5871,9 @@ function cardDueModeToggle(){
   const due=cardDueDate(tmp), dl=daysUntil(due), stmt=cardStatementDate(tmp), gap=cardStmtGap(tmp,due,stmt);
   pv.innerHTML = `Statement <b style="color:var(--text)">${fmtDate(isoDate(stmt))}</b> → due <b style="color:var(--text)">${fmtDate(isoDate(due))}</b> · ${gap} day${gap===1?'':'s'} to pay · due ${dl<=0?'today':'in '+dl+' day'+(dl===1?'':'s')}`;
 }
-function editCard(id){
+/* `back` controls where Cancel returns: 'grid' closes to the Grid-edit page underneath;
+   otherwise an existing card returns to its detail modal (the default). */
+function editCard(id,back){
   const c=id?cardById(id):{name:'',bank:'',number:'',owner:'',theme:'indigo',creditLimit:'',balanceLimitAlert:'',discountPercent:0,borrowerCashbackPercent:'',maxDiscountMonthly:'',paymentDay:1,dueMode:'fixed',statementDay:0,status:'active',allowNegative:true};
   const bpct=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?c.borrowerCashbackPercent:c.discountPercent;
   /* Total Cashback shown on the form = the card name's configured total (Settings), else this card's own our%+borrower%. */
@@ -5924,7 +5933,7 @@ function editCard(id){
     ${id?'':`<div class="field"><label>Available Balance right now (${S().currency})</label>
       <input id="c_avail" type="number" step="any" value="" placeholder="how much you can still spend — blank = full limit">
       <div style="color:var(--muted2);font-size:11.5px;margin-top:5px">Your current spendable balance (Limit − whatever you already owe). It updates automatically as you buy &amp; pay — leave blank if nothing is owed yet.</div></div>`}`,
-    `<button class="btn-sm btn-ghost" onclick="${id?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
+    `<button class="btn-sm btn-ghost" onclick="${(id&&back!=='grid')?`cardDetail('${id}')`:'closeModal()'}">Cancel</button>
      <button class="btn-sm" onclick="saveCard('${id||''}')">Save Card</button>`);
   pickCardTheme(_cardTheme); cardDueModeToggle();
   /* Borrower is ALWAYS derived = Total − Our (field locked). The Total Cashback field is editable.
