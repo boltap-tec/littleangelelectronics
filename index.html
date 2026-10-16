@@ -4967,9 +4967,7 @@ function renderDepRows(){
   });
   depTotals();
 }
-function depPick(i,id){ if(!_depRows[i])return; _depRows[i].cardId=id;
-  const c=id?cardById(id):null, amtEl=$('#dep_amt_'+i);
-  if(c && amtEl && !(+amtEl.value>0)){ const out=cardOutstanding(c); if(out>0.005){ const v=+out.toFixed(2); amtEl.value=v; _depRows[i].amt=v; } }  // prefill the amount due (editable)
+function depPick(i,id){ if(!_depRows[i])return; _depRows[i].cardId=id;   // amount stays blank — the user types it
   depHint(i); depTotals(); }
 function depAddRow(){ _depRows.push({cardId:'',amt:''}); renderDepRows(); flashNewRow('#dep_rows .li-row'); setTimeout(()=>$('#dep_'+(_depRows.length-1)+'_q')?.focus(),20); }
 function depDel(i){ _depRows.splice(i,1); if(!_depRows.length)_depRows.push({cardId:'',amt:''}); renderDepRows(); }
@@ -5232,47 +5230,6 @@ function saveAdjust(id){
   save(); toast('Balance edited ✓'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 
-/* ---- ONE-TIME owner tool: zero every ACTIVE card's available balance ----
-   Sets each active card's old statement due → 0 and currently-used → its full
-   credit limit, so available balance = 0. Existing purchase/payment HISTORY is
-   preserved — this only PUSHES one 'adjust' ledger entry per card (never edits or
-   deletes existing txns), the same mechanism as the per-card Edit Balance. The
-   adjust entry is reversible from each card's history. Inactive cards untouched. */
-function zeroActiveCardBalancesConfirm(){
-  if(!isOwner())return toast('Owner only',1);
-  const n=activeCards().length;
-  if(!n)return toast('No active cards',1);
-  openModal('Zero all active card balances?',
-    `<p style="margin:0;line-height:1.6">This adds a balance <b>adjustment</b> to all <b>${n}</b> active card${n===1?'':'s'} so each shows:</p>
-     <ul style="line-height:1.75;margin:10px 0 0;padding-left:20px">
-       <li>Old statement due → <b>0</b></li>
-       <li>Currently used → <b>its full credit limit</b></li>
-       <li>Available balance → <b>0</b></li>
-     </ul>
-     <p style="margin:12px 0 0;color:var(--muted);font-size:13px">Existing purchase &amp; payment history is <b>not</b> changed — this only adds one adjustment entry per card (reversible from each card's history). Inactive cards are left as-is.</p>`,
-    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
-     <button class="btn-sm btn-gold" onclick="zeroActiveCardBalances()">Yes, zero them</button>`);
-}
-function zeroActiveCardBalances(){
-  if(!requireOnline())return;
-  if(!isOwner())return toast('Owner only',1);
-  const act=activeCards(); if(!act.length){ closeModal(); return toast('No active cards',1); }
-  const date=todayStr(); let n=0;
-  act.forEach(c=>{
-    const lim=+c.creditLimit||0;
-    const delta=r2(r2(cardOutstanding(c))-lim);   // bring outstanding up to the full limit
-    if(Math.abs(delta)>0.005){
-      if(!c.txns)c.txns=[];
-      c.txns.push({id:uid(),date,type:'adjust',amount:delta,note:'Balance zeroed · old statement 0 + used = limit '+money(lim)});
-    }
-    c.statementDue=0; c.lastBalEdit=date;
-    logAct('edit','card balance',c.name,'zeroed · limit '+money(lim)+' · used '+money(lim)+' · available '+money(0));
-    n++;
-  });
-  save(); closeModal(); toast('Zeroed '+n+' active card'+(n===1?'':'s')+' ✓');
-  if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
-}
-
 /* ---- bell reminders ---- */
 function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length+negativeCards().length;
   if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden');
@@ -5389,7 +5346,6 @@ views.cards=function(){
       <button class="btn-sm btn-ghost" onclick="quickCardTxn('deposit')" title="Deposit cash into one or more cards">⇩ Deposit</button>
       <button class="btn-sm btn-gold" onclick="quickCardTxn('payment')" title="Pay one or more cards">💵 Pay</button>
       <button class="btn-sm btn-ghost" onclick="unifyCardColours()" title="Repaint every card so all cards of a bank share that bank's colour">🎨 Unify colours</button>
-      ${isOwner()?`<button class="btn-sm btn-ghost" style="border-color:#7a2b2b;color:var(--red)" onclick="zeroActiveCardBalancesConfirm()" title="One-time: set every active card's old statement due to 0 and currently-used to its full limit, so available balance = 0. History is kept.">⨯ Zero balances</button>`:''}
       <button class="btn-sm" onclick="editCard()">＋ Add Card</button>
     </div></div>
   <div class="toolbar">
@@ -5462,16 +5418,16 @@ function renderCards(){
         <td class="num"><input class="gin" id="g_old_${id}" type="number" step="any" value="${old?r2(old):''}" placeholder="0" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin" id="g_used_${id}" type="number" step="any" value="${r2(used)}" oninput="cardGridCalc('${id}','bal')"></td>
         <td class="num"><input class="gin bal" id="g_bal_${id}" type="number" step="any" value="${r2(bal)}" style="color:${bal<0?'var(--red)':'var(--green)'};font-weight:700" oninput="cardGridCalc('${id}','used')"></td>
+        <td class="num" style="white-space:nowrap"><button class="mini-btn gold" title="Apply this row's figures and stamp it as checked today — click even if nothing changed to reset Days ago" onclick="cardGridRowUpdate('${id}')">🔄 Check &amp; update</button></td>
         <td style="white-space:nowrap">${dateCell}</td>
         <td class="num" style="white-space:nowrap;color:var(--muted)">${daysCell}</td>
-        <td class="num" style="white-space:nowrap"><button class="mini-btn gold" title="Apply this row's figures and stamp it as checked today — click even if nothing changed to reset Days ago" onclick="cardGridRowUpdate('${id}')">🔄 Check &amp; update</button></td>
       </tr>`;
     });
-    host.innerHTML=`<style>.gin{width:112px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}#cardGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
+    host.innerHTML=`<style>#cardGridTbl .gin{width:92px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}#cardGridTbl .gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}#cardGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
-      <div class="table-wrap"><table id="cardGridTbl" style="min-width:1060px">
-        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th>Last edited</th><th class="num">Days ago</th><th class="num">Check</th></tr></thead>
+      <div class="table-wrap"><table id="cardGridTbl" style="min-width:980px">
+        <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th class="num">Check</th><th>Last edited</th><th class="num">Days ago</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
       <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>
       <div style="margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.65;border-top:1px solid var(--line);padding-top:12px">
@@ -5485,7 +5441,7 @@ function renderCards(){
   if(_cardView==='cashback'){
     if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit cashback here.')}</div>`; renderBell(); return; }
     const list=[...cards].sort((a,b)=> (a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)));
-    const rowsHtml=gridGroupedRows(list,7,c=>{
+    const rowsHtml=gridGroupedRows(list,8,c=>{
       const id=c.id;
       const our=+c.discountPercent||0;
       const fol=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):our;
@@ -5500,13 +5456,14 @@ function renderCards(){
         <td class="num"><input class="gin" id="cb_total_${id}" type="number" min="0" step="any" value="${r2(total)}" oninput="cbGridCalc('${id}','total')"></td>
         <td class="num"><input class="gin" id="cb_us_${id}" type="number" min="0" step="any" value="${r2(our)}" oninput="cbGridCalc('${id}','us')"></td>
         <td class="num"><input class="gin" id="cb_fol_${id}" type="number" min="0" step="any" value="${r2(fol)}" oninput="cbGridCalc('${id}','fol')"></td>
+        <td class="num" style="white-space:nowrap"><button class="mini-btn gold" title="Save just this card's cashback % and cap" onclick="cbGridRowUpdate('${id}')">💾 Save</button></td>
       </tr>`;
     });
-    host.innerHTML=`<style>.gin{width:104px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}.gin:focus{outline:none;border-color:var(--brand)}.gin.over{border-color:var(--red);color:var(--red)}#cbGridTbl td{vertical-align:middle}#cbGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
+    host.innerHTML=`<style>#cbGridTbl .gin{width:88px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}#cbGridTbl .gin:focus{outline:none;border-color:var(--brand)}#cbGridTbl .gin.over{border-color:var(--red);color:var(--red)}#cbGridTbl td{vertical-align:middle}#cbGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">🎁 Edit cashback <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
         <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
-      <div class="table-wrap"><table id="cbGridTbl" style="min-width:920px">
-        <thead><tr><th>Card name</th><th>Holder</th><th>Card number</th><th class="num">Max cashback / month (${S().currency})</th><th class="num">Total %</th><th class="num">Our %</th><th class="num">Follower %</th></tr></thead>
+      <div class="table-wrap"><table id="cbGridTbl" style="min-width:860px">
+        <thead><tr><th>Card name</th><th>Holder</th><th>Card number</th><th class="num">Max cashback / month (${S().currency})</th><th class="num">Total %</th><th class="num">Our %</th><th class="num">Follower %</th><th class="num">Save</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
       <div style="margin-top:12px;text-align:right"><button class="btn-sm btn-gold" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
       <div style="margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.65;border-top:1px solid var(--line);padding-top:12px">
@@ -5634,6 +5591,25 @@ function saveCashbackGrid(){
   });
   if(!changed)return toast('No changes to save',1);
   save(); toast('Cashback settings updated ✓'); renderCards(); renderBell();
+}
+/* Per-row "💾 Save": apply just this card's cashback %, cap and the name's shared Total%. */
+function cbGridRowUpdate(id){
+  if(!requireOnline())return;
+  const c=cardById(id); if(!c)return;
+  const total=Math.max(0,+($('#cb_total_'+id)?.value)||0);
+  const us=Math.max(0,+($('#cb_us_'+id)?.value)||0);
+  const fol=Math.max(0,+($('#cb_fol_'+id)?.value)||0);
+  const max=Math.max(0,+($('#cb_max_'+id)?.value)||0);
+  let changed=false;
+  if(Math.abs((+c.discountPercent||0)-us)>0.0001){ c.discountPercent=us; changed=true; }
+  const curFol=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):(+c.discountPercent||0);
+  if(Math.abs(curFol-fol)>0.0001){ c.borrowerCashbackPercent=fol; changed=true; }
+  if(Math.abs((+c.maxDiscountMonthly||0)-max)>0.0001){ c.maxDiscountMonthly=max; changed=true; }
+  const curTotal=cardNameTotalCashback(c.name);
+  if(curTotal==null || Math.abs(curTotal-total)>0.0001){ upsertCardNameTotal(c.name,total); changed=true; }
+  if(!changed)return toast('No changes in this row',1);
+  logAct('edit','card cashback',c.name,`total ${total}% · our ${us}% · follower ${fol}% · cap ${max?money(max):'none'}`);
+  save(); toast('Saved ✓'); renderCards(); renderBell();
 }
 /* per-owner combined statement / ledger */
 function ownerStatement(owner){
@@ -10449,14 +10425,7 @@ views.settings=function(){
     ${owner?`<div class="note" style="margin-top:14px">Loaded the sample dataset by mistake? <b>Remove demo data</b> deletes only the 10 built-in demo products/purchases/sales (fixed sample ids) and leaves every real record untouched.
       <div style="margin-top:8px"><button class="btn-sm btn-ghost" onclick="removeDemoData()">🧹 Remove demo data…</button></div></div>`:''}
     <div style="margin-top:12px;color:var(--muted2);font-size:11.5px">This device's app version: <b>${APP_VERSION}</b> · Cloud requires: <b>${cloudAppVersion()||APP_VERSION}</b>${versionBlocked()?` <span style="color:var(--red);font-weight:800">— OUT OF DATE, editing disabled. Install the latest APK.</span>`:` <span style="color:var(--green)">✓ up to date</span>`}<br>Keep every device on the same latest version — an out-of-date device is automatically blocked from editing so it can't re-introduce old data.</div>
-  </div>
-  <!-- ===== DEV-ONLY: remove this whole panel before going live ===== -->
-  ${owner?`<div class="panel" style="border-color:var(--red)">
-    <h3>🧨 Developer — Clear All Data</h3><p class="psub">Temporary development tool. Wipes every product, purchase, sale, card, cash entry, user &amp; setting and resets the app to a fresh empty state.</p>
-    <div class="note" style="margin-bottom:14px;background:var(--redsoft);border-color:#7a2b2b;color:#ffb3b3">⚠ For development only — password protected. Remove this option before going live.</div>
-    <button class="btn-sm btn-red" onclick="devClearAll()">🧨 Clear ALL Data…</button>
-  </div>`:''}
-  <!-- ===== END DEV-ONLY ===== -->`;
+  </div>`;
 };
 views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules(); renderPayModes(); renderCardNames(); renderCardBanks();} renderKbd(); const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
 /* ---- Keyboard & Data-entry flow settings ---- */
@@ -10766,7 +10735,13 @@ function changePw(){
   if(cur!==o)return toast('Current PIN is wrong',1);
   if(!n||n.length<4)return toast('New PIN must be at least 4 digits',1);
   if(n!==c)return toast('PINs do not match',1);
-  const u=DB.users.find(x=>x.id===session.id); u.pin=n; u.password=n; session.pin=n; session.password=n; save();
+  const norm=s=>(s||'').toString().replace(/[\s-]/g,'').toLowerCase();
+  /* Apply the new PIN to EVERY record that shares this login's phone, not just the
+     one session record. Duplicate copies of the same account (e.g. Admin seeded with
+     a fresh id on each device and then unioned in by cloud sync) would otherwise keep
+     the OLD PIN and still accept it at login. */
+  (DB.users||[]).forEach(x=>{ if(x.id===session.id || (session.phone&&norm(x.phone)===norm(session.phone))){ x.pin=n; x.password=n; } });
+  session.pin=n; session.password=n; save();
   $('#pw_old').value=$('#pw_new').value=$('#pw_conf').value=''; toast('PIN updated');
 }
 function renderUsers(){
@@ -10816,7 +10791,10 @@ function saveUser(id){
   if(DB.users.some(u=>norm(u.phone)===norm(phone)&&u.id!==id))return toast('That phone number is already used',1);
   const perms = role==='owner'?ALL_VIEWS.slice():$$('.u_perm:checked').map(c=>c.value);
   if(role!=='owner'&&!perms.length)return toast('Give the worker at least one screen',1);
-  if(id){const u=DB.users.find(x=>x.id===id);Object.assign(u,{name,phone,pin,password:pin,role,perms});logAct('edit','user',name,`role ${role}`);if(u.id===session.id){session=u;applyAccess();}}
+  if(id){const u=DB.users.find(x=>x.id===id);Object.assign(u,{name,phone,pin,password:pin,role,perms});
+    /* keep duplicate copies of this same-phone login in step so the old PIN can't survive on a twin record */
+    (DB.users||[]).forEach(x=>{ if(x.id!==u.id && norm(x.phone)===norm(phone)){ x.pin=pin; x.password=pin; } });
+    logAct('edit','user',name,`role ${role}`);if(u.id===session.id){session=u;applyAccess();}}
   else DB.users.push({id:uid(),name,phone,pin,password:pin,role,perms,username:''});
   save();closeModal();renderUsers();toast('User saved');
 }
@@ -11038,27 +11016,6 @@ function resetAllConfirm(){
   baseline=null; DB=seed(); save();
   closeModal(); toast('All data reset'); logout();
 }
-
-/* ===== DEV-ONLY: password-gated "clear everything" — remove before going live ===== */
-function devClearAll(){
-  if(!isOwner())return;
-  openModal('🧨 Clear ALL Data',`
-    <p style="margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.6">This permanently deletes <b style="color:var(--text)">everything</b> — products, purchases, sales, cards, cash, users &amp; settings — and resets the app to an empty state. <b style="color:var(--red)">This cannot be undone.</b></p>
-    <div class="field"><label>Developer password</label><input id="dev_pw" type="password" placeholder="Enter password" autocomplete="off" onkeydown="if(event.key==='Enter')devClearConfirm()"></div>`,
-    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
-     <button class="btn-sm btn-red" onclick="devClearConfirm()">Clear everything</button>`);
-  setTimeout(()=>$('#dev_pw')?.focus(),30);
-}
-function devClearConfirm(){
-  if(!requireOnline())return;
-  if(($('#dev_pw')?.value||'').trim()!=='Arul@1987'){ toast('Wrong developer password',1); return; }
-  try{ localStorage.removeItem(KEY); localStorage.removeItem(KEY+'_base'); }catch(e){}
-  baseline=null; DB=seed();
-  try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){}
-  cloudForcePush().catch(()=>{});          // wipe the shared cloud row too, not just this device
-  closeModal(); toast('All data cleared — reset to empty app'); logout();
-}
-/* ===== END DEV-ONLY ===== */
 
 /* =========================================================
    MODAL / CONFIRM
