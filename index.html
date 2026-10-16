@@ -7995,7 +7995,7 @@ function waCardsDueMsg(){
   const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const dateLabel=dl=>{ const d=new Date(base); d.setDate(d.getDate()+dl); const ds=`${d.getDate()} ${MON[d.getMonth()]}`;
     return dl===0?`Today (${ds})`:dl===1?`Tomorrow (${ds})`:ds; };
-  const blocks=keys.map(dl=>`*${dateLabel(dl)}*\n`+[...groups[dl]].sort((a,b)=>a.localeCompare(b)).join('\n'));
+  const blocks=keys.map(dl=>`🗓️ *${dateLabel(dl)}*\n`+[...groups[dl]].sort((a,b)=>a.localeCompare(b)).join('\n'));
   return head+'\n\n'+blocks.join('\n\n');
 }
 function waMsgEl(k){ return $('#waMsg_'+k); }
