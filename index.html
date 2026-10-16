@@ -1851,6 +1851,8 @@ function heldQtyOf(pid){ return holdingsOf(pid).reduce((a,h)=>a+(+h.qty||0),0); 
 function heldOwnersStr(pid){ const by={}; holdingsOf(pid).forEach(h=>{ const o=(h.owner||'').trim()||'—'; by[o]=(by[o]||0)+(+h.qty||0); });
   return Object.keys(by).map(o=>o+' ×'+num(by[o])).join(', '); }
 function allHoldOwners(){ return uniqSorted((DB.holdings||[]).map(h=>h.owner)); }
+/* distinct "who deposited the amount" names across every card-deposit entry — for the suggestion datalist */
+function allDepositors(){ const a=[]; (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.type==='deposit'&&t.depositor)a.push(t.depositor); })); return uniqSorted(a); }
 /* average BUYING price for reference display — respects the Settings averaging window (falls back to moving-average) */
 function avgBuyPrice(pid,eng){
   const st=S(), unit=st.avgWindowUnit||'all', n=+st.avgWindowN||0;
@@ -4935,8 +4937,9 @@ function depositEntryModal(){
     <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Cash deposited into each card to pay down what you owe — taken from your cash box. Pick a card, type the amount, press <b>Enter</b> to open the next row.</p>
     <div class="grid2" style="margin-bottom:12px">
       <div class="field"><label>Date</label><input id="dep_date" type="date" value="${defDate}"></div>
-      <div class="field"><label>Note (optional)</label><input id="dep_note" placeholder="applies to all cards — e.g. bank transfer / receipt no."></div>
+      <div class="field"><label>Who deposited the amount</label><input id="dep_by" list="dep_by_dl" autocomplete="off" placeholder="person who deposited — applies to all cards">${dataList('dep_by_dl',allDepositors())}</div>
     </div>
+    <div class="field" style="margin-bottom:12px"><label>Note (optional)</label><input id="dep_note" placeholder="applies to all cards — e.g. bank transfer / receipt no."></div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Deposits *</label>
     <div class="line-items" id="dep_items"><div class="li-head"><div class="rqh">Card</div><div class="rqh">Amount</div><div></div></div><div id="dep_rows"></div></div>
     <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="depAddRow()">＋ Add card</button></div>
@@ -4978,10 +4981,10 @@ function depTotals(){ const box=$('#dep_tot'); if(!box)return;
   const b=$('#dep_save'); if(b)b.textContent=n?('Save '+n):'Save'; }
 function saveDepositEntry(){
   if(!requireOnline())return;
-  const date=$('#dep_date')?.value||todayStr(), note=($('#dep_note')?.value||'').trim();
+  const date=$('#dep_date')?.value||todayStr(), note=($('#dep_note')?.value||'').trim(), depositor=($('#dep_by')?.value||'').trim();
   let n=0;
   _depRows.forEach(it=>{ const amt=+it.amt; if(!(amt>0)||!it.cardId)return; const c=cardById(it.cardId); if(!c)return;
-    if(!c.txns)c.txns=[]; c.txns.push({id:uid(),date,type:'deposit',amount:amt,note,fromCash:true,byId:session.id}); n++; });
+    if(!c.txns)c.txns=[]; c.txns.push({id:uid(),date,type:'deposit',amount:amt,note,depositor,fromCash:true,byId:session.id}); n++; });
   if(!n)return toast('Pick a card and enter an amount for at least one row',1);
   logAct('add','card deposits',n+' cards',`${txnLabel('deposit')} × ${n}`);
   save(); toast(n+' deposit'+(n===1?'':'s')+' saved · cash deducted');
@@ -5813,6 +5816,7 @@ function cardTxnModal(id,type,txnId){
       <div class="field"><label>Date</label><input id="ct_date" type="date" value="${edit?esc(edit.date||todayStr()):defDate}"></div>
     </div>
     <div class="field"><label>Note (optional)</label><input id="ct_note" placeholder="e.g. bank transfer / receipt no." value="${edit?esc(edit.note||''):''}"></div>
+    ${type==='deposit'?`<div class="field"><label>Who deposited the amount</label><input id="ct_by" list="ct_by_dl" autocomplete="off" placeholder="person who deposited" value="${edit?esc(edit.depositor||''):''}">${dataList('ct_by_dl',allDepositors())}</div>`:''}
     ${type==='deposit'?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
       <input type="checkbox" id="ct_cash" checked disabled style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Deposited from your cash box (deducts from Cash Book)</span></label>`
     :(type==='recharge'||type==='payment')?`<label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px;cursor:pointer">
@@ -5827,17 +5831,19 @@ function saveCardTxn(id,type,txnId){
   if(!c.txns)c.txns=[];
   const fromCash=!!$('#ct_cash')?.checked;
   const date=$('#ct_date').value||todayStr(), note=$('#ct_note').value.trim();
+  const depositor=($('#ct_by')?.value||'').trim();
   if(txnId){                                   // EDIT — update in place; statement recalculates
     const t=(c.txns||[]).find(x=>x.id===txnId); if(!t)return toast('Entry not found',1);
     if(t.srcPurchaseId)return toast('This entry comes from a purchase — edit it there',1);
     if(t.srcReturnId)return toast('This entry comes from a purchase return — undo the return in Purchases',1);
     t.amount=amt; t.date=date; t.note=note;
+    if(type==='deposit') t.depositor=depositor;
     if(type==='recharge'||type==='payment'||type==='deposit') t.fromCash=fromCash;
     t.editedBy=session.id; t.editedAt=todayStr();
     logAct('edit','card entry',c.name,`${txnLabel(type)} ${money(amt)}`);
     save(); toast('Entry updated');
   }else{                                       // NEW
-    c.txns.push({id:uid(),date,type,amount:amt,note,fromCash,byId:session.id});
+    c.txns.push({id:uid(),date,type,amount:amt,note,...(type==='deposit'?{depositor}:{}),fromCash,byId:session.id});
     save(); toast(fromCash?'Saved · cash deducted':'Saved');
   }
   cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
@@ -8102,11 +8108,11 @@ function waSalesMsg(){
 }
 function waCardDepositMsg(){
   const d=waDateVal(), cur=S().currency, rows=[];
-  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.date===d&&t.type==='deposit')rows.push({name:c.name,amt:+t.amount||0,note:t.note||''}); }));
+  (DB.cards||[]).forEach(c=>(c.txns||[]).forEach(t=>{ if(t.date===d&&t.type==='deposit')rows.push({name:c.name,amt:+t.amount||0,note:t.note||'',by:(t.depositor||'').trim()}); }));
   const head=`Today's Card Deposit — ${fmtDate(d)}`;
   if(!rows.length)return head+'\n\n(No card deposits today)';
   const tot=rows.reduce((a,r)=>a+r.amt,0);
-  return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal: ${cur} ${num(tot)}`;
+  return head+'\n\n'+rows.map(r=>`${r.name} - ${cur} ${num(r.amt)}${r.by?` · by ${r.by}`:''}${r.note?` (${r.note})`:''}`).join('\n')+`\n\nTotal: ${cur} ${num(tot)}`;
 }
 function waGiftBuyMsg(){
   const d=waDateVal(), cur=S().currency, rows=[];
@@ -9224,7 +9230,7 @@ function cardDepositRows(){
   const all=DB.cards||[], cards= sel? all.filter(c=>c.id===sel): all;
   let rows=[];
   cards.forEach(c=>(c.txns||[]).forEach(t=>{ if(t.type!=='deposit')return; if(!inR(t.date))return; rows.push({c,t}); }));
-  if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number,r.t.note,money(r.t.amount),userName(r.t.byId),r.t.date].some(v=>(v||'').toString().toLowerCase().includes(q)));
+  if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number,r.t.note,r.t.depositor,money(r.t.amount),userName(r.t.byId),r.t.date].some(v=>(v||'').toString().toLowerCase().includes(q)));
   rows.sort((a,b)=> (a.t.date<b.t.date?1:(a.t.date>b.t.date?-1:0)));   // newest first
   return rows;
 }
@@ -9263,21 +9269,22 @@ function renderCardDeposit(){
     <td style="white-space:nowrap">${fmtDate(r.t.date)}</td>
     <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.bank?' · '+esc(r.c.bank):''}</div></td>
     <td>${esc(cardOwnerLabel(r.c))}</td>
+    <td>${r.t.depositor?esc(r.t.depositor):'<span style="color:var(--muted2)">—</span>'}</td>
     <td>${r.t.note?esc(r.t.note):'<span style="color:var(--muted2)">—</span>'}</td>
     <td>${r.t.fromCash?'<span class="tag ok">Cash book</span>':'<span style="color:var(--muted2)">—</span>'}</td>
     <td style="color:var(--muted2);font-size:11.5px">${esc(userName(r.t.byId))}</td>
     <td class="num" style="font-weight:700;color:var(--green)">${money(r.t.amount)}</td>
   </tr>`).join('');
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} deposit${rows.length===1?'':'s'}</td><td></td><td></td><td></td><td></td><td></td><td class="num">${money(total)}</td></tr>`;
-  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:820px"><thead><tr>
-    <th>Date</th><th>Card</th><th>Holder</th><th>Note</th><th>Source</th><th>By</th><th class="num">Amount</th>
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} deposit${rows.length===1?'':'s'}</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="num">${money(total)}</td></tr>`;
+  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:900px"><thead><tr>
+    <th>Date</th><th>Card</th><th>Holder</th><th>Who deposited</th><th>Note</th><th>Source</th><th>By</th><th class="num">Amount</th>
     </tr></thead><tbody>${tr}${foot}</tbody></table></div></div>`;
 }
 function exportCardDepositExcel(){
   const rows=cardDepositRows(); if(!rows.length)return toast('No card deposits in this period',1);
-  const out=[['Date','Card','Bank','Holder','Card No.','Note','From cash book','By','Amount']];
-  rows.forEach(r=>out.push([r.t.date,r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.t.note||'',r.t.fromCash?'Yes':'No',userName(r.t.byId),num2(r.t.amount)]));
-  out.push(['','','','','','','','Total',num2(rows.reduce((s,r)=>s+(+r.t.amount||0),0))]);
+  const out=[['Date','Card','Bank','Holder','Card No.','Who deposited','Note','From cash book','By','Amount']];
+  rows.forEach(r=>out.push([r.t.date,r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.t.depositor||'',r.t.note||'',r.t.fromCash?'Yes':'No',userName(r.t.byId),num2(r.t.amount)]));
+  out.push(['','','','','','','','','Total',num2(rows.reduce((s,r)=>s+(+r.t.amount||0),0))]);
   exportExcel('card_deposits_'+todayStr()+'.xlsx',[{name:'Card Deposits',rows:out}]);
 }
 function cardDepositReportHtml(){
@@ -9285,11 +9292,11 @@ function cardDepositReportHtml(){
   const from=$('#cdFrom')?.value, to=$('#cdTo')?.value;
   const period=(from||to)?`${from?fmtDate(from):'start'} — ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
   const total=rows.reduce((s,r)=>s+(+r.t.amount||0),0);
-  const body=rows.map(r=>[fmtDate(r.t.date),r.c.name,cardOwnerLabel(r.c),r.t.note||'',r.t.fromCash?'Cash book':'—',userName(r.t.byId),money(r.t.amount)]);
-  return reportAreaHtml({areaId:'cardDepositPdfArea',width:900,icon:'⇩',title:'Card Deposits',
+  const body=rows.map(r=>[fmtDate(r.t.date),r.c.name,cardOwnerLabel(r.c),r.t.depositor||'',r.t.note||'',r.t.fromCash?'Cash book':'—',userName(r.t.byId),money(r.t.amount)]);
+  return reportAreaHtml({areaId:'cardDepositPdfArea',width:980,icon:'⇩',title:'Card Deposits',
     sub:`${rows.length} deposit(s) · ${period}`,
-    head:['Date','Card','Holder','Note','Source','By','Amount'], numCols:[6], rows:body,
-    foot:['Total · '+rows.length+' deposit'+(rows.length===1?'':'s'),'','','','','',money(total)]});
+    head:['Date','Card','Holder','Who deposited','Note','Source','By','Amount'], numCols:[7], rows:body,
+    foot:['Total · '+rows.length+' deposit'+(rows.length===1?'':'s'),'','','','','','',money(total)]});
 }
 function pdfCardDeposit(){ const html=cardDepositReportHtml(); if(!html)return toast('No card deposits in this period',1); downloadReportPdf(html,'cardDepositPdfArea','card_deposits_'+todayStr()+'.pdf'); }
 
