@@ -1899,6 +1899,7 @@ function canView(v){ if(!session)return false; if(session.role==='owner')return 
    mandatory reference (card number / holder name / mobile) and don't touch the wallet. */
 const BUILTIN_PAY_METHODS=[
   {k:'card',        label:'Credit Card',          tag:'card',   ref:null},
+  {k:'cashback_redeem',label:'Cashback Redeem',   tag:'card',   ref:'mandatory', savedCard:true, cashback:true, refLabel:'Pick a card — redeem its cashback'},
   {k:'cardborrow',  label:'Credit Card by Vendor',tag:'card',  ref:'mandatory', refLabel:'Borrower name', refKind:'text'},
   {k:'adcb_lulu',   label:'ADCB Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
   {k:'enbd_lulu',   label:'ENBD Lulu Card Points',tag:'points', ref:'optional',  savedCard:true, refLabel:'Pick a saved card (optional)'},
@@ -2487,12 +2488,18 @@ function buyDiscount(){ return Math.min(buyItemsTotal(), Math.max(0, +($('#b_dis
 function buyNetTotal(){ return Math.max(0, buyItemsTotal()-buyDiscount()); }
 /* available on a card for THIS purchase (adds back this purchase's existing charges when editing) */
 function cardAvailForSplit(card){ let adj=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.srcPurchaseId===_buyEditId) adj += (t.type==='purchase'?(+t.amount||0):-(+t.amount||0)); }); return cardAvailable(card)+adj; }
+/* cashback available to redeem for THIS purchase: adds back any redemption this purchase already
+   made (so re-editing a redeem line doesn't double-count its own spend). */
+function cardCashbackAvailForSplit(card){ let back=0; if(_buyEditId)(card.txns||[]).forEach(t=>{ if(t.type==='redeem'&&t.srcPurchaseId===_buyEditId) back+=(+t.amount||0); }); return round2(cardCashbackAvailable(card)+back); }
 function splitHintText(s){ const info=payMethodInfo(s.method);
   if(info.savedGift){ const g=s.giftId?giftById(s.giftId):null;
     if(!g)return '<span style="color:var(--muted2)">Select a gift card</span>';
     const av=giftAvailForSplit(g), amt=+s.amount||0, over=amt-av;
     return `Balance <b style="color:var(--text)">${money(av)}</b>${over>1e-6?` · <span style="color:var(--red)">🚫 exceeds balance by ${money(over)}</span>`:''}`; }
   const c=s.cardId?cardById(s.cardId):null;
+  if(info.cashback){ if(!c)return '<span style="color:var(--muted2)">Select a card to redeem its cashback</span>';
+    const av=cardCashbackAvailForSplit(c), amt=+s.amount||0, over=amt-av;
+    return `Available cashback <b style="color:var(--gold2,#f5b301)">${money(av)}</b>${over>1e-6?` · <span style="color:var(--red)">🚫 exceeds available by ${money(over)}</span>`:''}`; }
   if(info.savedCard){ return c ? `Points card <b style="color:var(--text)">${esc(cardLabel(c))}</b>` : '<span style="color:var(--muted2)">Select a saved card</span>'; }
   if(!c)return '<span style="color:var(--muted2)">Select a card</span>';
   const av=cardAvailForSplit(c), amt=+s.amount||0, over=amt-av;
@@ -2638,6 +2645,9 @@ function savePurchase(id){
   // gift cards can't go below zero — block if any gift card is overspent
   const giftReq={}; rawSplits.forEach(s=>{ if(payMethodInfo(s.method).savedGift&&s.giftId)giftReq[s.giftId]=(giftReq[s.giftId]||0)+(+s.amount||0); });
   for(const gid in giftReq){ const g=giftById(gid); if(g){ const av=giftAvailForSplit(g); if(giftReq[gid]-av>1e-6) return toast(`${g.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
+  // cashback redeem can't exceed a card's available (old) cashback
+  const cbReq={}; rawSplits.forEach(s=>{ if(payMethodInfo(s.method).cashback&&s.cardId)cbReq[s.cardId]=(cbReq[s.cardId]||0)+(+s.amount||0); });
+  for(const cid in cbReq){ const c=cardById(cid); if(c){ const av=cardCashbackAvailForSplit(c); if(cbReq[cid]-av>1e-6) return toast(`${c.name}: only ${money(Math.max(0,av))} cashback available to redeem — reduce the amount.`,1); } }
   const date=$('#b_date').value, supplier=$('#b_sup').value.trim(), orderNo=($('#b_orderno')?.value||'').trim();
   const splits=rawSplits.map(s=>{ const info=payMethodInfo(s.method); const linksCard=s.method==='card'||info.savedCard; const isBorrow=s.method==='cardborrow';
     return {method:s.method,cardId:linksCard?(s.cardId||''):'',giftId:info.savedGift?(s.giftId||''):'',lenderId:isBorrow?(s.lenderId||''):'',lenderCardId:isBorrow?(s.lenderCardId||''):'',commission:isBorrow?(+s.commission||0):0,ref:(linksCard||info.savedGift||isBorrow)?'':(s.ref||'').trim(),deductPct:s.method==='cash'?(+s.deductPct||0):0,amount:+s.amount}; });
@@ -2669,6 +2679,7 @@ function savePurchase(id){
   DB.purchases.push({id:purchaseId,ref,byId:session.id,...data});
   const charged=[];
   splits.forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name); } }
+    else if(s.method==='cashback_redeem'&&s.cardId){ const c=cardById(s.cardId); if(c){ redeemCashback(c,s.amount,date,'Redeemed · Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(c.name+' cashback'); } }
     else if(s.giftId){ const g=giftById(s.giftId); if(g){ spendGift(g,s.amount,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); charged.push(g.name); } }
     else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,s.amount,s.commission,date,'Purchase '+ref+(supplier?' · '+supplier:''),purchaseId); const l=lenderById(s.lenderId); charged.push('borrowed'+(l?' · '+l.name:'')); } });
   save();closeModal();renderPurchases();renderBuyStore();renderBell();
@@ -3457,6 +3468,7 @@ function onlPayObj(o){ if(!o||!(+o.payAmt>0))return null;
    derived in cashEntries() so it needs no action here. Tagged with the order id so it can be reverted. */
 function applyOnlinePay(o){ const pm=onlPayObj(o); if(!pm)return; const note='Online order '+(o.ref||'')+(o.platform?' · '+o.platform:''); const date=pm.date||o.orderDate||todayStr();
   if(pm.method==='card'&&pm.cardId){ const c=cardById(pm.cardId); if(c)chargeCard(c,pm.amount,date,note,o.id); }
+  else if(pm.method==='cashback_redeem'&&pm.cardId){ const c=cardById(pm.cardId); if(c)redeemCashback(c,pm.amount,date,'Redeemed · '+note,o.id); }
   else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,pm.amount,date,note,o.id); }
   else if(pm.method==='cardborrow'&&pm.lenderId){ postLenderSwipe(pm.lenderId,pm.lenderCardId,pm.amount,pm.commission,date,note,o.id); } }
 /* undo the prepayment's wallet effect (used on cancel, edit re-sync, and delete). Cash reverts by
@@ -3629,8 +3641,10 @@ function onlPayToggle(){
   let html='';
   if(method==='card'||info.savedCard){
     const cards=activeCards(), cur=(o&&o.payCardId)||'';
+    const avTxt=c=>info.cashback?('cashback '+money(cardCashbackAvailable(c))):('avail '+money(cardAvailable(c)));
+    const req = method==='card'||info.ref==='mandatory';
     html = cards.length
-      ? `<div class="field"><label>${info.savedCard?esc(info.refLabel):'Card *'}</label><select id="o_paycard" class="srch"><option value="">— select card${method==='card'?' *':''} —</option>${cards.map(c=>`<option value="${c.id}" ${c.id===cur?'selected':''}>${esc(c.name)}${c.owner?' · '+esc(cardOwnerLabel(c)):''} · avail ${money(cardAvailable(c))}</option>`).join('')}</select></div>`
+      ? `<div class="field"><label>${info.savedCard?esc(info.refLabel):'Card *'}</label><select id="o_paycard" class="srch"><option value="">— select card${req?' *':''} —</option>${cards.map(c=>`<option value="${c.id}" ${c.id===cur?'selected':''}>${esc(c.name)}${c.owner?' · '+esc(cardOwnerLabel(c)):''} · ${avTxt(c)}</option>`).join('')}</select></div>`
       : `<div class="note" style="color:var(--amber)">No saved cards — add one in Credit Cards first.</div>`;
   } else if(info.savedGift){
     const gifts=activeGiftCards(), cur=(o&&o.payGiftId)||'';
@@ -3669,7 +3683,8 @@ function saveOnline(id){
   let payCardId='', payGiftId='', payDeductPct=0, payRef='', payLenderId='', payLenderCardId='', payCommission=0;
   if(payAmt>0){
     if(payAmt>tot+0.01)return toast('Paid amount can’t exceed the order total '+money(tot),1);
-    if(payMethod==='card'||info.savedCard){ payCardId=$('#o_paycard')?.value||''; if(payMethod==='card'&&!payCardId)return toast('Pick a card for the card payment',1); }
+    if(payMethod==='card'||info.savedCard){ payCardId=$('#o_paycard')?.value||''; if(payMethod==='card'&&!payCardId)return toast('Pick a card for the card payment',1);
+      if(info.cashback){ if(!payCardId)return toast('Pick a card to redeem its cashback',1); const c=cardById(payCardId); const back=(c&&_onlEditId)?(c.txns||[]).filter(t=>t.type==='redeem'&&t.srcPurchaseId===_onlEditId).reduce((s,t)=>s+(+t.amount||0),0):0; const av=c?round2(cardCashbackAvailable(c)+back):0; if(payAmt-av>1e-6)return toast(`${c?c.name:'Card'}: only ${money(Math.max(0,av))} cashback available to redeem.`,1); } }
     if(info.savedGift){ payGiftId=$('#o_paygift')?.value||''; if(!payGiftId)return toast('Pick a gift card for the gift-card payment',1); }
     if(payMethod==='cardborrow'){ payLenderId=_onlPay.lenderId||''; payLenderCardId=_onlPay.lenderCardId||''; payCommission=Math.max(0,Math.min(100,+_onlPay.commission||0)); if(!payLenderId)return toast('Pick a lender for the borrowed-card payment',1); if(!payLenderCardId)return toast('Pick which card for the borrowed-card payment',1); }
     if(payMethod==='cash'){ payDeductPct=Math.max(0,Math.min(100,+($('#o_paydeduct')?.value||0))); }
@@ -3841,10 +3856,12 @@ function confirmDeliver(id){
   const payments=[]; let paid=0;
   if(prepaid>0&&pm){ payments.push({id:uid(),date:pm.date||today,amount:prepaid,method:pm.method,cardId:pm.cardId||'',giftId:pm.giftId||'',lenderId:pm.lenderId||'',lenderCardId:pm.lenderCardId||'',commission:pm.commission||0,deductPct:pm.deductPct||0,payRef:pm.payRef||'',ref:'Prepaid online'}); paid+=prepaid;
     if(pm.method==='card'&&pm.cardId){ const c=cardById(pm.cardId); if(c)chargeCard(c,prepaid,pm.date||today,note,purchaseId); }
+    else if(pm.method==='cashback_redeem'&&pm.cardId){ const c=cardById(pm.cardId); if(c)redeemCashback(c,prepaid,pm.date||today,'Redeemed · '+note,purchaseId); }
     else if(payMethodInfo(pm.method).savedGift&&pm.giftId){ const g=giftById(pm.giftId); if(g)spendGift(g,prepaid,pm.date||today,note,purchaseId); }
     else if(pm.method==='cardborrow'&&pm.lenderId){ postLenderSwipe(pm.lenderId,pm.lenderCardId,prepaid,pm.commission,pm.date||today,note,purchaseId); } }
   if(dAmt>0){ payments.push({id:uid(),date:dDate,amount:dAmt,method:dMethod,cardId:dCardId,giftId:dGiftId,lenderId:dLenderId,lenderCardId:dLenderCardId,commission:dCommission,deductPct:dDeduct,payRef:dRef,ref:'Paid on delivery'}); paid+=dAmt;
     if(dMethod==='card'&&dCardId){ const c=cardById(dCardId); if(c)chargeCard(c,dAmt,dDate,note,purchaseId); }
+    else if(dMethod==='cashback_redeem'&&dCardId){ const c=cardById(dCardId); if(c)redeemCashback(c,dAmt,dDate,'Redeemed · '+note,purchaseId); }
     else if(dInfo.savedGift&&dGiftId){ const g=giftById(dGiftId); if(g)spendGift(g,dAmt,dDate,note,purchaseId); }
     else if(dMethod==='cardborrow'&&dLenderId){ postLenderSwipe(dLenderId,dLenderCardId,dAmt,dCommission,dDate,note,purchaseId); } }
   const payTag = payments.length===0?'cash':(payments.length===1?payments[0].method:'split');
@@ -4653,7 +4670,7 @@ function cardOutstanding(c){ let o=+c.openingOutstanding||0;
      'discount' (cashback) is tracked separately (see cardCashbackUsed/Total) and NEVER moves the
         balance or limit — it does not free up credit nor reduce the statement.
      'oldbal' is last month's carried-over balance — it adds to what you owe (like a charge) until paid. */
-  (c.txns||[]).forEach(t=>{ if(t.type==='oldpay'||t.type==='discount')return; o += ((t.type==='purchase'||t.type==='oldbal') ? (+t.amount||0) : -(+t.amount||0)); }); return o; }
+  (c.txns||[]).forEach(t=>{ if(t.type==='oldpay'||t.type==='discount'||t.type==='redeem')return; o += ((t.type==='purchase'||t.type==='oldbal') ? (+t.amount||0) : -(+t.amount||0)); }); return o; }
 function cardAvailable(c){ return (+c.creditLimit||0) - cardOutstanding(c); }
 function cardDiscountInMonth(c,m){ return (c.txns||[]).filter(t=>t.type==='discount' && ym(t.date)===m).reduce((s,t)=>s+(+t.amount||0),0); }
 /* ---- Cashback rules (central, owner-editable in Settings → Credit & Cashback) ----
@@ -4704,6 +4721,27 @@ function cardCashbackUsed(c, d){
 }
 /* total cashback credited to a card, all time (= "cashback availed till now") */
 function cardCashbackTotal(c){ return (c.txns||[]).filter(t=>t.type==='discount').reduce((s,t)=>s+(+t.amount||0),0); }
+/* ---- Running vs OLD (credited) cashback — mirrors how the bank actually posts it ----
+   Cashback is EARNED on every purchase (a 'discount' txn) but the bank only CREDITS it on the
+   statement date. So a discount txn is still "running" (pending) until the statement period that
+   bills it has closed; once that period's end (statement date / month-end for ADCB Lulu·365) is
+   reached, it becomes "old" / available to redeem. Computed live from each card's statement day —
+   there is no server, so nothing to schedule. A 'redeem' txn spends available cashback (see the
+   Cashback Redeem payment mode); it never moves the credit balance (see cardOutstanding). */
+function cbTxnCredited(c,t){ return cashbackPeriodRange(c, t.date).end <= todayStr(); }
+/* cashback earned this cycle but NOT yet credited (statement date not reached) */
+function cardCashbackRunning(c){ return (c.txns||[]).filter(t=>t.type==='discount' && !cbTxnCredited(c,t)).reduce((s,t)=>s+(+t.amount||0),0); }
+/* cashback the statement date has already posted (net of return reversals) */
+function cardCashbackCredited(c){ return (c.txns||[]).filter(t=>t.type==='discount' && cbTxnCredited(c,t)).reduce((s,t)=>s+(+t.amount||0),0); }
+/* cashback spent via the Cashback Redeem mode, all time */
+function cardCashbackRedeemed(c){ return (c.txns||[]).filter(t=>t.type==='redeem').reduce((s,t)=>s+(+t.amount||0),0); }
+/* cashback available to redeem right now = credited (old) − already redeemed */
+function cardCashbackAvailable(c){ return round2(cardCashbackCredited(c) - cardCashbackRedeemed(c)); }
+/* spend available cashback from a card (Cashback Redeem). Tagged with srcPurchaseId so it is
+   re-synced / removed when its purchase is edited or deleted (unlinkPurchaseFromCards). */
+function redeemCashback(c,amount,date,note,srcPurchaseId){
+  if(!c)return; if(!c.txns)c.txns=[]; const a=+amount||0; if(a<=0)return;
+  c.txns.push({id:uid(),date:date||todayStr(),type:'redeem',amount:a,note:note||'Cashback redeemed',srcPurchaseId}); }
 /* ----- Borrower cashback split (cards bought from a borrower) -----
    OUR cashback % = the card's effective rate (discountPercent, overlaid by any central rule).
    The BORROWER's share defaults to equal ours until the owner edits it per card. */
@@ -5075,6 +5113,7 @@ function commitPurchase(id,data){
   Object.assign(rec,data);
   unlinkPurchaseFromCards(id); unlinkPurchaseFromGifts(id); unlinkPurchaseFromLenders(id);
   (data.payments||[]).forEach(s=>{ if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c)chargeCard(c,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); }
+    else if(s.method==='cashback_redeem'&&s.cardId){ const c=cardById(s.cardId); if(c)redeemCashback(c,s.amount,data.date,'Redeemed · Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); }
     else if(s.giftId){ const g=giftById(s.giftId); if(g)spendGift(g,s.amount,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); }
     else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,s.amount,s.commission,data.date,'Purchase '+rec.ref+(data.supplier?' · '+data.supplier:''),id); } });
   logAct('edit','purchase',rec.ref,`total ${money(beforeT)} → ${money(purchaseTotal(rec))} · paid ${money(rec.paid||0)}${rec.supplier?' · '+rec.supplier:''}`);
@@ -5178,17 +5217,19 @@ function exportActivityExcel(){
 }
 
 /* ---- ledger display + redeem-% picker + owner balance edit ---- */
-const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',adjust:'EDITED',load:'LOAD',spend:'SPEND',oldpay:'OLD PAYMENT',oldbal:'OLD BALANCE',return:'RETURN'};
+const TXN_LABEL={purchase:'PURCHASE',payment:'PAYMENT',deposit:'DEPOSIT',recharge:'RECHARGE',discount:'CASHBACK',redeem:'REDEEM',adjust:'EDITED',load:'LOAD',spend:'SPEND',oldpay:'OLD PAYMENT',oldbal:'OLD BALANCE',return:'RETURN'};
 function txnLabel(t){ return TXN_LABEL[t]||(t||'').toUpperCase(); }
 function txnAmtCell(t){
   /* cashback never moves the balance — it has its own Cashback column, so the Amount
      column shows a dash for cashback rows (see txnCbCell). */
-  if(t.type==='discount') return `<td class="num" style="color:var(--muted2)">—</td>`;
+  if(t.type==='discount'||t.type==='redeem') return `<td class="num" style="color:var(--muted2)">—</td>`;
   const pos = t.type==='adjust' ? ((+t.amount)>=0) : (t.type!=='purchase'&&t.type!=='spend'&&t.type!=='oldbal');
   return `<td class="num" style="color:${pos?'var(--green)':'var(--red)'};font-weight:700">${pos?'+':'−'}${money(Math.abs(+t.amount||0))}</td>`; }
 /* dedicated Cashback column cell — shows the cashback amount only on CASHBACK rows, blank otherwise.
    Cashback is tracked separately and never changes the balance or limit. */
-function txnCbCell(t){ if(t.type!=='discount')return '<td class="num"></td>'; const neg=(+t.amount||0)<0;
+function txnCbCell(t){
+  if(t.type==='redeem') return `<td class="num" style="color:var(--red);font-weight:700;white-space:nowrap">⟳ − ${money(Math.abs(+t.amount||0))}</td>`;
+  if(t.type!=='discount')return '<td class="num"></td>'; const neg=(+t.amount||0)<0;
   return `<td class="num" style="color:${neg?'var(--muted2)':'var(--gold2)'};font-weight:700;white-space:nowrap">⟳ ${neg?'− ':''}${money(Math.abs(+t.amount||0))}</td>`; }
 function redeemSelect(idSel,idOther,pct){ pct=+pct||0; const custom = pct>0 && ![1,2,3,4,5].includes(pct);
   return `<select id="${idSel}" onchange="redeemToggle('${idSel}','${idOther}')">
@@ -5378,13 +5419,14 @@ function renderCards(){
   const cards=q? all.filter(c=>[c.name,c.owner,c.bank,c.number].some(v=>(v||'').toLowerCase().includes(q))||refsStr(c).toLowerCase().includes(q)) : all;
   // totals & available count reflect ACTIVE (usable) cards only — inactive cards are excluded
   const actInView=cards.filter(cardActive), inactInView=cards.filter(c=>!cardActive(c));
-  let tL=0,tA=0,tO=0,tD=0;
-  actInView.forEach(c=>{ const l=+c.creditLimit||0,o=cardOutstanding(c); tL+=l; tO+=o; tA+=l-o; tD+=cardCashbackUsed(c,todayStr()); });
+  let tL=0,tA=0,tO=0,tRun=0,tCbAv=0;
+  actInView.forEach(c=>{ const l=+c.creditLimit||0,o=cardOutstanding(c); tL+=l; tO+=o; tA+=l-o; tRun+=cardCashbackRunning(c); tCbAv+=cardCashbackAvailable(c); });
   const cs=$('#cardStats'); if(cs)cs.innerHTML=cards.length?`
     <div class="stat blue"><span class="ic">💳</span><div class="label">Total Limit</div><div class="val">${money(tL)}</div><div class="foot">${actInView.length} active card${actInView.length===1?'':'s'}${inactInView.length?` · ${inactInView.length} inactive hidden`:''}</div></div>
     <div class="stat green"><span class="ic">✅</span><div class="label">Available</div><div class="val">${money(tA)}</div><div class="foot">active cards only</div></div>
     <div class="stat red"><span class="ic">📉</span><div class="label">Outstanding</div><div class="val">${money(tO)}</div></div>
-    <div class="stat gold"><span class="ic">％</span><div class="label">Cashback · this month</div><div class="val">${money(tD)}</div></div>`:'';
+    <div class="stat amber"><span class="ic">⏳</span><div class="label">Running cashback</div><div class="val">${money(tRun)}</div><div class="foot">credits on statement date</div></div>
+    <div class="stat gold"><span class="ic">🎁</span><div class="label">Cashback to redeem</div><div class="val">${money(tCbAv)}</div><div class="foot">available now</div></div>`:'';
   if(!cards.length){ host.innerHTML=`<div class="panel">${q?emptyBox('🔎','No matches','No cards match your search.'):emptyBox('💳','No cards yet','Add your credit cards to track limits, commission discounts & payment dates.')}</div>`; renderBell(); return; }
   if(_cardView==='credit'){
     // compact due-date & usage list — soonest due first (paid cards after)
@@ -5681,7 +5723,7 @@ function ownerStatement(owner){
   const m=ym(todayStr());
   const cards=(DB.cards||[]).filter(c=>cardOwnerLabel(c)===owner);
   if(!cards.length)return;
-  let tL=0,tO=0,tD=0; cards.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); tD+=cardCashbackUsed(c,todayStr()); });
+  let tL=0,tO=0,tD=0; cards.forEach(c=>{ tL+=+c.creditLimit||0; tO+=cardOutstanding(c); tD+=cardCashbackAvailable(c); });
   const led=[]; cards.forEach(c=>(c.txns||[]).forEach(t=>led.push({id:t.id,card:c.name,date:t.date,type:t.type,amount:+t.amount||0,note:t.note})));
   led.sort(dDesc);
   const rows=led.length? led.slice(0,120).map(t=>`<tr>
@@ -5694,7 +5736,7 @@ function ownerStatement(owner){
     <div class="grid3" style="margin-bottom:14px">
       <div class="stat red"><div class="label">You Owe (${cards.length} card${cards.length===1?'':'s'})</div><div class="val">${money(tO)}</div></div>
       <div class="stat blue"><div class="label">Total Limit</div><div class="val">${money(tL)}</div></div>
-      <div class="stat gold"><div class="label">Cashback · this month</div><div class="val">${money(tD)}</div></div>
+      <div class="stat gold"><div class="label">Cashback to redeem</div><div class="val">${money(tD)}</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:14px">${cards.map(c=>`<button class="mini-btn" onclick="cardDetail('${c.id}')">${esc(cardShort(c))} · owe ${money(cardOutstanding(c))}</button>`).join('')}</div>
     <div style="font-weight:700;font-size:13px;margin-bottom:8px">Combined ledger</div>
@@ -5707,6 +5749,7 @@ function cardDetail(id){
   const c=cardById(id); if(!c)return;
   const limit=+c.creditLimit||0, out=cardOutstanding(c), avail=limit-out, info=cardDueInfo(c);
   const _cbcfg=cardCashbackCfg(c), discUsed=cardCashbackUsed(c,todayStr()), cap=_cbcfg.cap;
+  const cbRun=cardCashbackRunning(c), cbAv=cardCashbackAvailable(c), cbRed=cardCashbackRedeemed(c);
   const txns=[...(c.txns||[])].sort(dDesc);
   const txnRow=t=>`<tr>
       <td>${fmtDate(t.date)}</td>
@@ -5727,7 +5770,8 @@ function cardDetail(id){
     rows=groups.map(grp=>{
       let charges=0, payments=0, cash=0;
       grp.items.forEach(t=>{
-        if(t.type==='discount'){ cash+=(+t.amount||0); return; }   // shown separately
+        if(t.type==='discount'){ cash+=(+t.amount||0); return; }   // cashback earned — shown separately
+        if(t.type==='redeem'){ cash-=(+t.amount||0); return; }     // cashback spent — nets against the band's cashback, not a balance payment
         if(t.type==='adjust') return;                               // excluded from totals
         const amt=Math.abs(+t.amount||0);
         if(t.type==='purchase'||t.type==='spend'||t.type==='oldbal') charges+=amt; else payments+=amt;
@@ -5744,7 +5788,7 @@ function cardDetail(id){
           <span style="margin-left:auto;display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;justify-content:flex-end">
             <span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Charges <b style="color:var(--red)">${money(charges)}</b></span>
             <span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Payments <b style="color:var(--green)">${money(payments)}</b></span>
-            ${cash>0.005?`<span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Cashback <b style="color:var(--gold2)">⟳ ${money(cash)}</b></span>`:''}
+            ${Math.abs(cash)>0.005?`<span style="font-size:11.5px;color:var(--muted);white-space:nowrap">Cashback <b style="color:${cash<0?'var(--red)':'var(--gold2)'}">⟳ ${cash<0?'− ':''}${money(Math.abs(cash))}</b></span>`:''}
             <span style="font-size:12.5px;color:var(--muted);white-space:nowrap">Net <b style="color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':'−'}${money(Math.abs(net))}</b></span>
             <span style="font-size:11px;color:var(--muted2);white-space:nowrap">${grp.items.length} txn${grp.items.length===1?'':'s'}</span>
           </span>
@@ -5754,10 +5798,15 @@ function cardDetail(id){
   }
   openModal(esc(c.name),`
     <div style="max-width:360px;margin:0 auto 18px">${cardVisual(c)}</div>
-    <div class="grid3" style="margin-bottom:16px">
+    <div class="grid3" style="margin-bottom:12px">
       <div class="stat green"><div class="label">Available</div><div class="val">${money(avail)}</div><div class="foot">of ${money(limit)} limit</div></div>
       <div class="stat red"><div class="label">Outstanding</div><div class="val">${money(out)}</div><div class="foot">${info.hasBilled?`${money(info.billedDue)} due by ${fmtDate(isoDate(info.due))}`:(out>0.005?'nothing due now':'paid up')}${info.unbilled>0.005?` · ${money(info.unbilled)} unbilled`:''} · stmt ${fmtDate(isoDate(cardStatementDate(c)))}</div></div>
       <div class="stat gold"><div class="label">Cashback · pending cycle</div><div class="val">${money(discUsed)}</div><div class="foot">${_cbcfg.pct||0}% · ${cap>0?'cap '+money(cap):'no cap'} · ${_cbcfg.capPeriod==='month'?'monthly':'per statement'}${_cbcfg.ruleName?' · '+esc(_cbcfg.ruleName):''}</div></div>
+    </div>
+    <div class="grid3" style="margin-bottom:16px">
+      <div class="stat amber"><div class="label">⏳ Running cashback</div><div class="val">${money(cbRun)}</div><div class="foot">earned this cycle · credits on the statement date</div></div>
+      <div class="stat green"><div class="label">🎁 Available to redeem</div><div class="val">${money(cbAv)}</div><div class="foot">old cashback credited, minus redemptions</div></div>
+      <div class="stat blue"><div class="label">⟳ Redeemed</div><div class="val">${money(cbRed)}</div><div class="foot">spent via Cashback Redeem · all time</div></div>
     </div>
     <div class="row-actions" style="margin-bottom:16px">
       <button class="btn-sm btn-green" onclick="cardTxnModal('${c.id}','payment')">＋ Payment</button>
@@ -6430,10 +6479,12 @@ function renderGiftBuySplits(){
     let mid, hint='';
     if(s.method==='card'||info.savedCard){
       // same searchable card picker as a purchase — shows owner · ••last4 · name (card number ref)
+      const subFn = s.method==='card'?(c=>'avail '+money(cardAvailable(c))) : (info.cashback?(c=>'cashback '+money(cardCashbackAvailable(c))):null);
       mid = cards.length
-        ? `<div class="cardpick-wrap">${cardPickerHtml('gb_'+i, cards, s.cardId, s.method==='card'?(c=>'avail '+money(cardAvailable(c))):null, s.method==='card'?'Owner name or last 4 digits…':info.refLabel, (id)=>{ giftBuySplits[i].cardId=id; giftBuyRefreshHint(i); giftBuyCalc(); })}</div>`
+        ? `<div class="cardpick-wrap">${cardPickerHtml('gb_'+i, cards, s.cardId, subFn, s.method==='card'?'Owner name or last 4 digits…':info.refLabel, (id)=>{ giftBuySplits[i].cardId=id; giftBuyRefreshHint(i); giftBuyCalc(); })}</div>`
         : `<div style="color:var(--amber);font-size:11.5px;align-self:center">No cards — add one in Credit Cards</div>`;
       if(s.method==='card')hint=`<div class="li-hint" id="gbh_${i}">${giftBuyCardHint(s)}</div>`;
+      else if(info.cashback)hint=`<div class="li-hint" id="gbh_${i}">${giftBuyCashbackHint(s)}</div>`;
     } else if(info.savedGift){
       const gifts=activeGiftCards();
       mid = gifts.length
@@ -6468,7 +6519,12 @@ function renderGiftBuySplits(){
 function giftBuyCardHint(s){ if(!(s&&s.method==='card'&&s.cardId))return '';
   const c=cardById(s.cardId), av=c?cardAvailable(c):0, over=(+s.amount||0)-av, _gp=c?cardCashbackCfg(c).pct:0;
   return `Available <b style="color:var(--text)">${money(av)}</b>${_gp?` · earns ${_gp}% cashback`:''}${over>1e-6&&!(c&&cardAllowsNeg(c))?` · <span style="color:var(--red)">🚫 exceeds by ${money(over)}</span>`:''}`; }
-function giftBuyRefreshHint(i){ const el=$('#gbh_'+i); if(el)el.innerHTML=giftBuyCardHint(giftBuySplits[i]); }
+function giftBuyCashbackHint(s){ if(!(s&&s.cardId))return '<span style="color:var(--muted2)">Select a card to redeem its cashback</span>';
+  const c=cardById(s.cardId); const back=(c&&_giftBuyEdit)?(c.txns||[]).filter(t=>t.type==='redeem'&&t.srcPurchaseId===('giftload:'+_giftBuyEdit.txnId)).reduce((a,t)=>a+(+t.amount||0),0):0;
+  const av=c?round2(cardCashbackAvailable(c)+back):0, over=(+s.amount||0)-av;
+  return `Available cashback <b style="color:var(--gold2,#f5b301)">${money(av)}</b>${over>1e-6?` · <span style="color:var(--red)">🚫 exceeds available by ${money(over)}</span>`:''}`; }
+function giftBuyRefreshHint(i){ const el=$('#gbh_'+i); if(!el)return; const s=giftBuySplits[i]; const info=payMethodInfo(s.method);
+  el.innerHTML = info.cashback ? giftBuyCashbackHint(s) : giftBuyCardHint(s); }
 function giftBorrowLender(i,val){ giftBuySplits[i].lenderId=val; giftBuySplits[i].lenderCardId=''; giftBuySplits[i].commission=''; renderGiftBuySplits(); }
 function giftBorrowCard(i,val){ giftBuySplits[i].lenderCardId=val; const l=lenderById(giftBuySplits[i].lenderId), c=lenderCardById(l,val); giftBuySplits[i].commission=c?(c.commission||0):''; renderGiftBuySplits(); }
 function addGiftBuySplit(){ giftBuySplits.push({method:'card',cardId:'',giftId:'',ref:'',deductPct:'',lenderId:'',lenderCardId:'',commission:'',amount:''}); renderGiftBuySplits(); flashNewRow('#gb_splits .split-row'); }
@@ -6548,6 +6604,10 @@ function saveGiftPurchase(){
     if(over>1e-6 && !cardAllowsNeg(c))return toast(`${c.name}: only ${money(Math.max(0,avail))} available — reduce the amount or enable over-limit for it.`,1); } }
   const giftReq={}; splits.forEach(s=>{ if(payMethodInfo(s.method).savedGift&&s.giftId)giftReq[s.giftId]=(giftReq[s.giftId]||0)+(+s.amount||0); });
   for(const g2 in giftReq){ const gg=giftById(g2); if(gg){ const av=giftBalance(gg)+giftAddBack(g2); if(giftReq[g2]-av>1e-6)return toast(`${gg.name}: only ${money(Math.max(0,av))} left on this gift card — reduce the amount.`,1); } }
+  // cashback redeem can't exceed each card's available (old) cashback (adding back this recharge's own redemption on edit)
+  const cbAddBack=cid=>{ if(!editLink)return 0; const c=cardById(cid); if(!c)return 0; return (c.txns||[]).filter(t=>t.type==='redeem'&&t.srcPurchaseId===editLink).reduce((a,t)=>a+(+t.amount||0),0); };
+  const cbReq={}; splits.forEach(s=>{ if(payMethodInfo(s.method).cashback&&s.cardId)cbReq[s.cardId]=(cbReq[s.cardId]||0)+(+s.amount||0); });
+  for(const cid in cbReq){ const c=cardById(cid); if(c){ const av=round2(cardCashbackAvailable(c)+cbAddBack(cid)); if(cbReq[cid]-av>1e-6)return toast(`${c.name}: only ${money(Math.max(0,av))} cashback available to redeem — reduce the amount.`,1); } }
   // all checks passed → drop the old recharge + its payment legs, then load the balance onto the chosen gift-card product
   if(editing){ revertGiftRecharge(editing.gid,editing.txnId); }
   if(!Array.isArray(g.txns))g.txns=[];
@@ -6559,6 +6619,7 @@ function saveGiftPurchase(){
   const charged=[];
   splits.forEach(s=>{ const a=+s.amount||0; if(a<=0)return; const info=payMethodInfo(s.method);
     if(s.method==='card'&&s.cardId){ const c=cardById(s.cardId); if(c){ chargeCard(c,a,date,'Gift card · '+lbl,payLink); charged.push(c.name); } }
+    else if(s.method==='cashback_redeem'&&s.cardId){ const c=cardById(s.cardId); if(c){ redeemCashback(c,a,date,'Redeemed · Gift card · '+lbl,payLink); charged.push(c.name+' cashback'); } }
     else if(info.savedGift&&s.giftId){ const gp=giftById(s.giftId); if(gp){ spendGift(gp,a,date,'Gift card · '+lbl,payLink); charged.push(gp.name); } }
     else if(s.method==='cardborrow'&&s.lenderId){ postLenderSwipe(s.lenderId,s.lenderCardId,a,s.commission,date,'Gift card · '+lbl,payLink); const l=lenderById(s.lenderId); charged.push('borrowed'+(l?' · '+l.name:'')); }
     else if(s.method==='cash'){ const ded=+s.deductPct||0, net=a*(1-ded/100); if(!Array.isArray(DB.cash))DB.cash=[];
@@ -7327,7 +7388,8 @@ function purchaseCardRemark(pays){
   const parts=[];
   (pays||[]).forEach(pm=>{
     const c=pm.cardId?cardById(pm.cardId):null, g=pm.giftId?giftById(pm.giftId):null;
-    if(c) parts.push(cardLabel(c));
+    if(pm.method==='cashback_redeem') parts.push('🎁 Cashback Redeem'+(c?' · '+cardLabel(c):''));
+    else if(c) parts.push(cardLabel(c));
     else if(g) parts.push('🎁 '+giftLabel(g));
     else if(pm.method==='cardborrow'&&pm.lenderId){ const l=lenderById(pm.lenderId); parts.push('Borrowed'+(l?' · '+l.name:'')); }
     else parts.push(payMethodInfo(pm.method).label||pm.method||'cash');
@@ -9310,14 +9372,14 @@ function pdfCardDeposit(){ const html=cardDepositReportHtml(); if(!html)return t
    and never moves the balance), everything else is a credit that reduces what's owed. */
 function cardStatementData(c,from,to){
   const all=[...(c.txns||[])].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
-  const signOf=t=> (t.type==='oldpay'||t.type==='discount')?0:((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); // cashback is record-only, never moves the balance
+  const signOf=t=> (t.type==='oldpay'||t.type==='discount'||t.type==='redeem')?0:((t.type==='purchase'||t.type==='oldbal')?1:-1)*(+t.amount||0); // cashback & redeem are record-only, never move the balance
   let opening=+c.openingOutstanding||0; const rows=[];
   all.forEach(t=>{ const d=signOf(t);
     if(from && (t.date||'')<from){ opening+=d; return; }
     if(to && (t.date||'')>to) return;
     rows.push({...t,signed:d}); });
   let run=opening; rows.forEach(r=>{ run=Math.round((run+r.signed)*100)/100; r.run=run; });
-  let spend=0,pay=0,redeem=0; rows.forEach(r=>{ if(r.type==='purchase'||r.type==='oldbal')spend+=+r.amount||0; else if(r.type==='discount')redeem+=+r.amount||0; else if(r.type!=='oldpay')pay+=+r.amount||0; });
+  let spend=0,pay=0,redeem=0; rows.forEach(r=>{ if(r.type==='purchase'||r.type==='oldbal')spend+=+r.amount||0; else if(r.type==='discount')redeem+=+r.amount||0; else if(r.type==='redeem')redeem-=+r.amount||0; else if(r.type!=='oldpay')pay+=+r.amount||0; });
   return {opening:Math.round(opening*100)/100, rows, spend:Math.round(spend*100)/100, pay:Math.round(pay*100)/100, redeem:Math.round(redeem*100)/100, closing:Math.round(run*100)/100, limit:+c.creditLimit||0};
 }
 function exportCardExcel(id,from,to){
@@ -9326,7 +9388,7 @@ function exportCardExcel(id,from,to){
   const rows=[[(cardLabel(c)||c.name||'')+' — Card Statement'],['Period',period],[],
     ['Date','Type','Note','Charge +','Payment −','Cashback','Outstanding']];
   rows.push(['','Opening balance','','','','',num2(d.opening)]);
-  d.rows.forEach(r=>{ rows.push([r.date,txnLabel(r.type),r.note||'', r.signed>0?num2(r.signed):'', r.signed<0?num2(-r.signed):'', r.type==='discount'?num2(+r.amount||0):'', num2(r.run)]); });
+  d.rows.forEach(r=>{ rows.push([r.date,txnLabel(r.type),r.note||'', r.signed>0?num2(r.signed):'', r.signed<0?num2(-r.signed):'', r.type==='discount'?num2(+r.amount||0):(r.type==='redeem'?'-'+num2(+r.amount||0):''), num2(r.run)]); });
   rows.push([]);
   rows.push(['','','','Spend (period)','','',num2(d.spend)]);
   rows.push(['','','','Payments (period)','','',num2(d.pay)]);
@@ -9344,7 +9406,7 @@ function cardStatementHtml(c,from,to){
       <td style="${cell}">${esc(txnLabel(r.type))}${r.note?' · '+esc(r.note):''}</td>
       <td style="${cell};${rt}">${r.signed>0?money(r.signed):''}</td>
       <td style="${cell};${rt}">${r.signed<0?money(-r.signed):''}</td>
-      <td style="${cell};${rt};color:#a9791b">${r.type==='discount'?money(+r.amount||0):''}</td>
+      <td style="${cell};${rt};color:${r.type==='redeem'?'#c0392b':'#a9791b'}">${r.type==='discount'?money(+r.amount||0):(r.type==='redeem'?'− '+money(+r.amount||0):'')}</td>
       <td style="${cell};${rt}"><b>${money(r.run)}</b></td></tr>`).join('');
   const l4=(c.number||'').replace(/\D/g,'').slice(-4);
   return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;padding:26px 30px;width:800px;box-sizing:border-box;background:#fff">
@@ -9604,7 +9666,8 @@ function creditReportRows(){
     return { c, avail:cardAvailable(c), used:cardOutstanding(c), old:sp.oldDue, cur:sp.curDue, unbilled:sp.unbilled,
       due, dleft:daysUntil(due), stmt:cardStatementDate(c),
       pct:cfg.pct, cap:cfg.cap, capPeriod:cfg.capPeriod, ignoreLimit:cfg.ignoreLimit,
-      cbUsed:cardCashbackUsed(c,todayStr()), cbTotal:cardCashbackTotal(c), capRem:cashbackCapRemaining(c,todayStr()) };
+      cbUsed:cardCashbackUsed(c,todayStr()), cbTotal:cardCashbackTotal(c), capRem:cashbackCapRemaining(c,todayStr()),
+      cbRunning:cardCashbackRunning(c), cbAvail:cardCashbackAvailable(c), cbRedeemed:cardCashbackRedeemed(c) };
   });
 }
 function creditSearchSort(rows,q,order){
@@ -9740,8 +9803,10 @@ function cusageRows(){ return creditSearchSort(creditReportRows(), ($('#cuxSearc
 function renderCusage(){
   if(!canView('cusage'))return;
   const all=DB.cards||[], cs=$('#cuxStats');
-  if(cs){ const base=creditReportRows(); const tCb=base.reduce((s,r)=>s+r.cbTotal,0);
-    cs.innerHTML= all.length? creditReportStats(base)+`<div class="stat gold"><span class="ic">🎁</span><div class="label">Cashback availed</div><div class="val">${money(tCb)}</div><div class="foot">all time</div></div>`:''; }
+  if(cs){ const base=creditReportRows(); const tRun=base.reduce((s,r)=>s+r.cbRunning,0), tAvail=base.reduce((s,r)=>s+r.cbAvail,0);
+    cs.innerHTML= all.length? creditReportStats(base)
+      +`<div class="stat amber"><span class="ic">⏳</span><div class="label">Running cashback</div><div class="val">${money(tRun)}</div><div class="foot">pending · credits on statement date</div></div>`
+      +`<div class="stat green"><span class="ic">🎁</span><div class="label">Available to redeem</div><div class="val">${money(tAvail)}</div><div class="foot">old cashback − redeemed</div></div>`:''; }
   const body=$('#cuxBody'); if(!body)return;
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards first.')}</div>`; return; }
   const rows=cusageRows();
@@ -9757,27 +9822,29 @@ function renderCusage(){
       <td>${fmtDate(isoDate(r.stmt))}<div style="color:var(--muted2);font-size:11px">${r.capPeriod==='month'?'monthly cap':'per statement'}</div></td>
       <td style="font-weight:700${(r.dleft<=3&&r.used>0.005)?';color:var(--red)':''}">${fmtDate(isoDate(r.due))}<div style="color:var(--muted2);font-size:11px;font-weight:400">${dueLeftTxt(r.dleft)}</div></td>
       <td class="num">${r.pct?r.pct+'%':'—'}</td>
+      <td class="num" style="color:${r.cbRunning>0.005?'var(--amber)':'var(--muted2)'}">${r.cbRunning>0.005?money(r.cbRunning):'—'}</td>
+      <td class="num" style="color:${r.cbAvail>0.005?'var(--green)':'var(--muted2)'};font-weight:700">${money(r.cbAvail)}</td>
       <td class="num"${r.cbTotal>0.005?' style="color:var(--green)"':''}>${r.cbTotal>0.005?money(r.cbTotal):'—'}</td>
     </tr>`).join('');
-  const tA=rows.reduce((s,r)=>s+r.avail,0), tU=rows.reduce((s,r)=>s+r.used,0), tOld=rows.reduce((s,r)=>s+r.old,0), tCur=rows.reduce((s,r)=>s+r.cur,0), tCb=rows.reduce((s,r)=>s+r.cbTotal,0);
-  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tA)}</td><td class="num">${money(tU)}</td><td class="num"${tOld>0.005?' style="color:var(--red)"':''}>${money(tOld)}</td><td class="num">${money(tCur)}</td><td></td><td></td><td></td><td class="num">${money(tCb)}</td></tr>`;
-  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:1040px"><thead><tr><th>Card</th><th>Holder</th><th>Card No.</th><th class="num">Available</th><th class="num">Used</th><th class="num">Old Dues</th><th class="num">New Dues</th><th>Statement</th><th>Due Date</th><th class="num">Cashback %</th><th class="num">Availed</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Statement = this cycle's statement date (cashback posts then, not at the till) · Cashback % &amp; cap come from Settings → Credit &amp; Cashback Rules · Availed = total cashback credited to the card so far.</div></div>`;
+  const tA=rows.reduce((s,r)=>s+r.avail,0), tU=rows.reduce((s,r)=>s+r.used,0), tOld=rows.reduce((s,r)=>s+r.old,0), tCur=rows.reduce((s,r)=>s+r.cur,0), tCb=rows.reduce((s,r)=>s+r.cbTotal,0), tRun=rows.reduce((s,r)=>s+r.cbRunning,0), tAvCb=rows.reduce((s,r)=>s+r.cbAvail,0);
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td colspan="3">Total · ${rows.length} card${rows.length===1?'':'s'}</td><td class="num">${money(tA)}</td><td class="num">${money(tU)}</td><td class="num"${tOld>0.005?' style="color:var(--red)"':''}>${money(tOld)}</td><td class="num">${money(tCur)}</td><td></td><td></td><td></td><td class="num">${money(tRun)}</td><td class="num">${money(tAvCb)}</td><td class="num">${money(tCb)}</td></tr>`;
+  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:1200px"><thead><tr><th>Card</th><th>Holder</th><th>Card No.</th><th class="num">Available</th><th class="num">Used</th><th class="num">Old Dues</th><th class="num">New Dues</th><th>Statement</th><th>Due Date</th><th class="num">Cashback %</th><th class="num">Running</th><th class="num">Available</th><th class="num">Availed</th></tr></thead><tbody>${tr}${foot}</tbody></table></div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Statement = this cycle's statement date (cashback posts then, not at the till) · Cashback % &amp; cap come from Settings → Credit &amp; Cashback Rules · <b>Running</b> = earned this cycle, pending until the statement date · <b>Available</b> = old cashback credited on the statement date, minus redemptions (spendable via Cashback Redeem) · <b>Availed</b> = total cashback credited to the card so far (all time).</div></div>`;
 }
 function exportCusageExcel(){
   const rows=cusageRows(); if(!rows.length)return toast('No cards to export',1);
-  const out=[['Card','Bank','Holder','Card No.','Available','Used','Old Dues','New Dues','Statement Date','Due Date','Days (– = overdue)','Cashback %','Cap Period','Cashback Availed (total)']];
-  rows.forEach(r=>out.push([r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),num2(r.avail),num2(r.used),num2(r.old),num2(r.cur),isoDate(r.stmt),isoDate(r.due),r.dleft,r.pct||0,r.capPeriod==='month'?'Calendar month':'Statement cycle',num2(r.cbTotal)]));
+  const out=[['Card','Bank','Holder','Card No.','Available','Used','Old Dues','New Dues','Statement Date','Due Date','Days (– = overdue)','Cashback %','Cashback Running (pending)','Cashback Available (redeemable)','Cashback Redeemed (all time)','Cap Period','Cashback Availed (total)']];
+  rows.forEach(r=>out.push([r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),num2(r.avail),num2(r.used),num2(r.old),num2(r.cur),isoDate(r.stmt),isoDate(r.due),r.dleft,r.pct||0,num2(r.cbRunning),num2(r.cbAvail),num2(r.cbRedeemed),r.capPeriod==='month'?'Calendar month':'Statement cycle',num2(r.cbTotal)]));
   exportExcel('card_usage_cashback_'+todayStr()+'.xlsx',[{name:'Card Usage & Cashback',rows:out}]);
 }
 function cusageReportHtml(){
   const rows=cusageRows(); if(!rows.length)return '';
-  const head=['Card','Holder','Card No.','Available','Used','Old Dues','New Dues','Statement','Due Date','Days','Cashback %','Availed'];
-  const body=rows.map(r=>[r.c.name,cardOwnerLabel(r.c),maskCard(r.c.number),money(r.avail),money(r.used),r.old>0.005?money(r.old):'—',r.cur>0.005?money(r.cur):'—',fmtDate(isoDate(r.stmt)),fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft),r.pct?r.pct+'%':'—',r.cbTotal>0.005?money(r.cbTotal):'—']);
-  const foot=['Total · '+rows.length+' card'+(rows.length===1?'':'s'),'','',money(rows.reduce((s,r)=>s+r.avail,0)),money(rows.reduce((s,r)=>s+r.used,0)),money(rows.reduce((s,r)=>s+r.old,0)),money(rows.reduce((s,r)=>s+r.cur,0)),'','','','',money(rows.reduce((s,r)=>s+r.cbTotal,0))];
-  return reportAreaHtml({areaId:'cusagePdfArea',width:1060,icon:'📈',title:'Card Usage & Cashback',sub:rows.length+' card(s) · most recent due date first',
-    head, numCols:[3,4,5,6,9,10,11], rows:body, foot,
-    note:'Statement = this cycle\'s statement date (cashback posts then, not at the till) · Cashback % &amp; cap come from Settings → Credit &amp; Cashback Rules · Availed = total cashback credited so far · Days relative to today (negative = overdue).'});
+  const head=['Card','Holder','Card No.','Available','Used','Old Dues','New Dues','Statement','Due Date','Days','Cashback %','Running','Available','Availed'];
+  const body=rows.map(r=>[r.c.name,cardOwnerLabel(r.c),maskCard(r.c.number),money(r.avail),money(r.used),r.old>0.005?money(r.old):'—',r.cur>0.005?money(r.cur):'—',fmtDate(isoDate(r.stmt)),fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft),r.pct?r.pct+'%':'—',r.cbRunning>0.005?money(r.cbRunning):'—',money(r.cbAvail),r.cbTotal>0.005?money(r.cbTotal):'—']);
+  const foot=['Total · '+rows.length+' card'+(rows.length===1?'':'s'),'','',money(rows.reduce((s,r)=>s+r.avail,0)),money(rows.reduce((s,r)=>s+r.used,0)),money(rows.reduce((s,r)=>s+r.old,0)),money(rows.reduce((s,r)=>s+r.cur,0)),'','','','',money(rows.reduce((s,r)=>s+r.cbRunning,0)),money(rows.reduce((s,r)=>s+r.cbAvail,0)),money(rows.reduce((s,r)=>s+r.cbTotal,0))];
+  return reportAreaHtml({areaId:'cusagePdfArea',width:1220,icon:'📈',title:'Card Usage & Cashback',sub:rows.length+' card(s) · most recent due date first',
+    head, numCols:[3,4,5,6,9,10,11,12,13], rows:body, foot,
+    note:'Statement = this cycle\'s statement date (cashback posts then, not at the till) · Cashback % &amp; cap come from Settings → Credit &amp; Cashback Rules · Running = earned this cycle, pending until the statement date · Available = old cashback credited on the statement date, minus redemptions · Availed = total cashback credited so far · Days relative to today (negative = overdue).'});
 }
 function pdfCusage(){ downloadReportPdf(cusageReportHtml(),'cusagePdfArea','card_usage_cashback_'+todayStr()+'.pdf'); }
 
@@ -9819,7 +9886,9 @@ function cashbackRepRows(){
     const remCb=Math.max(0, maxCb-earned);
     const availPeriod=Math.max(0, limit-usedPeriod);
     const sp=cardDueSplit(c), due=cardDueDate(c);
+    const running=cardCashbackRunning(c), cbCredited=cardCashbackCredited(c), redeemed=cardCashbackRedeemed(c), avail=cardCashbackAvailable(c);
     return { c, ourPct, borPct, totPct, limit, maxCb, usedPeriod, ourCb, borCb, credited, earned, remCb, availPeriod,
+             running, cbCredited, redeemed, avail,
              oldDue:sp.oldDue, due, dleft:daysUntil(due), capPeriod:cardCashbackCfg(c).capPeriod, pr,
              earnedPct: maxCb>0?Math.min(100,Math.max(0,earned/maxCb*100)):0 };
   });
@@ -9867,11 +9936,13 @@ function renderCashbackRep(){
   const per= rng.active ? `${rng.from?fmtDate(rng.from):'start'} — ${rng.to?fmtDate(rng.to):fmtDate(todayStr())}` : 'this period';
   const cs=$('#cbrStats');
   if(cs){ const base=cashbackRepRows();
-    const tMax=base.reduce((s,r)=>s+r.maxCb,0), tOur=base.reduce((s,r)=>s+r.ourCb,0), tBor=base.reduce((s,r)=>s+r.borCb,0), tRem=base.reduce((s,r)=>s+r.remCb,0);
+    const tMax=base.reduce((s,r)=>s+r.maxCb,0), tRem=base.reduce((s,r)=>s+r.remCb,0);
+    const tRun=base.reduce((s,r)=>s+r.running,0), tAvail=base.reduce((s,r)=>s+r.avail,0), tRedeem=base.reduce((s,r)=>s+r.redeemed,0);
     cs.innerHTML= all.length?`
       <div class="stat gold"><span class="ic">🎯</span><div class="label">Maximum cashback</div><div class="val">${money(tMax)}</div><div class="foot">${base.length} card${base.length===1?'':'s'} · per period</div></div>
-      <div class="stat green"><span class="ic">💰</span><div class="label">Our cashback</div><div class="val">${money(tOur)}</div><div class="foot">${per}</div></div>
-      <div class="stat blue"><span class="ic">🤝</span><div class="label">Borrower cashback</div><div class="val">${money(tBor)}</div><div class="foot">their share · ${per}</div></div>
+      <div class="stat amber"><span class="ic">⏳</span><div class="label">Running cashback</div><div class="val">${money(tRun)}</div><div class="foot">pending · credits on statement date</div></div>
+      <div class="stat green"><span class="ic">🎁</span><div class="label">Available to redeem</div><div class="val">${money(tAvail)}</div><div class="foot">old cashback − redeemed</div></div>
+      <div class="stat blue"><span class="ic">⟳</span><div class="label">Redeemed</div><div class="val">${money(tRedeem)}</div><div class="foot">spent so far · all time</div></div>
       <div class="stat amber"><span class="ic">✨</span><div class="label">Remaining cashback</div><div class="val">${money(tRem)}</div><div class="foot">${rng.active?'max − earned (range)':'still earnable'}</div></div>`:''; }
   const body=$('#cbrBody'); if(!body)return;
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see cashback.')}</div>`; return; }
@@ -9891,6 +9962,9 @@ function renderCashbackRep(){
       <td class="num"${r.ourCb>0.005?' style="color:var(--green)"':''}>${r.ourCb>0.005?money(r.ourCb):'—'}</td>
       <td class="num"${r.borCb>0.005?' style="color:var(--blue,#38bdf8)"':''}>${r.borCb>0.005?money(r.borCb):'—'}</td>
       <td class="num"${r.remCb>0.005?' style="color:var(--amber)"':' style="color:var(--muted2)"'}>${money(r.remCb)}</td>
+      <td class="num" style="color:${r.running>0.005?'var(--amber)':'var(--muted2)'}" title="Earned this statement cycle — credits on the statement date">${r.running>0.005?money(r.running):'—'}</td>
+      <td class="num" style="color:${r.avail>0.005?'var(--green)':'var(--muted2)'};font-weight:700" title="Old cashback the statement date has credited, minus redemptions">${money(r.avail)}</td>
+      <td class="num" style="color:${r.redeemed>0.005?'var(--red)':'var(--muted2)'}" title="Cashback spent via Cashback Redeem">${r.redeemed>0.005?money(r.redeemed):'—'}</td>
       <td class="num"${r.usedPeriod>0.005?' style="color:var(--amber)"':''}>${money(r.usedPeriod)}</td>
       <td class="num"${r.availPeriod<=0?' style="color:var(--red)"':''}>${money(r.availPeriod)}</td>
       <td class="num" style="color:${r.oldDue>0.005?'var(--red)':'var(--muted2)'}">${r.oldDue>0.005?money(r.oldDue):'—'}</td>
@@ -9901,24 +9975,26 @@ function renderCashbackRep(){
   const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)">
     <td>Total · ${rows.length} card${rows.length===1?'':'s'}</td><td></td>
     <td class="num">${money(t('maxCb'))}</td><td class="num">${money(t('ourCb'))}</td><td class="num">${money(t('borCb'))}</td>
-    <td class="num">${money(t('remCb'))}</td><td class="num">${money(t('usedPeriod'))}</td><td class="num">${money(t('availPeriod'))}</td>
+    <td class="num">${money(t('remCb'))}</td>
+    <td class="num">${money(t('running'))}</td><td class="num" style="font-weight:800">${money(t('avail'))}</td><td class="num"${t('redeemed')>0.005?' style="color:var(--red)"':''}>${money(t('redeemed'))}</td>
+    <td class="num">${money(t('usedPeriod'))}</td><td class="num">${money(t('availPeriod'))}</td>
     <td class="num"${t('oldDue')>0.005?' style="color:var(--red)"':''}>${money(t('oldDue'))}</td><td></td></tr>`;
   body.innerHTML=`<div class="panel">
-    <div class="table-wrap"><table style="min-width:1100px"><thead><tr>
-      <th>Card</th><th class="num">Cashback %</th><th class="num">Max Cashback</th><th class="num">Our Cashback</th><th class="num">Borrower Cashback</th><th class="num">Remaining</th><th class="num">Used Limit</th><th class="num">Available Limit</th><th class="num">Old Due</th><th>Due Date</th>
+    <div class="table-wrap"><table style="min-width:1280px"><thead><tr>
+      <th>Card</th><th class="num">Cashback %</th><th class="num">Max Cashback</th><th class="num">Our Cashback</th><th class="num">Borrower Cashback</th><th class="num">Remaining</th><th class="num">Running</th><th class="num">Available</th><th class="num">Redeemed</th><th class="num">Used Limit</th><th class="num">Available Limit</th><th class="num">Old Due</th><th>Due Date</th>
     </tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">${rng.active?`Figures cover <b>${rng.from?fmtDate(rng.from):'start'} — ${rng.to?fmtDate(rng.to):fmtDate(todayStr())}</b> (the spend &amp; cashback dated in this window). Clear the dates to return to each card's current statement period.`:`Figures are for each card's <b>current cashback period</b> — the statement cycle, or the <b>calendar month</b> for ADCB Lulu &amp; ADCB 365.`} <b>Max Cashback</b> = limit × (our% + borrower%) ÷ 100 · <b>Our Cashback</b> = spend × our% · <b>Borrower Cashback</b> = spend × borrower% · <b>Remaining</b> = max − our − borrower (what more can still be earned) · <b>Used / Available Limit</b> are within this window. Edit each card's split in Credit Cards; monthly-cap cards are set in Settings → Credit &amp; Cashback Rules.</div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">${rng.active?`Figures cover <b>${rng.from?fmtDate(rng.from):'start'} — ${rng.to?fmtDate(rng.to):fmtDate(todayStr())}</b> (the spend &amp; cashback dated in this window). Clear the dates to return to each card's current statement period.`:`Figures are for each card's <b>current cashback period</b> — the statement cycle, or the <b>calendar month</b> for ADCB Lulu &amp; ADCB 365.`} <b>Max Cashback</b> = limit × (our% + borrower%) ÷ 100 · <b>Our Cashback</b> = spend × our% · <b>Borrower Cashback</b> = spend × borrower% · <b>Remaining</b> = max − our − borrower (what more can still be earned) · <b>Running</b> = earned this statement cycle, still pending (credits on the statement date) · <b>Available</b> = old cashback the statement date has credited, minus what's been redeemed (this is what <b>Cashback Redeem</b> can spend) · <b>Redeemed</b> = cashback spent via Cashback Redeem, all time · <b>Used / Available Limit</b> are within this window. Edit each card's split in Credit Cards; monthly-cap cards are set in Settings → Credit &amp; Cashback Rules.</div>
   </div>`;
 }
 function exportCashbackRepExcel(){
   const rows=cashbackRepRows(); if(!rows.length)return toast('No cards to export',1);
-  const out=[['Card','Bank','Holder','Card No.','Our %','Borrower %','Total %','Max Cashback','Our Cashback (period)','Borrower Cashback (period)','Remaining Cashback','Used Limit (period)','Available Limit (period)','Old Due','Due Date','Days (– = overdue)','Cap Period','Period From','Period To']];
-  rows.forEach(r=>out.push([r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.ourPct,r.borPct,r.totPct,num2(r.maxCb),num2(r.ourCb),num2(r.borCb),num2(r.remCb),num2(r.usedPeriod),num2(r.availPeriod),num2(r.oldDue),isoDate(r.due),r.dleft,r.capPeriod==='month'?'Calendar month':'Statement cycle',r.pr.start,r.pr.end]));
+  const out=[['Card','Bank','Holder','Card No.','Our %','Borrower %','Total %','Max Cashback','Our Cashback (period)','Borrower Cashback (period)','Remaining Cashback','Running Cashback (pending)','Available Cashback (redeemable)','Redeemed (all time)','Used Limit (period)','Available Limit (period)','Old Due','Due Date','Days (– = overdue)','Cap Period','Period From','Period To']];
+  rows.forEach(r=>out.push([r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.ourPct,r.borPct,r.totPct,num2(r.maxCb),num2(r.ourCb),num2(r.borCb),num2(r.remCb),num2(r.running),num2(r.avail),num2(r.redeemed),num2(r.usedPeriod),num2(r.availPeriod),num2(r.oldDue),isoDate(r.due),r.dleft,r.capPeriod==='month'?'Calendar month':'Statement cycle',r.pr.start,r.pr.end]));
   exportExcel('cashback_report_'+todayStr()+'.xlsx',[{name:'Cashback Report',rows:out}]);
 }
-const CASHBACK_REP_HEAD=['Card','Holder','Our%','Bor%','Max Cashback','Our Cashback','Borrower Cashback','Remaining','Used Limit','Avail Limit','Old Due','Due Date','Days'];
-const CASHBACK_REP_NOTE='Max Cashback = limit × (our% + borrower%) ÷ 100 · Our Cashback = this period\'s spend × our% · Borrower Cashback = this period\'s spend × borrower% · Remaining = max − our − borrower (best-to-use cards have the most remaining) · Used / Available Limit are within this cashback period · ADCB Lulu &amp; ADCB 365 cap by calendar month, others by statement cycle · Days relative to today (negative = overdue).';
-function cashbackRepRowCells(r){ return [r.c.name,cardOwnerLabel(r.c),r.ourPct+'%',r.borPct+'%',money(r.maxCb),money(r.ourCb),money(r.borCb),money(r.remCb),money(r.usedPeriod),money(r.availPeriod),r.oldDue>0.005?money(r.oldDue):'—',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)]; }
+const CASHBACK_REP_HEAD=['Card','Holder','Our%','Bor%','Max Cashback','Our Cashback','Borrower Cashback','Remaining','Running','Available','Redeemed','Used Limit','Avail Limit','Old Due','Due Date','Days'];
+const CASHBACK_REP_NOTE='Max Cashback = limit × (our% + borrower%) ÷ 100 · Our Cashback = this period\'s spend × our% · Borrower Cashback = this period\'s spend × borrower% · Remaining = max − our − borrower (best-to-use cards have the most remaining) · Running = earned this statement cycle, pending until the statement date · Available = old cashback credited on the statement date, minus redemptions (what Cashback Redeem can spend) · Redeemed = cashback spent via Cashback Redeem · Used / Available Limit are within this cashback period · ADCB Lulu &amp; ADCB 365 cap by calendar month, others by statement cycle · Days relative to today (negative = overdue).';
+function cashbackRepRowCells(r){ return [r.c.name,cardOwnerLabel(r.c),r.ourPct+'%',r.borPct+'%',money(r.maxCb),money(r.ourCb),money(r.borCb),money(r.remCb),r.running>0.005?money(r.running):'—',money(r.avail),r.redeemed>0.005?money(r.redeemed):'—',money(r.usedPeriod),money(r.availPeriod),r.oldDue>0.005?money(r.oldDue):'—',fmtDate(isoDate(r.due)),dueLeftTxt(r.dleft)]; }
 /* Build one report "page" area. `pageRows` = the cards shown on THIS page; `totalRows` = all cards
    (so the grand-total foot is correct); `opt.sub` carries the page's own subtitle (e.g. "Page 2 of 5").
    The title/company HEADER is part of reportAreaHtml, so building one area per page = header on EVERY page. */
@@ -9930,10 +10006,10 @@ function cashbackRepReportHtml(pageRows, totalRows, opt){
   const body=rows.map(cashbackRepRowCells);
   const t=k=>all.reduce((s,r)=>s+r[k],0);
   const foot = opt.showFoot===false ? undefined
-    : ['Total · '+all.length+' card'+(all.length===1?'':'s'),'','','',money(t('maxCb')),money(t('ourCb')),money(t('borCb')),money(t('remCb')),money(t('usedPeriod')),money(t('availPeriod')),money(t('oldDue')),'',''];
-  return reportAreaHtml({areaId:'cashbackRepPdfArea',width:1120,icon:'🎁',title:'Cashback Report',
+    : ['Total · '+all.length+' card'+(all.length===1?'':'s'),'','','',money(t('maxCb')),money(t('ourCb')),money(t('borCb')),money(t('remCb')),money(t('running')),money(t('avail')),money(t('redeemed')),money(t('usedPeriod')),money(t('availPeriod')),money(t('oldDue')),'',''];
+  return reportAreaHtml({areaId:'cashbackRepPdfArea',width:1320,icon:'🎁',title:'Cashback Report',
     sub: opt.sub || (all.length+' card(s) · current statement period · '+fmtDate(todayStr())),
-    head:CASHBACK_REP_HEAD, numCols:[2,3,4,5,6,7,8,9,10,12], rows:body, foot,
+    head:CASHBACK_REP_HEAD, numCols:[2,3,4,5,6,7,8,9,10,11,12,13,15], rows:body, foot,
     note: opt.note!==undefined ? opt.note : CASHBACK_REP_NOTE});
 }
 /* Multi-page PDF that repeats the full header (title + company + column headings) on EVERY page,
