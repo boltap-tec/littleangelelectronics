@@ -1021,11 +1021,11 @@ const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
 const WORKER_DEFAULT=['buystore','shop','purchases','sales','cashbook','giftcards'];
-const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',cardusage:'Card Usage',washare:'WhatsApp Share',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
+const VIEW_LABELS={dashboard:'Dashboard',buystore:'Buy Store',shop:'Sell Store',purchases:'Purchases',online:'Online Orders',sales:'Sales & Billing',payments:'Payments',cards:'Credit Cards',cardpref:'Card Preference',lenders:'Card Lenders',giftcards:'Gift Cards',cashbook:'Cash Book',inventory:'Inventory',products:'Products',compare:'Price Compare',bsreport:'Buy & Sell Report',daybook:'Daily Summary',cardreport:'Card Statement',carddeposit:'Card Deposits',cardusage:'Card Usage',washare:'WhatsApp Share',profit:'Profit & Reports',activity:'Activity Log',settings:'Settings'};
 /* Report screens an admin can grant to a worker (otherwise owner-only). Stored in a
    worker's perms just like any other screen; granted workers see the report but any
    owner-only profit columns inside it stay hidden. */
-const REPORT_VIEWS=['bsreport','daybook','cardreport','cardusage','rcard','cusage','cashbackrep','cprefrep','invmove','invtoday','washare'];
+const REPORT_VIEWS=['bsreport','daybook','cardreport','carddeposit','cardusage','rcard','cusage','cashbackrep','cprefrep','invmove','invtoday','washare'];
 /* Single source of truth for menu → sub-menu grouping (sidebar + dashboard tiles share it) */
 const NAV_GROUPS=[
   {tag:'Overview', ic:'📊', color:'#818cf8', items:[
@@ -1051,6 +1051,7 @@ const NAV_GROUPS=[
     {v:'bsreport',   ic:'🛒', lab:'Buy & Sell Report'},
     {v:'daybook',    ic:'📅', lab:'Daily Summary'},
     {v:'cardreport', ic:'💳', lab:'Card Statement'},
+    {v:'carddeposit',ic:'⇩', lab:'Card Deposits'},
     {v:'cardusage',  ic:'📊', lab:'Card Usage'},
     {v:'rcard',      ic:'💳', lab:'Recent Credit Card'},
     {v:'cusage',     ic:'📈', lab:'Card Usage & Cashback'},
@@ -5435,6 +5436,7 @@ function renderCards(){
           <button class="mini-btn${byHolder?' gold':''}" onclick="setGridGroup('holder')">👤 Holder</button>
           <button class="mini-btn${byHolder?'':' gold'}" onclick="setGridGroup('name')">💳 Card name</button>
         </span>
+        <button class="btn-sm btn-green" onclick="exportCardGridExcel()" title="Export these balances to Excel">⬇ Excel</button>
         <button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>
       <div class="table-wrap"><table id="cardGridTbl" style="min-width:980px">
         <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th class="num">Check</th><th>Last edited</th><th class="num">Days ago</th></tr></thead>
@@ -5471,7 +5473,8 @@ function renderCards(){
     });
     host.innerHTML=`<style>#cbGridTbl .gin{width:88px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}#cbGridTbl .gin:focus{outline:none;border-color:var(--brand)}#cbGridTbl .gin.over{border-color:var(--red);color:var(--red)}#cbGridTbl td{vertical-align:middle}#cbGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">🎁 Edit cashback <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
-        <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
+        <button class="btn-sm btn-green" style="margin-left:auto" onclick="exportCashbackGridExcel()" title="Export these cashback settings to Excel">⬇ Excel</button>
+        <button class="btn-sm btn-gold" onclick="saveCashbackGrid()">💾 Save all changes</button></div>
       <div class="table-wrap"><table id="cbGridTbl" style="min-width:860px">
         <thead><tr><th>Card name</th><th>Holder</th><th>Card number</th><th class="num">Max cashback / month (${S().currency})</th><th class="num">Total %</th><th class="num">Our %</th><th class="num">Follower %</th><th class="num">Save</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
@@ -5512,6 +5515,43 @@ function gridGroupedRows(list,colspan,rowFn,mode){
     if(k!==cur){ cur=k; html+=`<tr class="grp"><td colspan="${colspan}"><b>${esc(k)}</b> <span style="color:var(--muted2);font-weight:600">· ${cnt[k]} card${cnt[k]===1?'':'s'}</span></td></tr>`; }
     html+=rowFn(c); });
   return html;
+}
+/* the cards currently in scope for the grid editors — the whole book, narrowed by the Credit Cards search box */
+function gridVisibleCards(){
+  const all=DB.cards||[], q=($('#cardSearch')?.value||'').toLowerCase().trim();
+  return q? all.filter(c=>[c.name,c.owner,c.bank,c.number].some(v=>(v||'').toLowerCase().includes(q))||refsStr(c).toLowerCase().includes(q)) : all;
+}
+/* ⬇ Excel — the ⊞ Grid edit balances, in the current grouping order */
+function exportCardGridExcel(){
+  if(!isOwner())return toast('Owner only',1);
+  const byHolder=_gridGroup==='holder';
+  const list=gridVisibleCards().sort((a,b)=> byHolder
+    ? (cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
+    : ((a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b))));
+  if(!list.length)return toast('No cards to export',1);
+  const rows=[['Holder','Card name','Bank','Card number','Limit','Old statement due','Currently used','Balance limit','Last edited']];
+  list.forEach(c=>{
+    const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
+    const lim=+c.creditLimit||0, bal=r2(lim-old-used), led=cardLastBalEdit(c);
+    rows.push([cardOwnerLabel(c),c.name||'',c.bank||'',c.number||'',num2(lim),num2(old),num2(used),num2(bal),led?fmtDate(led):'']);
+  });
+  exportExcel('card_balances_'+todayStr()+'.xlsx',[{name:'Card Balances',rows}]);
+}
+/* ⬇ Excel — the 🎁 Cashback edit grid (our/follower/total % and the monthly cap) */
+function exportCashbackGridExcel(){
+  if(!isOwner())return toast('Owner only',1);
+  const list=gridVisibleCards().sort((a,b)=> (a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)));
+  if(!list.length)return toast('No cards to export',1);
+  const rows=[['Card name','Bank','Holder','Card number','Max cashback / month','Total %','Our %','Follower %']];
+  list.forEach(c=>{
+    const our=+c.discountPercent||0;
+    const fol=(c.borrowerCashbackPercent!=null&&c.borrowerCashbackPercent!=='')?(+c.borrowerCashbackPercent||0):our;
+    const cfgTotal=cardNameTotalCashback(c.name);
+    const total=(cfgTotal!=null)?cfgTotal:r2(our+fol);
+    const max=+c.maxDiscountMonthly||0;
+    rows.push([c.name||'',c.bank||'',cardOwnerLabel(c),c.number||'',max?num2(max):0,r2(total),r2(our),r2(fol)]);
+  });
+  exportExcel('card_cashback_'+todayStr()+'.xlsx',[{name:'Card Cashback',rows}]);
 }
 /* whole days between an ISO date and today (0 = today, 1 = yesterday, …) */
 function daysSince(d){ if(!d)return null; const a=new Date(d+'T00:00:00'), b=new Date(todayStr()+'T00:00:00'); return Math.round((b-a)/86400000); }
@@ -9167,6 +9207,83 @@ function exportCardReportExcel(){
   exportExcel('card_statement_'+todayStr()+'.xlsx',[{name:'Card Statement',rows}]);
 }
 
+/* ============ Report · Card Deposits (cash deposited into cards, date-filtered) ============
+   Every 'deposit' transaction across all cards, filterable by card and from/to date. */
+function cardDepositRows(){
+  const from=$('#cdFrom')?.value, to=$('#cdTo')?.value, inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const sel=$('#cdCard')?.value||'', q=($('#cdSearch')?.value||'').trim().toLowerCase();
+  const all=DB.cards||[], cards= sel? all.filter(c=>c.id===sel): all;
+  let rows=[];
+  cards.forEach(c=>(c.txns||[]).forEach(t=>{ if(t.type!=='deposit')return; if(!inR(t.date))return; rows.push({c,t}); }));
+  if(q) rows=rows.filter(r=>[r.c.name,r.c.owner,r.c.bank,r.c.number,r.t.note,money(r.t.amount),userName(r.t.byId),r.t.date].some(v=>(v||'').toString().toLowerCase().includes(q)));
+  rows.sort((a,b)=> (a.t.date<b.t.date?1:(a.t.date>b.t.date?-1:0)));   // newest first
+  return rows;
+}
+views.carddeposit=function(){
+  if(!canView('carddeposit'))return `<div class="owner-lock"><div class="big">🔒</div><h2>Owner access only</h2><p>Card deposit reports are restricted to the owner account.</p></div>`;
+  const opts=(DB.cards||[]).map(c=>`<option value="${c.id}">${esc(cardLabel(c))}</option>`).join('');
+  return `
+  <div class="page-head"><div><h2>⇩ Card Deposits</h2><p>Cash deposited into cards. Filter by card and date range (from &amp; to).</p></div>
+    <div class="row-actions">
+      <select id="cdCard" class="mini-btn srch" style="padding:9px" onchange="renderCardDeposit()"><option value="">All cards</option>${opts}</select>
+      <input id="cdFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderCardDeposit()" title="From date">
+      <input id="cdTo" type="date" class="mini-btn" style="padding:9px" oninput="renderCardDeposit()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearCdRange()">Clear</button>
+      <button class="btn-sm btn-green" onclick="exportCardDepositExcel()">⬇ Excel</button>
+      <button class="btn-sm btn-gold" onclick="pdfCardDeposit()">📄 PDF</button>
+    </div></div>
+  <div class="toolbar"><div class="search"><span class="si">🔎</span><input id="cdSearch" placeholder="Search card, holder, bank, note or amount..." oninput="renderCardDeposit()"></div></div>
+  <div id="cdStats" class="cards"></div>
+  <div id="cdBody"></div>`;
+};
+views._after_carddeposit=()=>{ if(canView('carddeposit'))renderCardDeposit(); };
+function clearCdRange(){ ['cdCard','cdFrom','cdTo','cdSearch'].forEach(id=>{ const el=$('#'+id); if(el)el.value=''; }); renderCardDeposit(); }
+function renderCardDeposit(){
+  if(!canView('carddeposit'))return;
+  const rows=cardDepositRows();
+  const total=rows.reduce((s,r)=>s+(+r.t.amount||0),0);
+  const cashTotal=rows.filter(r=>r.t.fromCash).reduce((s,r)=>s+(+r.t.amount||0),0);
+  const cs=$('#cdStats'); if(cs)cs.innerHTML=(DB.cards||[]).length?`
+    <div class="stat blue"><span class="ic">⇩</span><div class="label">Deposits</div><div class="val">${rows.length}</div><div class="foot">in this period</div></div>
+    <div class="stat green"><span class="ic">💰</span><div class="label">Total deposited</div><div class="val">${money(total)}</div></div>
+    <div class="stat gold"><span class="ic">🧰</span><div class="label">From cash book</div><div class="val">${money(cashTotal)}</div><div class="foot">rest from elsewhere</div></div>`:'';
+  const body=$('#cdBody'); if(!body)return;
+  if(!(DB.cards||[]).length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to record deposits.')}</div>`; return; }
+  if(!rows.length){ body.innerHTML=`<div class="panel">${emptyBox('⇩','No deposits','No card deposits match your filter in this period.')}</div>`; return; }
+  const tr=rows.map(r=>`<tr>
+    <td style="white-space:nowrap">${fmtDate(r.t.date)}</td>
+    <td><b>${esc(r.c.name)}</b><div style="color:var(--muted2);font-size:11.5px">${esc(maskCard(r.c.number))}${r.c.bank?' · '+esc(r.c.bank):''}</div></td>
+    <td>${esc(cardOwnerLabel(r.c))}</td>
+    <td>${r.t.note?esc(r.t.note):'<span style="color:var(--muted2)">—</span>'}</td>
+    <td>${r.t.fromCash?'<span class="tag ok">Cash book</span>':'<span style="color:var(--muted2)">—</span>'}</td>
+    <td style="color:var(--muted2);font-size:11.5px">${esc(userName(r.t.byId))}</td>
+    <td class="num" style="font-weight:700;color:var(--green)">${money(r.t.amount)}</td>
+  </tr>`).join('');
+  const foot=`<tr style="font-weight:800;border-top:2px solid var(--line2)"><td>Total · ${rows.length} deposit${rows.length===1?'':'s'}</td><td></td><td></td><td></td><td></td><td></td><td class="num">${money(total)}</td></tr>`;
+  body.innerHTML=`<div class="panel"><div class="table-wrap"><table style="min-width:820px"><thead><tr>
+    <th>Date</th><th>Card</th><th>Holder</th><th>Note</th><th>Source</th><th>By</th><th class="num">Amount</th>
+    </tr></thead><tbody>${tr}${foot}</tbody></table></div></div>`;
+}
+function exportCardDepositExcel(){
+  const rows=cardDepositRows(); if(!rows.length)return toast('No card deposits in this period',1);
+  const out=[['Date','Card','Bank','Holder','Card No.','Note','From cash book','By','Amount']];
+  rows.forEach(r=>out.push([r.t.date,r.c.name,r.c.bank||'',cardOwnerLabel(r.c),maskCard(r.c.number),r.t.note||'',r.t.fromCash?'Yes':'No',userName(r.t.byId),num2(r.t.amount)]));
+  out.push(['','','','','','','','Total',num2(rows.reduce((s,r)=>s+(+r.t.amount||0),0))]);
+  exportExcel('card_deposits_'+todayStr()+'.xlsx',[{name:'Card Deposits',rows:out}]);
+}
+function cardDepositReportHtml(){
+  const rows=cardDepositRows(); if(!rows.length)return '';
+  const from=$('#cdFrom')?.value, to=$('#cdTo')?.value;
+  const period=(from||to)?`${from?fmtDate(from):'start'} — ${to?fmtDate(to):fmtDate(todayStr())}`:'All time';
+  const total=rows.reduce((s,r)=>s+(+r.t.amount||0),0);
+  const body=rows.map(r=>[fmtDate(r.t.date),r.c.name,cardOwnerLabel(r.c),r.t.note||'',r.t.fromCash?'Cash book':'—',userName(r.t.byId),money(r.t.amount)]);
+  return reportAreaHtml({areaId:'cardDepositPdfArea',width:900,icon:'⇩',title:'Card Deposits',
+    sub:`${rows.length} deposit(s) · ${period}`,
+    head:['Date','Card','Holder','Note','Source','By','Amount'], numCols:[6], rows:body,
+    foot:['Total · '+rows.length+' deposit'+(rows.length===1?'':'s'),'','','','','',money(total)]});
+}
+function pdfCardDeposit(){ const html=cardDepositReportHtml(); if(!html)return toast('No card deposits in this period',1); downloadReportPdf(html,'cardDepositPdfArea','card_deposits_'+todayStr()+'.pdf'); }
+
 /* ---- single-card statement (payment history) → data, Excel & PDF ----
    Used by the card detail popup and by the Card Statement report's PDF button.
    Running balance mirrors cardOutstanding: purchase/oldbal add, oldpay and
@@ -9654,24 +9771,35 @@ function pdfCusage(){ downloadReportPdf(cusageReportHtml(),'cusagePdfArea','card
      • Borrower cashback this period      (used × borrower%)
      • Remaining cashback still earnable  = max − our − borrower
      • Available limit (period), Used limit (period), Old due, Due date                        */
+function cbrRange(){ const from=$('#cbrFrom')?.value||'', to=$('#cbrTo')?.value||''; return {from,to,active:!!(from||to)}; }
 function cashbackRepRows(){
   const q=($('#cbrSearch')?.value||'').trim().toLowerCase();
   const order=$('#cbrOrder')?.value||'rem';
   const onlyUsed=($('#cbrCards')?.value||'all')==='used';
   const today=todayStr();
+  const rng=cbrRange();   // when a from/to range is set, figures cover that window instead of the current statement period
+  const inR=d=>(!rng.from||d>=rng.from)&&(!rng.to||d<=rng.to);
   let rows=(DB.cards||[]).map(c=>{
     const ourPct=cardOurCashbackPct(c), borPct=cardBorrowerCashbackPct(c), totPct=ourPct+borPct;
     const limit=+c.creditLimit||0;
     const maxCb=cardMaxCashback(c);
-    const usedPeriod=cardUsedInPeriod(c,today);                 // spend charged inside this cashback period
-    const ourCb=usedPeriod*ourPct/100;                          // OUR share of this period's spend
-    const borCb=usedPeriod*borPct/100;                          // the BORROWER's share of this period's spend
-    const credited=cardCashbackUsed(c,today);                   // cashback actually posted to the card this period
+    let usedPeriod, credited, pr;
+    if(rng.active){
+      const txns=c.txns||[];
+      usedPeriod=txns.filter(t=>(t.type==='purchase'||t.type==='oldbal')&&inR(t.date)).reduce((s,t)=>s+(+t.amount||0),0);
+      credited=txns.filter(t=>t.type==='discount'&&inR(t.date)).reduce((s,t)=>s+(+t.amount||0),0);
+      pr={start:rng.from||'start', end:rng.to||today};
+    } else {
+      usedPeriod=cardUsedInPeriod(c,today);                     // spend charged inside this cashback period
+      credited=cardCashbackUsed(c,today);                       // cashback actually posted to the card this period
+      pr=cashbackPeriodRange(c,today);
+    }
+    const ourCb=usedPeriod*ourPct/100;                          // OUR share of this window's spend
+    const borCb=usedPeriod*borPct/100;                          // the BORROWER's share of this window's spend
     const earned=ourCb+borCb;
     const remCb=Math.max(0, maxCb-earned);
     const availPeriod=Math.max(0, limit-usedPeriod);
     const sp=cardDueSplit(c), due=cardDueDate(c);
-    const pr=cashbackPeriodRange(c,today);
     return { c, ourPct, borPct, totPct, limit, maxCb, usedPeriod, ourCb, borCb, credited, earned, remCb, availPeriod,
              oldDue:sp.oldDue, due, dleft:daysUntil(due), capPeriod:cardCashbackCfg(c).capPeriod, pr,
              earnedPct: maxCb>0?Math.min(100,Math.max(0,earned/maxCb*100)):0 };
@@ -9701,6 +9829,9 @@ views.cashbackrep=function(){
         <option value="near">Due date · nearest first</option>
         <option value="far">Due date · latest first</option>
       </select>
+      <input id="cbrFrom" type="date" class="mini-btn" style="padding:9px" oninput="renderCashbackRep()" title="From date — leave blank for current statement period">
+      <input id="cbrTo" type="date" class="mini-btn" style="padding:9px" oninput="renderCashbackRep()" title="To date">
+      <button class="btn-sm btn-ghost" onclick="clearCbrRange()">Clear dates</button>
       <button class="btn-sm btn-green" onclick="exportCashbackRepExcel()">⬇ Excel</button>
       <button class="btn-sm btn-ghost" onclick="pdfCashbackRep()">📄 PDF</button>
     </div></div>
@@ -9709,17 +9840,20 @@ views.cashbackrep=function(){
   <div id="cbrBody"></div>`;
 };
 views._after_cashbackrep=()=>{ if(canView('cashbackrep'))renderCashbackRep(); };
+function clearCbrRange(){ ['cbrFrom','cbrTo'].forEach(id=>{ const el=$('#'+id); if(el)el.value=''; }); renderCashbackRep(); }
 function renderCashbackRep(){
   if(!canView('cashbackrep'))return;
   const all=DB.cards||[];
+  const rng=cbrRange();
+  const per= rng.active ? `${rng.from?fmtDate(rng.from):'start'} — ${rng.to?fmtDate(rng.to):fmtDate(todayStr())}` : 'this period';
   const cs=$('#cbrStats');
   if(cs){ const base=cashbackRepRows();
     const tMax=base.reduce((s,r)=>s+r.maxCb,0), tOur=base.reduce((s,r)=>s+r.ourCb,0), tBor=base.reduce((s,r)=>s+r.borCb,0), tRem=base.reduce((s,r)=>s+r.remCb,0);
     cs.innerHTML= all.length?`
-      <div class="stat gold"><span class="ic">🎯</span><div class="label">Maximum cashback</div><div class="val">${money(tMax)}</div><div class="foot">${base.length} card${base.length===1?'':'s'} · this period</div></div>
-      <div class="stat green"><span class="ic">💰</span><div class="label">Our cashback</div><div class="val">${money(tOur)}</div><div class="foot">credited this period</div></div>
-      <div class="stat blue"><span class="ic">🤝</span><div class="label">Borrower cashback</div><div class="val">${money(tBor)}</div><div class="foot">their share this period</div></div>
-      <div class="stat amber"><span class="ic">✨</span><div class="label">Remaining cashback</div><div class="val">${money(tRem)}</div><div class="foot">still earnable</div></div>`:''; }
+      <div class="stat gold"><span class="ic">🎯</span><div class="label">Maximum cashback</div><div class="val">${money(tMax)}</div><div class="foot">${base.length} card${base.length===1?'':'s'} · per period</div></div>
+      <div class="stat green"><span class="ic">💰</span><div class="label">Our cashback</div><div class="val">${money(tOur)}</div><div class="foot">${per}</div></div>
+      <div class="stat blue"><span class="ic">🤝</span><div class="label">Borrower cashback</div><div class="val">${money(tBor)}</div><div class="foot">their share · ${per}</div></div>
+      <div class="stat amber"><span class="ic">✨</span><div class="label">Remaining cashback</div><div class="val">${money(tRem)}</div><div class="foot">${rng.active?'max − earned (range)':'still earnable'}</div></div>`:''; }
   const body=$('#cbrBody'); if(!body)return;
   if(!all.length){ body.innerHTML=`<div class="panel">${emptyBox('💳','No cards','Add credit cards in Credit Cards to see cashback.')}</div>`; return; }
   const rows=cashbackRepRows();
@@ -9754,7 +9888,7 @@ function renderCashbackRep(){
     <div class="table-wrap"><table style="min-width:1100px"><thead><tr>
       <th>Card</th><th class="num">Cashback %</th><th class="num">Max Cashback</th><th class="num">Our Cashback</th><th class="num">Borrower Cashback</th><th class="num">Remaining</th><th class="num">Used Limit</th><th class="num">Available Limit</th><th class="num">Old Due</th><th>Due Date</th>
     </tr></thead><tbody>${tr}${foot}</tbody></table></div>
-    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">Figures are for each card's <b>current cashback period</b> — the statement cycle, or the <b>calendar month</b> for ADCB Lulu &amp; ADCB 365. <b>Max Cashback</b> = limit × (our% + borrower%) ÷ 100 · <b>Our Cashback</b> = this period's spend × our% · <b>Borrower Cashback</b> = this period's spend × borrower% · <b>Remaining</b> = max − our − borrower (what more can still be earned) · <b>Used / Available Limit</b> are within this period. Edit each card's split in Credit Cards; monthly-cap cards are set in Settings → Credit &amp; Cashback Rules.</div>
+    <div style="margin-top:10px;color:var(--muted2);font-size:11.5px">${rng.active?`Figures cover <b>${rng.from?fmtDate(rng.from):'start'} — ${rng.to?fmtDate(rng.to):fmtDate(todayStr())}</b> (the spend &amp; cashback dated in this window). Clear the dates to return to each card's current statement period.`:`Figures are for each card's <b>current cashback period</b> — the statement cycle, or the <b>calendar month</b> for ADCB Lulu &amp; ADCB 365.`} <b>Max Cashback</b> = limit × (our% + borrower%) ÷ 100 · <b>Our Cashback</b> = spend × our% · <b>Borrower Cashback</b> = spend × borrower% · <b>Remaining</b> = max − our − borrower (what more can still be earned) · <b>Used / Available Limit</b> are within this window. Edit each card's split in Credit Cards; monthly-cap cards are set in Settings → Credit &amp; Cashback Rules.</div>
   </div>`;
 }
 function exportCashbackRepExcel(){
