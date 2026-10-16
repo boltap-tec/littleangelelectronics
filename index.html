@@ -731,8 +731,8 @@ body.light .pstack>*{border-color:#fff!important}
 .line-items{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px}
 .li-head,.li-row{display:grid;grid-template-columns:2.4fr .9fr 1fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px}
 #s_items .li-head,#s_items .li-row{grid-template-columns:2.2fr .72fr .92fr .72fr 1fr 34px}
-#dep_items .li-head,#dep_items .li-row{grid-template-columns:2.2fr .9fr 1.4fr 34px}
-@media(max-width:560px){#dep_items .li-row{grid-template-columns:1fr 84px 1fr 34px}}
+#dep_items .li-head,#dep_items .li-row{grid-template-columns:1.4fr 2.2fr .9fr 34px}
+@media(max-width:560px){#dep_items .li-row{grid-template-columns:1fr 1fr 84px 34px}}
 .li-head{background:var(--panel2);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
 .li-row{border-top:1px solid var(--line)}
 .li-row input,.li-row select{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
@@ -4940,7 +4940,7 @@ function depositEntryModal(){
       <div class="field"><label>Note (optional)</label><input id="dep_note" placeholder="applies to all cards — e.g. bank transfer / receipt no."></div>
     </div>
     <label style="font-size:12.5px;color:var(--muted);font-weight:600">Deposits *</label>
-    <div class="line-items" id="dep_items"><div class="li-head"><div class="rqh">Card</div><div class="rqh">Amount</div><div>Who deposited</div><div></div></div><div id="dep_rows"></div></div>
+    <div class="line-items" id="dep_items"><div class="li-head"><div>Who deposited</div><div class="rqh">Card</div><div class="rqh">Amount</div><div></div></div><div id="dep_rows"></div></div>
     ${dataList('dep_by_dl',allDepositors())}
     <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="depAddRow()">＋ Add card</button></div>
     <label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
@@ -4959,17 +4959,16 @@ function depHint(i){ const el=$('#dh_'+i); if(el)el.innerHTML=depHintText(i); }
 function renderDepRows(){
   const host=$('#dep_rows'); if(!host)return; const cards=activeCards();
   host.innerHTML=_depRows.map((it,i)=>`<div class="li-row">
+      <input id="dep_by_${i}" list="dep_by_dl" autocomplete="off" value="${esc(it.by||'')}" placeholder="who deposited" oninput="_depRows[${i}].by=this.value">
       <div class="cardpick-wrap">${cardPickerHtml('dep_'+i,cards,it.cardId,c=>'avail '+money(cardAvailable(c)),'Owner name or last 4 digits…',(id)=>depPick(i,id))}</div>
       <input id="dep_amt_${i}" class="rq" type="number" min="0" step="any" value="${it.amt}" placeholder="0.00" oninput="_depRows[${i}].amt=this.value;depHint(${i});depTotals()">
-      <input id="dep_by_${i}" list="dep_by_dl" autocomplete="off" value="${esc(it.by||'')}" placeholder="who deposited" oninput="_depRows[${i}].by=this.value">
       <button class="li-x" onclick="depDel(${i})">✕</button>
     </div><div class="li-hint" id="dh_${i}">${depHintText(i)}</div>`).join('');
-  // wire Enter: card picker → amount; amount or who-deposited → next row (adding one when on the last row)
+  // wire Enter: card picker → amount; amount → next row (adding one when on the last row)
   const nextRow=i=>{ if(i===_depRows.length-1) depAddRow(); else { const nq=$('#dep_'+(i+1)+'_q'); if(nq)nq.focus(); } };
   _depRows.forEach((it,i)=>{
     const q=$('#dep_'+i+'_q'); if(q) q.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); const a=$('#dep_amt_'+i); if(a){ a.focus(); a.select(); } } };
     const a=$('#dep_amt_'+i); if(a) a.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); nextRow(i); } };
-    const b=$('#dep_by_'+i); if(b) b.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); nextRow(i); } };
   });
   depTotals();
 }
