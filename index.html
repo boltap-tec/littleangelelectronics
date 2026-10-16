@@ -4964,11 +4964,12 @@ function renderDepRows(){
       <input id="dep_by_${i}" list="dep_by_dl" autocomplete="off" value="${esc(it.by||'')}" placeholder="who deposited" oninput="_depRows[${i}].by=this.value">
       <button class="li-x" onclick="depDel(${i})">✕</button>
     </div><div class="li-hint" id="dh_${i}">${depHintText(i)}</div>`).join('');
-  // wire Enter: card picker → amount; amount → next row (adding one when on the last row)
+  // wire Enter: card picker → amount; amount or who-deposited → next row (adding one when on the last row)
+  const nextRow=i=>{ if(i===_depRows.length-1) depAddRow(); else { const nq=$('#dep_'+(i+1)+'_q'); if(nq)nq.focus(); } };
   _depRows.forEach((it,i)=>{
     const q=$('#dep_'+i+'_q'); if(q) q.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); const a=$('#dep_amt_'+i); if(a){ a.focus(); a.select(); } } };
-    const a=$('#dep_amt_'+i); if(a) a.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault();
-      if(i===_depRows.length-1) depAddRow(); else { const nq=$('#dep_'+(i+1)+'_q'); if(nq)nq.focus(); } } };
+    const a=$('#dep_amt_'+i); if(a) a.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); nextRow(i); } };
+    const b=$('#dep_by_'+i); if(b) b.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); nextRow(i); } };
   });
   depTotals();
 }
