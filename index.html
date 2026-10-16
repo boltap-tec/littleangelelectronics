@@ -731,6 +731,8 @@ body.light .pstack>*{border-color:#fff!important}
 .line-items{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px}
 .li-head,.li-row{display:grid;grid-template-columns:2.4fr .9fr 1fr 1fr 34px;gap:8px;align-items:center;padding:9px 12px}
 #s_items .li-head,#s_items .li-row{grid-template-columns:2.2fr .72fr .92fr .72fr 1fr 34px}
+#dep_items .li-head,#dep_items .li-row{grid-template-columns:2.6fr 1fr 34px}
+@media(max-width:560px){#dep_items .li-row{grid-template-columns:1fr 92px 34px}}
 .li-head{background:var(--panel2);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
 .li-row{border-top:1px solid var(--line)}
 .li-row input,.li-row select{padding:9px;font-size:13.5px;border-radius:9px;background:var(--bg);border:1px solid var(--line);color:var(--text);width:100%}
@@ -4864,6 +4866,8 @@ function quickCardTxn(type,cardId){
   if(cardId){ go('cards'); setTimeout(()=>cardTxnModal(cardId,type),60); return; }
   const cards=activeCards();
   if(!cards.length) return toast('No active cards — add one in Credit Cards first',1);
+  /* Deposit uses the fast row-by-row entry (pick card → amount → Enter for next row), like New Purchase */
+  if(type==='deposit'){ go('cards'); setTimeout(()=>depositEntryModal(),60); return; }
   if(cards.length===1){ go('cards'); setTimeout(()=>cardTxnModal(cards[0].id,type),60); return; }
   const items=cards.map(c=>{ const av=cardAvailable(c), out=cardOutstanding(c);
     return {value:c.id, label:cardLabel(c), sub:'available '+money(av)+(out>0.005?' · due '+money(out):'')}; });
@@ -4917,6 +4921,71 @@ function saveBatchCardTxn(){
   if(!n)return toast('Enter an amount for at least one card',1);
   logAct('add','card entries',n+' cards',`${txnLabel(type)} × ${n}`);
   save(); toast(n+' '+(type==='recharge'?'recharge':type==='deposit'?'deposit':'payment')+(n===1?'':'s')+' saved'+(fromCash?' · cash deducted':''));
+  closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+}
+/* ===== fast deposit entry — pick a card, type the amount, press Enter for the next row (like New Purchase) ===== */
+let _depRows=[];
+function depositEntryModal(){
+  const cards=activeCards();
+  if(!cards.length)return toast('No active cards — add one in Credit Cards first',1);
+  _depRows=[{cardId:'',amt:''}];
+  const defDate=lastEntryDate(DB.purchases);   // match the New Purchase form's date default
+  openModal('⇩ Card Deposits',`
+    <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Cash deposited into each card to pay down what you owe — taken from your cash box. Pick a card, type the amount, press <b>Enter</b> to open the next row.</p>
+    <div class="grid2" style="margin-bottom:12px">
+      <div class="field"><label>Date</label><input id="dep_date" type="date" value="${defDate}"></div>
+      <div class="field"><label>Note (optional)</label><input id="dep_note" placeholder="applies to all cards — e.g. bank transfer / receipt no."></div>
+    </div>
+    <label style="font-size:12.5px;color:var(--muted);font-weight:600">Deposits *</label>
+    <div class="line-items" id="dep_items"><div class="li-head"><div class="rqh">Card</div><div class="rqh">Amount</div><div></div></div><div id="dep_rows"></div></div>
+    <div class="row-actions" style="margin-bottom:10px"><button class="mini-btn" onclick="depAddRow()">＋ Add card</button></div>
+    <label style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);padding:11px 13px;border-radius:11px">
+      <input type="checkbox" checked disabled style="width:18px;height:18px;accent-color:var(--brand)"><span style="font-size:14px;font-weight:600">Deposited from your cash box (deducts from Cash Book)</span></label>
+    <div class="totbox" id="dep_tot" style="margin-top:12px"></div>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm" id="dep_save" onclick="saveDepositEntry()">Save</button>`);
+  renderDepRows();
+  setTimeout(()=>$('#dep_0_q')?.focus(),40);
+}
+function depHintText(i){ const it=_depRows[i]; if(!it)return ''; const c=it.cardId?cardById(it.cardId):null;
+  if(!c)return 'Search by owner name or last 4 digits.';
+  const av=cardAvailable(c), out=cardOutstanding(c), amt=+it.amt||0;
+  return `available <b style="color:var(--text)">${money(av)}</b>${out>0.005?' · due '+money(out):''}${amt>0?` → after <b style="color:var(--green)">${money(av+amt)}</b>`:''}`; }
+function depHint(i){ const el=$('#dh_'+i); if(el)el.innerHTML=depHintText(i); }
+function renderDepRows(){
+  const host=$('#dep_rows'); if(!host)return; const cards=activeCards();
+  host.innerHTML=_depRows.map((it,i)=>`<div class="li-row">
+      <div class="cardpick-wrap">${cardPickerHtml('dep_'+i,cards,it.cardId,c=>'avail '+money(cardAvailable(c)),'Owner name or last 4 digits…',(id)=>depPick(i,id))}</div>
+      <input id="dep_amt_${i}" class="rq" type="number" min="0" step="any" value="${it.amt}" placeholder="0.00" oninput="_depRows[${i}].amt=this.value;depHint(${i});depTotals()">
+      <button class="li-x" onclick="depDel(${i})">✕</button>
+    </div><div class="li-hint" id="dh_${i}">${depHintText(i)}</div>`).join('');
+  // wire Enter: card picker → amount; amount → next row (adding one when on the last row)
+  _depRows.forEach((it,i)=>{
+    const q=$('#dep_'+i+'_q'); if(q) q.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); const a=$('#dep_amt_'+i); if(a){ a.focus(); a.select(); } } };
+    const a=$('#dep_amt_'+i); if(a) a.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault();
+      if(i===_depRows.length-1) depAddRow(); else { const nq=$('#dep_'+(i+1)+'_q'); if(nq)nq.focus(); } } };
+  });
+  depTotals();
+}
+function depPick(i,id){ if(!_depRows[i])return; _depRows[i].cardId=id;
+  const c=id?cardById(id):null, amtEl=$('#dep_amt_'+i);
+  if(c && amtEl && !(+amtEl.value>0)){ const out=cardOutstanding(c); if(out>0.005){ const v=+out.toFixed(2); amtEl.value=v; _depRows[i].amt=v; } }  // prefill the amount due (editable)
+  depHint(i); depTotals(); }
+function depAddRow(){ _depRows.push({cardId:'',amt:''}); renderDepRows(); flashNewRow('#dep_rows .li-row'); setTimeout(()=>$('#dep_'+(_depRows.length-1)+'_q')?.focus(),20); }
+function depDel(i){ _depRows.splice(i,1); if(!_depRows.length)_depRows.push({cardId:'',amt:''}); renderDepRows(); }
+function depTotals(){ const box=$('#dep_tot'); if(!box)return;
+  let n=0,sum=0; _depRows.forEach(it=>{ const amt=+it.amt||0; if(it.cardId&&amt>0){ n++; sum+=amt; } });
+  box.innerHTML=`<div class="totrow" style="font-weight:800"><span>${n} card${n===1?'':'s'} selected</span><span style="color:var(--green)">${money(sum)}</span></div>`;
+  const b=$('#dep_save'); if(b)b.textContent=n?('Save '+n):'Save'; }
+function saveDepositEntry(){
+  if(!requireOnline())return;
+  const date=$('#dep_date')?.value||todayStr(), note=($('#dep_note')?.value||'').trim();
+  let n=0;
+  _depRows.forEach(it=>{ const amt=+it.amt; if(!(amt>0)||!it.cardId)return; const c=cardById(it.cardId); if(!c)return;
+    if(!c.txns)c.txns=[]; c.txns.push({id:uid(),date,type:'deposit',amount:amt,note,fromCash:true,byId:session.id}); n++; });
+  if(!n)return toast('Pick a card and enter an amount for at least one row',1);
+  logAct('add','card deposits',n+' cards',`${txnLabel('deposit')} × ${n}`);
+  save(); toast(n+' deposit'+(n===1?'':'s')+' saved · cash deducted');
   closeModal(); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 /* recurring nudge while any card is urgent: soft chime + toast + blinking bell */
@@ -5163,6 +5232,47 @@ function saveAdjust(id){
   save(); toast('Balance edited ✓'); cardDetail(id); if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
 }
 
+/* ---- ONE-TIME owner tool: zero every ACTIVE card's available balance ----
+   Sets each active card's old statement due → 0 and currently-used → its full
+   credit limit, so available balance = 0. Existing purchase/payment HISTORY is
+   preserved — this only PUSHES one 'adjust' ledger entry per card (never edits or
+   deletes existing txns), the same mechanism as the per-card Edit Balance. The
+   adjust entry is reversible from each card's history. Inactive cards untouched. */
+function zeroActiveCardBalancesConfirm(){
+  if(!isOwner())return toast('Owner only',1);
+  const n=activeCards().length;
+  if(!n)return toast('No active cards',1);
+  openModal('Zero all active card balances?',
+    `<p style="margin:0;line-height:1.6">This adds a balance <b>adjustment</b> to all <b>${n}</b> active card${n===1?'':'s'} so each shows:</p>
+     <ul style="line-height:1.75;margin:10px 0 0;padding-left:20px">
+       <li>Old statement due → <b>0</b></li>
+       <li>Currently used → <b>its full credit limit</b></li>
+       <li>Available balance → <b>0</b></li>
+     </ul>
+     <p style="margin:12px 0 0;color:var(--muted);font-size:13px">Existing purchase &amp; payment history is <b>not</b> changed — this only adds one adjustment entry per card (reversible from each card's history). Inactive cards are left as-is.</p>`,
+    `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn-sm btn-gold" onclick="zeroActiveCardBalances()">Yes, zero them</button>`);
+}
+function zeroActiveCardBalances(){
+  if(!requireOnline())return;
+  if(!isOwner())return toast('Owner only',1);
+  const act=activeCards(); if(!act.length){ closeModal(); return toast('No active cards',1); }
+  const date=todayStr(); let n=0;
+  act.forEach(c=>{
+    const lim=+c.creditLimit||0;
+    const delta=r2(r2(cardOutstanding(c))-lim);   // bring outstanding up to the full limit
+    if(Math.abs(delta)>0.005){
+      if(!c.txns)c.txns=[];
+      c.txns.push({id:uid(),date,type:'adjust',amount:delta,note:'Balance zeroed · old statement 0 + used = limit '+money(lim)});
+    }
+    c.statementDue=0; c.lastBalEdit=date;
+    logAct('edit','card balance',c.name,'zeroed · limit '+money(lim)+' · used '+money(lim)+' · available '+money(0));
+    n++;
+  });
+  save(); closeModal(); toast('Zeroed '+n+' active card'+(n===1?'':'s')+' ✓');
+  if($('.nav-item.active')?.dataset.view==='cards')renderCards(); renderBell();
+}
+
 /* ---- bell reminders ---- */
 function renderBell(){ const b=$('#bellBadge'); if(!b)return; const n=cardReminders().length+lowBalanceCards().length+negativeCards().length;
   if(n>0){ b.textContent=n; b.classList.remove('hidden'); } else b.classList.add('hidden');
@@ -5279,6 +5389,7 @@ views.cards=function(){
       <button class="btn-sm btn-ghost" onclick="quickCardTxn('deposit')" title="Deposit cash into one or more cards">⇩ Deposit</button>
       <button class="btn-sm btn-gold" onclick="quickCardTxn('payment')" title="Pay one or more cards">💵 Pay</button>
       <button class="btn-sm btn-ghost" onclick="unifyCardColours()" title="Repaint every card so all cards of a bank share that bank's colour">🎨 Unify colours</button>
+      ${isOwner()?`<button class="btn-sm btn-ghost" style="border-color:#7a2b2b;color:var(--red)" onclick="zeroActiveCardBalancesConfirm()" title="One-time: set every active card's old statement due to 0 and currently-used to its full limit, so available balance = 0. History is kept.">⨯ Zero balances</button>`:''}
       <button class="btn-sm" onclick="editCard()">＋ Add Card</button>
     </div></div>
   <div class="toolbar">
