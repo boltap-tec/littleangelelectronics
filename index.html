@@ -4949,7 +4949,7 @@ function depositEntryModal(){
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" id="dep_save" onclick="saveDepositEntry()">Save</button>`);
   renderDepRows();
-  setTimeout(()=>$('#dep_0_q')?.focus(),40);
+  setTimeout(()=>$('#dep_by_0')?.focus(),40);
 }
 function depHintText(i){ const it=_depRows[i]; if(!it)return ''; const c=it.cardId?cardById(it.cardId):null;
   if(!c)return 'Search by owner name or last 4 digits.';
@@ -4964,9 +4964,10 @@ function renderDepRows(){
       <input id="dep_amt_${i}" class="rq" type="number" min="0" step="any" value="${it.amt}" placeholder="0.00" oninput="_depRows[${i}].amt=this.value;depHint(${i});depTotals()">
       <button class="li-x" onclick="depDel(${i})">✕</button>
     </div><div class="li-hint" id="dh_${i}">${depHintText(i)}</div>`).join('');
-  // wire Enter: card picker → amount; amount → next row (adding one when on the last row)
-  const nextRow=i=>{ if(i===_depRows.length-1) depAddRow(); else { const nq=$('#dep_'+(i+1)+'_q'); if(nq)nq.focus(); } };
+  // wire Enter: who deposited → card picker → amount; amount → next row (adding one when on the last row)
+  const nextRow=i=>{ if(i===_depRows.length-1) depAddRow(); else { const nb=$('#dep_by_'+(i+1)); if(nb)nb.focus(); } };
   _depRows.forEach((it,i)=>{
+    const b=$('#dep_by_'+i); if(b) b.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); const q=$('#dep_'+i+'_q'); if(q)q.focus(); } };
     const q=$('#dep_'+i+'_q'); if(q) q.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); const a=$('#dep_amt_'+i); if(a){ a.focus(); a.select(); } } };
     const a=$('#dep_amt_'+i); if(a) a.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); nextRow(i); } };
   });
@@ -4974,7 +4975,7 @@ function renderDepRows(){
 }
 function depPick(i,id){ if(!_depRows[i])return; _depRows[i].cardId=id;   // amount stays blank — the user types it
   depHint(i); depTotals(); }
-function depAddRow(){ const prev=_depRows[_depRows.length-1]; _depRows.push({cardId:'',amt:'',by:prev?(prev.by||''):''}); renderDepRows(); flashNewRow('#dep_rows .li-row'); setTimeout(()=>$('#dep_'+(_depRows.length-1)+'_q')?.focus(),20); }
+function depAddRow(){ const prev=_depRows[_depRows.length-1]; _depRows.push({cardId:'',amt:'',by:prev?(prev.by||''):''}); renderDepRows(); flashNewRow('#dep_rows .li-row'); setTimeout(()=>$('#dep_by_'+(_depRows.length-1))?.focus(),20); }
 function depDel(i){ _depRows.splice(i,1); if(!_depRows.length)_depRows.push({cardId:'',amt:'',by:''}); renderDepRows(); }
 function depTotals(){ const box=$('#dep_tot'); if(!box)return;
   let n=0,sum=0; _depRows.forEach(it=>{ const amt=+it.amt||0; if(it.cardId&&amt>0){ n++; sum+=amt; } });
