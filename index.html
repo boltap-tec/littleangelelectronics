@@ -1014,7 +1014,7 @@ const KEY='lae_db_v1';
    The cloud remembers the highest version that has written to it (settings.appVersion);
    any device older than that is put in read-only mode (see versionBlocked) so a stale
    or outdated build can never push leftover records into everyone's shared data. */
-const APP_VERSION = 20261015;
+const APP_VERSION = 20261016;
 const SKEY='lae_session_v1';   // remembers who is logged in, so a refresh keeps the session
 /* roles & permissions — declared before load()/seed()/migrate() use them */
 const ALL_VIEWS=['dashboard','buystore','shop','purchases','online','sales','payments','cards','cardpref','lenders','giftcards','cashbook','inventory','products','compare','profit','activity','settings'];
@@ -2434,7 +2434,7 @@ function renderPurchaseModal(){
     <div class="totbox" id="b_tot"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="savePurchase('${id||''}')">Save Purchase</button>`);
-  renderBuyRows(); renderBuySplits();
+  renderBuyRows(); renderBuySplits(); kbInit('purchase');
 }
 function buyProdOpts(sel,eng){ eng=eng||computeEngine(); if(!DB.products.length)return '<option value="">— add a product first —</option>';
   return `<option value="" ${!sel?'selected':''}>— select product —</option>`+productsByAdded().map(x=>{const st=stockOf(x.id,eng),bp=avgBuyPrice(x.id,eng),rf=refsStr(x);return `<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(x.name)} — stock ${num(st)} · buy ${money(bp)}${rf?' · ref '+esc(rf):''}</option>`;}).join(''); }
@@ -4144,7 +4144,7 @@ function newSale(id,prefillPid){
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm btn-green" onclick="saveSale('${id||''}',false)">Save</button>
      <button class="btn-sm btn-gold" onclick="saveSale('${id||''}',true)">Save &amp; Open Bill</button>`);
-  renderSaleRows(); saleMeta();
+  renderSaleRows(); saleMeta(); kbInit('sales');
 }
 let _saleDeduct0='', _saleNote0='';
 function saleMeta(){
@@ -6262,7 +6262,7 @@ function _openGiftBuyModal({preId, edit, labelOnly}){
     <div class="field" style="margin-top:12px"><label>Note (optional)</label><input id="g_note" placeholder="e.g. bought from / receipt no." value="${edit?esc(edit.buyNote||''):''}"></div>`,
     `<button class="btn-sm btn-ghost" onclick="closeModal()">Cancel</button>
      <button class="btn-sm" onclick="saveGiftPurchase()">${edit?'Update':'Save'}</button>`);
-  renderGiftBuySplits(); setTimeout(()=>$('#g_amt')?.focus(),30);
+  renderGiftBuySplits(); kbInit('gift');
 }
 /* gift-card purchase uses the SAME payment methods as normal & online purchases */
 function renderGiftBuySplits(){
@@ -10186,6 +10186,10 @@ views.settings=function(){
     </div>
   </div>
   <div class="panel">
+    <h3>⌨️ Keyboard &amp; Data Entry</h3><p class="psub">Speed up typing in the <b>Purchase</b>, <b>Sales</b> and <b>Gift-card buy</b> forms. <b>Enter</b> jumps to the next field (Shift+Enter goes back); on the last cell of a product or payment line it adds a new line. A save key clicks the form's Save button. Turn fields off to skip them, use ↑ ↓ to reorder the flow, and pick where the cursor starts.</p>
+    <div id="kbdPanel"></div>
+  </div>
+  <div class="panel">
     <h3>🏢 Company Profile</h3><p class="psub">Shown on the app header and every sales bill.</p>
     <div class="field"><label>Company Name (legal)</label><input id="st_company" value="${esc(st.company)}"></div>
     <div class="grid2">
@@ -10343,7 +10347,62 @@ views.settings=function(){
   </div>`:''}
   <!-- ===== END DEV-ONLY ===== -->`;
 };
-views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules(); renderPayModes(); renderCardNames(); renderCardBanks();} const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
+views._after_settings=()=>{ if(isOwner()){renderUsers(); renderCreditRules(); renderPayModes(); renderCardNames(); renderCardBanks();} renderKbd(); const l=$('#st_logo'); if(l)l.oninput=()=>{$('#logoPrev').innerHTML= l.value? `<img src="${esc(l.value)}" style="width:100%;height:100%;object-fit:contain">`:logoMark(50);}; };
+/* ---- Keyboard & Data-entry flow settings ---- */
+function kbKeyLabel(c){ return (c||'').split('+').map(p=>p==='ctrl'?'Ctrl':p==='alt'?'Alt':p==='shift'?'Shift':p==='enter'?'Enter':p==='space'?'Space':p.toUpperCase()).join(' + '); }
+function renderKbd(){
+  const host=$('#kbdPanel'); if(!host)return;
+  const k=kbRoot();
+  const keyOpts=(arr,cur)=>arr.map(c=>`<option value="${c}" ${c===cur?'selected':''}>${kbKeyLabel(c)}</option>`).join('');
+  const forms=Object.keys(KB_META).map(f=>{
+    const meta=KB_META[f], cfg=k.forms[f];
+    const rows=cfg.order.map((key,i)=>{
+      const stop=meta.stops.find(s=>s.k===key); if(!stop)return '';
+      const on=!cfg.skip[key];
+      const cellBoxes=(stop.cells&&!stop.cellsFree)? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:7px;padding-left:2px">`+
+        stop.cells.map(c=>{ const cOn=!(cfg.cells[key]&&cfg.cells[key][c[0]]===0);
+          return `<label class="chk" style="font-size:12px;gap:6px;color:var(--muted)"><input type="checkbox" ${cOn?'checked':''} ${on?'':'disabled'} style="width:15px;height:15px;accent-color:var(--brand)" onchange="kbCell('${f}','${key}','${c[0]}',this.checked)"> ${esc(c[1])}</label>`; }).join('')+`</div>` : '';
+      return `<div style="border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:8px;background:var(--bg);${on?'':'opacity:.55'}">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <button class="mini-btn" style="padding:1px 7px;line-height:1.2" ${i===0?'disabled':''} onclick="kbMove('${f}','${key}',-1)">▲</button>
+            <button class="mini-btn" style="padding:1px 7px;line-height:1.2" ${i===cfg.order.length-1?'disabled':''} onclick="kbMove('${f}','${key}',1)">▼</button>
+          </div>
+          <label class="chk" style="flex:1;gap:9px;margin:0"><input type="checkbox" ${on?'checked':''} style="width:17px;height:17px;accent-color:var(--brand)" onchange="kbSkip('${f}','${key}',this.checked)"><b style="font-size:13.5px">${esc(stop.lab)}</b>${stop.group?`<span style="font-size:11px;color:var(--muted2)">· repeatable line</span>`:''}</label>
+          <label class="chk" style="gap:6px;margin:0;font-size:11.5px;color:var(--muted)" title="Cursor starts here when the form opens"><input type="radio" name="kbstart_${f}" ${cfg.start===key?'checked':''} style="width:15px;height:15px;accent-color:var(--gold)" onchange="kbStart('${f}','${key}')"> start</label>
+        </div>${cellBoxes}</div>`;
+    }).join('');
+    return `<details style="border:1px solid var(--line2);border-radius:12px;margin-bottom:12px;background:var(--panel2)" ${f==='purchase'?'open':''}>
+      <summary style="cursor:pointer;padding:12px 14px;font-weight:700;font-size:14px">${esc(meta.label)} form</summary>
+      <div style="padding:4px 14px 14px">${rows}</div></details>`;
+  }).join('');
+  host.innerHTML=`
+    <label class="chk" style="gap:10px;background:var(--bg);border:1px solid var(--line);padding:12px 14px;border-radius:11px;margin-bottom:12px">
+      <input type="checkbox" ${k.enabled?'checked':''} style="width:18px;height:18px;accent-color:var(--brand)" onchange="kbSetEnabled(this.checked)">
+      <span style="font-size:14px;font-weight:700">Enable keyboard data-entry flow</span></label>
+    <div class="grid3" style="margin-bottom:14px;${k.enabled?'':'opacity:.5;pointer-events:none'}">
+      <div class="field"><label>Next-field key</label>
+        <select onchange="kbSetNext(this.value)"><option value="enter" ${k.nextKey==='enter'?'selected':''}>Enter</option><option value="tab" ${k.nextKey==='tab'?'selected':''}>Tab</option></select>
+        <div style="color:var(--muted2);font-size:11px;margin-top:5px">Shift + this key goes to the previous field.</div></div>
+      <div class="field"><label>Save key (all forms)</label>
+        <select onchange="kbSetKey('save',this.value)">${keyOpts(KB_SAVE_KEYS,k.keys.save)}</select>
+        <div style="color:var(--muted2);font-size:11px;margin-top:5px">Clicks <b>Save</b> on Purchase, Sales &amp; Gift-card buy.</div></div>
+      <div class="field"><label>Sales “Save &amp; Open Bill” key</label>
+        <select onchange="kbSetKey('print',this.value)">${keyOpts(KB_PRINT_KEYS,k.keys.print)}</select>
+        <div style="color:var(--muted2);font-size:11px;margin-top:5px">Sales form only — saves and opens the printable bill.</div></div>
+    </div>
+    <div style="${k.enabled?'':'opacity:.5;pointer-events:none'}">${forms}
+      <button class="btn-sm btn-ghost" onclick="kbReset()">↺ Reset flow to defaults</button></div>`;
+}
+function kbSave(){ save(); if($('.nav-item.active')?.dataset.view==='settings')renderKbd(); }
+function kbSetEnabled(on){ kbRoot().enabled=!!on; kbSave(); }
+function kbSetNext(v){ kbRoot().nextKey=(v==='tab'?'tab':'enter'); kbSave(); }
+function kbSetKey(act,v){ kbRoot().keys[act]=v; save(); toast('Shortcut set'); }
+function kbSkip(f,key,on){ const fc=kbRoot().forms[f]; if(on)delete fc.skip[key]; else fc.skip[key]=1; if(fc.start===key&&!on){ const first=fc.order.find(x=>!fc.skip[x]); if(first)fc.start=first; } kbSave(); }
+function kbCell(f,key,cell,on){ const fc=kbRoot().forms[f]; if(!fc.cells[key])fc.cells[key]={}; if(on)delete fc.cells[key][cell]; else fc.cells[key][cell]=0; save(); }
+function kbStart(f,key){ kbRoot().forms[f].start=key; kbSave(); }
+function kbMove(f,key,dir){ const fc=kbRoot().forms[f], o=fc.order, i=o.indexOf(key), j=i+dir; if(i<0||j<0||j>=o.length)return; o[i]=o[j]; o[j]=key; kbSave(); }
+function kbReset(){ confirmBox('Reset keyboard flow','Restore the default field order, skipped fields and keys for all three forms?',()=>{ S().kbd=kbDefaults(); kbSave(); toast('Keyboard flow reset'); },'Reset'); }
 /* ---- Credit & Cashback rules (central, owner-editable) ---- */
 function renderCreditRules(){
   const host=$('#creditRulesList'); if(!host)return;
@@ -11097,6 +11156,220 @@ function confirmBox(title,msg,onYes,yesLabel){
      those are the mobile keyboard opening, which must not dismiss the picker. */
   window.addEventListener('resize',()=>{ if(pop&&window.innerWidth!==openW)close(); });
 })();
+
+/* ============================================================
+   KEYBOARD DATA-ENTRY FLOW  (Purchase · Sales · Gift-card buy)
+   A configurable field-navigation engine, driven from
+   Settings → ⌨️ Keyboard & Data Entry.
+   • Enter  → jump to the next field in the flow (Shift+Enter = back)
+   • on the last cell of a product/payment line → add a new line
+   • a save key (default Ctrl+2) clicks the form's Save button
+   The order, which fields are skipped, where focus starts and the
+   keys themselves all come from DB.settings.kbd, so the owner can
+   tailor the whole flow without touching code.
+   ============================================================ */
+const KB_META = {
+  purchase:{ label:'Purchase',
+    saves:[{k:'save', sel:'.modal-foot button[onclick^="savePurchase"]', lab:'Save Purchase'}],
+    stops:[
+      {k:'date',    lab:'Date',          sel:'#b_date'},
+      {k:'sup',     lab:'Supplier',      sel:'#b_sup'},
+      {k:'orderno', lab:'Order No.',     sel:'#b_orderno'},
+      {k:'prod',    lab:'Product lines', group:'#b_rows',   row:'.li-row',    add:'addBuyRow',
+                    cells:[['product','Product'],['qty','Qty'],['rate','Cost/unit']]},
+      {k:'disc',    lab:'Discount',      sel:'#b_disc'},
+      {k:'pay',     lab:'Payment lines', group:'#b_splits', row:'.split-row', add:'addBuySplit', cellsFree:true}
+    ]},
+  sales:{ label:'Sales',
+    saves:[{k:'save',  sel:'.modal-foot button.btn-green[onclick^="saveSale"]', lab:'Save'},
+           {k:'print', sel:'.modal-foot button.btn-gold[onclick^="saveSale"]',  lab:'Save & Open Bill'}],
+    stops:[
+      {k:'date',    lab:'Date',            sel:'#s_date'},
+      {k:'cust',    lab:'Customer',        sel:'#s_cust'},
+      {k:'phone',   lab:'Customer Phone',  sel:'#s_phone'},
+      {k:'billno',  lab:'Bill No',         sel:'#s_billno'},
+      {k:'addr',    lab:'Customer Address',sel:'#s_addr'},
+      {k:'vat',     lab:'Customer VAT No.',sel:'#s_vat'},
+      {k:'items',   lab:'Item lines', group:'#s_rows', row:'.li-row', add:'addSaleRow',
+                    cells:[['product','Product'],['qty','Qty'],['rate','Rate'],['disc','Disc %']]},
+      {k:'discall', lab:'Discount % on all',sel:'#s_discall'},
+      {k:'paid',    lab:'Amount Received',  sel:'#s_paid'},
+      {k:'vatmode', lab:'VAT Mode',         sel:'#s_vatmode'},
+      {k:'pay',     lab:'Payment Method',   sel:'#s_pay'},
+      {k:'paymeta', lab:'Payment note / cash-disc', sel:'#s_paymeta input'},
+      {k:'disc',    lab:'Discount (amount)',sel:'#s_disc'},
+      {k:'collby',  lab:'Collected by',     sel:'#s_collby'}
+    ]},
+  gift:{ label:'Gift Card Purchase',
+    saves:[{k:'save', sel:'.modal-foot button[onclick^="saveGiftPurchase"]', lab:'Save'}],
+    stops:[
+      {k:'product', lab:'Gift Card',       sel:'#g_product'},
+      {k:'date',    lab:'Date',            sel:'#g_date'},
+      {k:'sup',     lab:'Where purchased', sel:'#g_sup'},
+      {k:'orderno', lab:'Bill No.',        sel:'#g_orderno'},
+      {k:'amt',     lab:'Amount',          sel:'#g_amt'},
+      {k:'pay',     lab:'Payment lines', group:'#gb_splits', row:'.split-row', add:'addGiftBuySplit', cellsFree:true},
+      {k:'note',    lab:'Note',            sel:'#g_note'}
+    ]}
+};
+const KB_SAVE_KEYS  = ['ctrl+2','ctrl+1','ctrl+3','ctrl+s','alt+s','ctrl+enter'];
+const KB_PRINT_KEYS = ['ctrl+p','alt+p','ctrl+b','ctrl+o','ctrl+enter'];
+function kbDefaults(){
+  const forms={};
+  Object.keys(KB_META).forEach(f=>{ forms[f]={ order:KB_META[f].stops.map(s=>s.k), skip:{}, cells:{}, start:KB_META[f].stops[0].k }; });
+  return { enabled:true, nextKey:'enter', keys:{save:'ctrl+2',print:'ctrl+p'}, forms };
+}
+/* read the config, filling in any gaps so it always matches KB_META */
+function kbRoot(){
+  const st=S(); if(!st.kbd||typeof st.kbd!=='object') st.kbd=kbDefaults();
+  const k=st.kbd;
+  if(k.enabled===undefined)k.enabled=true;
+  if(k.nextKey!=='tab')k.nextKey='enter';
+  if(!k.keys||typeof k.keys!=='object')k.keys={};
+  if(!k.keys.save)k.keys.save='ctrl+2';
+  if(!k.keys.print)k.keys.print='ctrl+p';
+  if(!k.forms||typeof k.forms!=='object')k.forms={};
+  Object.keys(KB_META).forEach(f=>{
+    const meta=KB_META[f], fc=k.forms[f]||(k.forms[f]={});
+    const valid=meta.stops.map(s=>s.k);
+    let ord=Array.isArray(fc.order)?fc.order.filter(x=>valid.includes(x)):[];
+    valid.forEach(x=>{ if(!ord.includes(x))ord.push(x); });
+    fc.order=ord;
+    if(!fc.skip||typeof fc.skip!=='object')fc.skip={};
+    if(!fc.cells||typeof fc.cells!=='object')fc.cells={};
+    if(!fc.start||!valid.includes(fc.start))fc.start=valid[0];
+  });
+  return k;
+}
+/* which of our three forms (if any) is open right now */
+function kbForm(){
+  if(!document.querySelector('.modal'))return null;
+  if(document.getElementById('b_date'))return 'purchase';
+  if(document.getElementById('s_date'))return 'sales';
+  if(document.getElementById('g_amt'))return 'gift';
+  return null;
+}
+function kbVisible(el){ return !!(el && !el.disabled && el.type!=='hidden' && el.offsetParent!==null); }
+function kbRowFocusables(row){ return [...row.querySelectorAll('input,select,textarea')].filter(el=>kbVisible(el)); }
+/* build the live, in-order list of focusable fields for the open form, honouring
+   the configured order / skipped fields / skipped cells; tags each el with ._kb */
+function kbList(form){
+  const meta=KB_META[form], cfg=kbRoot().forms[form];
+  const body=document.querySelector('.modal-body')||document, list=[];
+  cfg.order.forEach(k=>{
+    if(cfg.skip[k])return;
+    const stop=meta.stops.find(s=>s.k===k); if(!stop)return;
+    if(stop.group){
+      const cont=body.querySelector(stop.group); if(!cont)return;
+      const rows=[...cont.querySelectorAll(stop.row)];
+      rows.forEach((row,ri)=>{
+        kbRowFocusables(row).forEach((el,ci)=>{
+          let ck=null;
+          if(!stop.cellsFree && stop.cells && stop.cells[ci]){
+            ck=stop.cells[ci][0];
+            if(cfg.cells[k] && cfg.cells[k][ck]===0)return;   // this column is skipped
+          }
+          el._kb={stop:k, group:stop.group, row:stop.row, add:stop.add, cell:ck, cellsFree:!!stop.cellsFree};
+          list.push(el);
+        });
+      });
+    } else {
+      const el=body.querySelector(stop.sel); if(!kbVisible(el))return;
+      el._kb={stop:k}; list.push(el);
+    }
+  });
+  return list;
+}
+function kbCombo(e){
+  const p=[]; if(e.ctrlKey)p.push('ctrl'); if(e.altKey)p.push('alt'); if(e.shiftKey)p.push('shift');
+  let k=(e.key||'').toLowerCase(); if(k===' ')k='space';
+  p.push(k); return p.join('+');
+}
+function kbIsSrchSel(el){ return el && el.tagName==='SELECT' && !el.disabled && !el.multiple && !el.dataset.noSrch && (el.classList.contains('srch')||el.options.length>=5); }
+/* focus the configured starting field when a form opens */
+function kbInit(form){
+  const root=kbRoot(); if(!root.enabled)return;
+  const meta=KB_META[form], cfg=root.forms[form];
+  const stop=meta.stops.find(s=>s.k===cfg.start)||meta.stops[0];
+  setTimeout(()=>{
+    let el=null;
+    if(stop.group){ const cont=document.querySelector(stop.group); const row=cont&&cont.querySelector(stop.row); el=row&&kbRowFocusables(row)[0]; }
+    else el=document.querySelector(stop.sel);
+    if(kbVisible(el))el.focus();
+  },70);
+}
+/* main key handler — save shortcuts + Enter/Tab navigation */
+document.addEventListener('keydown',function(e){
+  const root=kbRoot(); if(!root.enabled)return;
+  const form=kbForm(); if(!form)return;
+  if(document.querySelector('.srch-pop')||document.querySelector('.mpick-back'))return;  // a picker is open — leave it alone
+  const meta=KB_META[form], combo=kbCombo(e);
+  for(const sv of meta.saves){
+    const want=root.keys[sv.k];
+    if(want && combo===want){
+      const btn=document.querySelector(sv.sel);
+      if(btn){ e.preventDefault(); e.stopPropagation(); btn.click(); }
+      return;
+    }
+  }
+  const isTab   = root.nextKey==='tab'  && e.key==='Tab';
+  const isEnter = root.nextKey!=='tab'  && e.key==='Enter';
+  if(!isTab && !isEnter)return;
+  if(e.ctrlKey||e.altKey||e.metaKey)return;            // modifier combos were handled above
+  const back=e.shiftKey, ae=document.activeElement;
+  if(!ae||ae.tagName==='TEXTAREA')return;
+  if(isEnter && !back && kbIsSrchSel(ae))return;       // let the searchable dropdown open on Enter
+  const list=kbList(form); if(!list.length)return;
+  e.preventDefault();
+  const idx=list.indexOf(ae);
+  if(idx<0){ list[0].focus(); return; }
+  if(back){ (list[idx-1]||list[0]).focus(); return; }
+  const cur=list[idx], info=cur._kb||{};
+  if(info.group){
+    const rowSel=info.row, myRow=cur.closest(rowSel);
+    const rowItems=list.filter(x=>x._kb&&x._kb.group===info.group&&x.closest(rowSel)===myRow);
+    const cont=document.querySelector(info.group), rows=cont?[...cont.querySelectorAll(rowSel)]:[];
+    const isLastCell=rowItems[rowItems.length-1]===cur, isLastRow=rows.length&&myRow===rows[rows.length-1];
+    if(isLastCell && isLastRow){
+      let has;
+      if(info.cellsFree){ const ins=rowItems.filter(x=>x.tagName!=='SELECT'); has=ins.length&&(ins[ins.length-1].value||'').trim()!==''; }
+      else { const sels=rowItems.filter(x=>x.tagName==='SELECT'); has= sels.length? sels.some(s=>s.value&&s.value!=='__new') : rowItems.some(x=>(x.value||'').trim()!==''); }
+      if(has && info.add && typeof window[info.add]==='function'){
+        window[info.add]();
+        const gi=info.group, rs=rowSel;
+        setTimeout(()=>{ const l2=kbList(form), c2=document.querySelector(gi), r2=c2?[...c2.querySelectorAll(rs)]:[]; const nr=r2[r2.length-1]; const fs=nr?l2.filter(x=>x.closest(rs)===nr):[]; (fs[0]||l2[0]||cur).focus(); },30);
+        return;
+      }
+    }
+  }
+  if(list[idx+1]) list[idx+1].focus();
+  else { const sb=document.querySelector(meta.saves[0].sel); if(sb)sb.focus(); }
+},true);
+/* when a searchable dropdown is chosen, auto-advance (Enter would otherwise re-open it) */
+document.addEventListener('change',function(e){
+  const root=kbRoot(); if(!root.enabled||root.nextKey==='tab')return;
+  const form=kbForm(); if(!form)return;
+  const sel=e.target; if(!sel||sel.tagName!=='SELECT'||!sel.value||!kbIsSrchSel(sel))return;
+  const meta=KB_META[form];
+  const grp=meta.stops.find(s=>s.group && sel.closest(s.group));
+  const fixed=!grp && meta.stops.some(s=>s.sel && document.querySelector(s.sel)===sel);
+  if(!grp && !fixed)return;
+  const rowSel=grp?grp.row:null;
+  const ri=grp ? [...document.querySelector(grp.group).querySelectorAll(rowSel)].indexOf(sel.closest(rowSel)) : -1;
+  setTimeout(()=>{
+    const list=kbList(form);
+    if(grp){
+      const cont=document.querySelector(grp.group), rows=cont?[...cont.querySelectorAll(rowSel)]:[];
+      const nrow=rows[ri]; if(!nrow)return;
+      const items=list.filter(x=>x.closest(rowSel)===nrow);
+      const sObj=items.find(x=>x.tagName==='SELECT'); let nxt=sObj?items[items.indexOf(sObj)+1]:items[0];
+      if(!nxt){ const gi=list.indexOf(items[items.length-1]); nxt=list[gi+1]; }
+      nxt&&nxt.focus();
+    } else {
+      const i=list.indexOf(sel); if(i>=0 && list[i+1])list[i+1].focus();
+    }
+  },30);
+},true);
 
 /* boot */
 applyTheme();
