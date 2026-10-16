@@ -5330,6 +5330,8 @@ function cardVisual(c){
 /* ---- Cards view ---- */
 let _cardView='owners';
 function setCardView(v){ _cardView=v; $$('#cardViewTgl button').forEach(b=>b.classList.toggle('active', b.dataset.cv===v)); renderCards(); }
+let _gridGroup='holder';   // Grid edit grouping: 'holder' (default) or 'name'
+function setGridGroup(v){ _gridGroup=v; renderCards(); }
 function cardCell(c,badge){ return `<div>${badge?`<div style="text-align:center;font-size:11px;font-weight:800;color:var(--green);margin-bottom:6px">${badge}</div>`:''}${cardVisual(c)}
   ${refsStr(c)?`<div style="text-align:center;color:var(--muted2);font-size:11.5px;margin-top:6px">ref ${esc(refsStr(c))}</div>`:''}
   <div class="row-actions" style="margin-top:9px;justify-content:center">
@@ -5404,7 +5406,10 @@ function renderCards(){
   }
   if(_cardView==='grid'){
     if(!isOwner()){ host.innerHTML=`<div class="panel">${emptyBox('🔒','Owner only','Switch to the owner profile to edit card balances here.')}</div>`; renderBell(); return; }
-    const list=[...cards].sort((a,b)=> (a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)));
+    const byHolder=_gridGroup==='holder';
+    const list=[...cards].sort((a,b)=> byHolder
+      ? (cardOwnerLabel(a).localeCompare(cardOwnerLabel(b)) || (a.name||'').localeCompare(b.name||''))
+      : ((a.name||'').localeCompare(b.name||'') || cardOwnerLabel(a).localeCompare(cardOwnerLabel(b))));
     const rowsHtml=gridGroupedRows(list,9,c=>{
       const out=cardOutstanding(c); let old=+c.statementDue||0; let used=r2(out-old); if(used<0){ old=0; used=r2(out); }
       const lim=+c.creditLimit||0, bal=r2(lim-old-used), id=c.id;
@@ -5422,10 +5427,15 @@ function renderCards(){
         <td style="white-space:nowrap">${dateCell}</td>
         <td class="num" style="white-space:nowrap;color:var(--muted)">${daysCell}</td>
       </tr>`;
-    });
+    },_gridGroup);
     host.innerHTML=`<style>#cardGridTbl .gin{width:92px;padding:6px 8px;text-align:right;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}#cardGridTbl .gin:focus{outline:none;border-color:var(--brand)}#cardGridTbl td{vertical-align:middle}#cardGridTbl tr.grp td{background:var(--line);font-weight:800;font-size:13px;padding:8px 11px}</style>
       <div class="cat-head">⊞ Edit balances <span class="cc">${list.length} card${list.length===1?'':'s'}</span>
-        <button class="btn-sm btn-gold" style="margin-left:auto" onclick="saveCardGrid()">💾 Save all changes</button></div>
+        <span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">
+          <span style="color:var(--muted);font-size:12px">Group by</span>
+          <button class="mini-btn${byHolder?' gold':''}" onclick="setGridGroup('holder')">👤 Holder</button>
+          <button class="mini-btn${byHolder?'':' gold'}" onclick="setGridGroup('name')">💳 Card name</button>
+        </span>
+        <button class="btn-sm btn-gold" onclick="saveCardGrid()">💾 Save all changes</button></div>
       <div class="table-wrap"><table id="cardGridTbl" style="min-width:980px">
         <thead><tr><th>Holder</th><th>Card name</th><th class="num">Limit</th><th class="num">Old statement due</th><th class="num">Currently used</th><th class="num">Balance limit</th><th class="num">Check</th><th>Last edited</th><th class="num">Days ago</th></tr></thead>
         <tbody>${rowsHtml}</tbody></table></div>
@@ -5491,13 +5501,15 @@ function renderCards(){
 }
 /* ---- Grid balance editor ---- */
 function r2(n){ return Math.round((+n||0)*100)/100; }
-/* Emit grouped table rows: a header row per distinct card name, then that name's rows.
-   `list` must already be sorted by name; rowFn(c) returns the <tr> for one card. */
-function gridGroupedRows(list,colspan,rowFn){
-  const cnt={}; list.forEach(c=>{ const nm=(c.name||'').trim()||'—'; cnt[nm]=(cnt[nm]||0)+1; });
+/* Emit grouped table rows: a header row per distinct group, then that group's rows.
+   mode='name' (default) groups by card name; mode='holder' groups by card holder.
+   `list` must already be sorted so group members are contiguous; rowFn(c) returns the <tr>. */
+function gridGroupedRows(list,colspan,rowFn,mode){
+  const keyOf = mode==='holder' ? (c=>(cardOwnerLabel(c)||'').trim()||'—') : (c=>(c.name||'').trim()||'—');
+  const cnt={}; list.forEach(c=>{ const k=keyOf(c); cnt[k]=(cnt[k]||0)+1; });
   let html='',cur=null;
-  list.forEach(c=>{ const nm=(c.name||'').trim()||'—';
-    if(nm!==cur){ cur=nm; html+=`<tr class="grp"><td colspan="${colspan}"><b>${esc(nm)}</b> <span style="color:var(--muted2);font-weight:600">· ${cnt[nm]} card${cnt[nm]===1?'':'s'}</span></td></tr>`; }
+  list.forEach(c=>{ const k=keyOf(c);
+    if(k!==cur){ cur=k; html+=`<tr class="grp"><td colspan="${colspan}"><b>${esc(k)}</b> <span style="color:var(--muted2);font-weight:600">· ${cnt[k]} card${cnt[k]===1?'':'s'}</span></td></tr>`; }
     html+=rowFn(c); });
   return html;
 }
